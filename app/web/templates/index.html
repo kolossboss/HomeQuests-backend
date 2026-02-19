@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260219a" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="page-head">
+        <h1>{{ app_name }}</h1>
+        <p class="muted">Familienorganisation mit Aufgaben, Kalender und Belohnungen</p>
+      </header>
+
+      <section class="panel" id="auth-panel">
+        <div id="login-section" class="hidden">
+          <h2>Login</h2>
+          <div class="form-grid">
+            <label>Username or Email<input id="login-email" type="text" placeholder="Username or Email" /></label>
+            <label>Passwort<input id="login-password" type="password" placeholder="Passwort" /></label>
+          </div>
+          <button id="login-btn">Einloggen</button>
+        </div>
+
+        <div id="bootstrap-section" class="hidden">
+          <h2>Erstinitialisierung</h2>
+          <p class="muted">Nur beim allerersten Start notwendig.</p>
+          <div class="form-grid">
+            <label>Familienname<input id="boot-family" type="text" placeholder="Familie" /></label>
+            <label>Name<input id="boot-name" type="text" placeholder="Admin Name" /></label>
+            <label>E-Mail<input id="boot-email" type="email" placeholder="admin@example.com" /></label>
+            <label>Passwort<input id="boot-password" type="password" placeholder="mind. 8 Zeichen" /></label>
+          </div>
+          <button id="bootstrap-btn">Initialisieren</button>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="app-panel">
+        <div class="toolbar">
+          <div>
+            <h2>Familienbereich</h2>
+            <p id="user-info" class="muted"></p>
+          </div>
+          <div class="toolbar-actions">
+            <label>Familie
+              <select id="family-select"></select>
+            </label>
+            <button id="logout-btn">Logout</button>
+          </div>
+        </div>
+
+        <nav class="tabs">
+          <div class="sidebar-brand">
+            <p class="sidebar-kicker">HomeQuests</p>
+            <strong>Control Center</strong>
+          </div>
+          <button id="tab-btn-dashboard" data-tab="dashboard" class="tab active"><span class="tab-icon">01</span><span>Dashboard</span></button>
+          <button id="tab-btn-members" data-tab="members" class="tab"><span class="tab-icon">02</span><span>Mitglieder</span></button>
+          <button id="tab-btn-tasks" data-tab="tasks" class="tab"><span class="tab-icon">03</span><span>Aufgaben</span></button>
+          <button id="tab-btn-special-tasks" data-tab="special-tasks" class="tab"><span class="tab-icon">04</span><span>Sonderaufgaben</span></button>
+          <button id="tab-btn-events" data-tab="events" class="tab"><span class="tab-icon">05</span><span>Kalender</span></button>
+          <button id="tab-btn-rewards" data-tab="rewards" class="tab"><span class="tab-icon">06</span><span>Belohnungen</span></button>
+          <button id="tab-btn-points" data-tab="points" class="tab"><span class="tab-icon">07</span><span>Punkte</span></button>
+          <button id="tab-btn-system" data-tab="system" class="tab"><span class="tab-icon">08</span><span>System</span></button>
+        </nav>
+
+        <section id="tab-dashboard" class="tab-panel active">
+          <div class="dashboard-hero">
+            <div>
+              <p class="eyebrow">Live-Übersicht</p>
+              <h3>Familien-Dashboard</h3>
+              <p class="muted">Aktueller Fortschritt fuer Aufgaben, Punkte und offene Freigaben.</p>
+            </div>
+            <p id="dashboard-week-summary" class="hero-pill">Diese Woche: 0 erledigt</p>
+          </div>
+
+          <div class="stats-grid">
+            <article class="stat-card"><span>Mitglieder</span><strong id="stat-members">0</strong></article>
+            <article class="stat-card"><span>Offene Aufgaben</span><strong id="stat-open">0</strong></article>
+            <article class="stat-card"><span>In Prüfung</span><strong id="stat-submitted">0</strong></article>
+            <article id="stat-card-approved" class="stat-card is-clickable"><span>Abgeschlossen</span><strong id="stat-approved">0</strong></article>
+            <article class="stat-card"><span>Abgelehnt</span><strong id="stat-rejected">0</strong></article>
+            <article class="stat-card"><span>Diese Woche erledigt</span><strong id="stat-approved-week">0</strong></article>
+            <article class="stat-card"><span>Diese Woche offen</span><strong id="stat-week-open">0</strong></article>
+            <article class="stat-card"><span>Punkte diese Woche</span><strong id="stat-week-points">0</strong></article>
+            <article class="stat-card"><span>Erfolgsquote</span><strong id="stat-completion-rate">0%</strong></article>
+            <article id="stat-card-child-points" class="stat-card hidden"><span>Meine Punkte</span><strong id="stat-child-points-value">-</strong></article>
+          </div>
+
+          <div class="dashboard-charts-grid">
+            <article class="section-block analytics-card">
+              <h4>Statusverteilung</h4>
+              <div class="progress-list">
+                <div class="progress-row">
+                  <div class="progress-label-line"><span>Offen</span><strong id="status-open-value">0 (0%)</strong></div>
+                  <div class="progress-track"><span id="status-open-bar" class="progress-fill status-open" style="width: 0%"></span></div>
+                </div>
+                <div class="progress-row">
+                  <div class="progress-label-line"><span>In Prüfung</span><strong id="status-submitted-value">0 (0%)</strong></div>
+                  <div class="progress-track"><span id="status-submitted-bar" class="progress-fill status-submitted" style="width: 0%"></span></div>
+                </div>
+                <div class="progress-row">
+                  <div class="progress-label-line"><span>Bestätigt</span><strong id="status-approved-value">0 (0%)</strong></div>
+                  <div class="progress-track"><span id="status-approved-bar" class="progress-fill status-approved" style="width: 0%"></span></div>
+                </div>
+                <div class="progress-row">
+                  <div class="progress-label-line"><span>Abgelehnt</span><strong id="status-rejected-value">0 (0%)</strong></div>
+                  <div class="progress-track"><span id="status-rejected-bar" class="progress-fill status-rejected" style="width: 0%"></span></div>
+                </div>
+              </div>
+            </article>
+
+            <article class="section-block analytics-card">
+              <h4>Wochenverlauf (letzte 7 Tage)</h4>
+              <p id="dashboard-weekly-caption" class="muted">Erledigte Aufgaben pro Tag</p>
+              <div id="weekly-trend-bars" class="trend-bars"></div>
+            </article>
+          </div>
+
+          <div id="dashboard-pending-section" class="section-block">
+            <h4>Neue Anfragen</h4>
+            <div class="request-cards-grid">
+              <article class="task-category-card">
+                <h5>Aufgaben warten auf Prüfung</h5>
+                <div id="dashboard-pending-task-cards" class="request-card-list"></div>
+              </article>
+              <article class="task-category-card">
+                <h5>Belohnungen warten auf Prüfung</h5>
+                <div id="dashboard-pending-reward-cards" class="request-card-list"></div>
+              </article>
+            </div>
+          </div>
+
+          <div id="dashboard-members-section" class="section-block">
+            <h4>Nutzer</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Aktiv</th></tr></thead>
+                <tbody id="dashboard-members-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h4>Punkte pro Nutzer</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>Rolle</th><th>Punkte</th></tr></thead>
+                <tbody id="dashboard-points-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h4>Aufgabenstatus</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Aufgabe</th><th>Zuständig</th><th>Status</th><th>Punkte</th><th>Fällig</th></tr></thead>
+                <tbody id="dashboard-tasks-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab-members" class="tab-panel">
+          <h3>Mitglieder</h3>
+          <div class="row-wrap">
+            <button id="toggle-member-create-btn" type="button">Neues Mitglied</button>
+          </div>
+
+          <div id="member-create-section" class="section-block hidden">
+            <h4>Neues Mitglied</h4>
+            <div class="form-grid">
+              <label>Name<input id="member-name" type="text" /></label>
+              <label>E-Mail<input id="member-email" type="email" /></label>
+              <label>Passwort (neu)<input id="member-password" type="password" /></label>
+              <label>Rolle
+                <select id="member-role">
+                  <option value="admin">Admin</option>
+                  <option value="parent">Eltern</option>
+                  <option value="child">Kind</option>
+                </select>
+              </label>
+            </div>
+            <button id="create-member-btn">Mitglied hinzufügen</button>
+          </div>
+
+          <div class="section-block">
+            <h4>Mitgliederliste</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Aktiv</th><th id="member-actions-header">Aktionen</th></tr></thead>
+                <tbody id="members-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="member-editor-section" class="section-block hidden">
+            <h4>Mitglied bearbeiten</h4>
+            <div class="form-grid">
+              <label>Name<input id="member-editor-name" type="text" /></label>
+              <label>Rolle
+                <select id="member-editor-role">
+                  <option value="admin">Admin</option>
+                  <option value="parent">Eltern</option>
+                  <option value="child">Kind</option>
+                </select>
+              </label>
+              <label>Aktiv
+                <select id="member-editor-active">
+                  <option value="true">ja</option>
+                  <option value="false">nein</option>
+                </select>
+              </label>
+              <label>Neues Passwort (optional)<input id="member-editor-password" type="password" /></label>
+            </div>
+            <div class="row-wrap">
+              <button id="member-editor-save-btn">Änderungen speichern</button>
+              <button id="member-editor-cancel-btn">Abbrechen</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab-tasks" class="tab-panel">
+          <h3>Aufgaben</h3>
+
+          <div class="row-wrap">
+            <button id="toggle-task-create-btn" type="button">Neue Aufgabe</button>
+          </div>
+
+          <div id="task-create-section" class="section-block hidden">
+            <h4>Neue Aufgabe</h4>
+            <div class="form-grid">
+              <label>Titel<input id="task-title" type="text" /></label>
+              <label>Beschreibung<input id="task-description" type="text" /></label>
+              <label>Zuständig
+                <select id="task-assignee"></select>
+              </label>
+              <label>Wiederholung
+                <select id="task-recurrence">
+                  <option value="none">einmalig</option>
+                  <option value="daily">täglich</option>
+                  <option value="weekly">wöchentlich</option>
+                  <option value="monthly">monatlich</option>
+                </select>
+              </label>
+              <label id="task-due-mode-row" class="hidden">Zeitplanung
+                <select id="task-due-mode">
+                  <option value="exact">bestimmter Zeitpunkt</option>
+                  <option value="week_flexible">ganze Woche verfügbar</option>
+                </select>
+              </label>
+              <label id="task-due-row">Fälligkeit<input id="task-due" type="datetime-local" /></label>
+              <label>Punkte<input id="task-points" type="number" min="0" value="10" /></label>
+            </div>
+            <div id="task-reminder-wrap" class="reminder-wrap">
+              <p class="reminder-title">Erinnerung vor Fälligkeit</p>
+              <div id="task-reminder-options" class="reminder-options">
+                <label class="reminder-option"><input type="checkbox" value="15" />15 Min</label>
+                <label class="reminder-option"><input type="checkbox" value="30" />30 Min</label>
+                <label class="reminder-option"><input type="checkbox" value="60" />1 Stunde</label>
+                <label class="reminder-option"><input type="checkbox" value="120" />2 Stunden</label>
+                <label class="reminder-option"><input type="checkbox" value="1440" />1 Tag</label>
+                <label class="reminder-option"><input type="checkbox" value="2880" />2 Tage</label>
+              </div>
+              <p class="muted">Nur möglich, wenn eine Fälligkeit gesetzt ist.</p>
+            </div>
+            <button id="create-task-btn">Aufgabe speichern</button>
+          </div>
+
+          <div id="child-task-categories-section" class="section-block hidden">
+            <h4>Deine Aufgaben</h4>
+            <div class="child-task-columns">
+              <article class="task-category-card">
+                <h5>Offene Aufgaben</h5>
+                <div id="child-open-task-cards" class="task-card-list"></div>
+              </article>
+              <article class="task-category-card">
+                <h5>Wochenaufgaben</h5>
+                <div id="child-week-task-cards" class="task-card-list"></div>
+              </article>
+              <article class="task-category-card">
+                <h5>Überfällige Aufgaben</h5>
+                <div id="child-overdue-task-cards" class="task-card-list"></div>
+              </article>
+            </div>
+          </div>
+
+          <div id="child-submitted-section" class="section-block hidden">
+            <h4>Warte auf Bestätigung von Eltern</h4>
+            <div id="child-submitted-cards" class="task-card-list"></div>
+          </div>
+
+          <div id="child-completed-section" class="section-block hidden">
+            <h4>Erledigte Aufgaben</h4>
+            <div id="child-completed-cards" class="task-card-list"></div>
+          </div>
+
+          <div id="task-review-cards-section" class="section-block">
+            <h4>Aufgaben bestätigen</h4>
+            <div id="manager-task-review-cards" class="request-card-list"></div>
+          </div>
+
+          <div id="tasks-table-section" class="section-block">
+            <h4>Alle Aufgaben</h4>
+            <div id="tasks-manager-cards" class="entity-cards-grid"></div>
+          </div>
+
+          <div id="task-history-section" class="section-block">
+            <h4>Aufgaben-Historie</h4>
+            <div id="task-history-cards" class="entity-cards-grid"></div>
+          </div>
+
+          <div id="task-editor-section" class="section-block hidden">
+            <h4>Aufgabe bearbeiten</h4>
+            <div class="form-grid">
+              <label>Titel<input id="task-editor-title" type="text" /></label>
+              <label>Beschreibung<input id="task-editor-description" type="text" /></label>
+              <label>Zuständig
+                <select id="task-editor-assignee"></select>
+              </label>
+              <label>Punkte<input id="task-editor-points" type="number" min="0" /></label>
+              <label>Wiederholung
+                <select id="task-editor-recurrence">
+                  <option value="none">einmalig</option>
+                  <option value="daily">täglich</option>
+                  <option value="weekly">wöchentlich</option>
+                  <option value="monthly">monatlich</option>
+                </select>
+              </label>
+              <label id="task-editor-due-mode-row" class="hidden">Zeitplanung
+                <select id="task-editor-due-mode">
+                  <option value="exact">bestimmter Zeitpunkt</option>
+                  <option value="week_flexible">ganze Woche verfügbar</option>
+                </select>
+              </label>
+              <label id="task-editor-due-row">Fälligkeit<input id="task-editor-due" type="datetime-local" /></label>
+              <label>Status
+                <select id="task-editor-status">
+                  <option value="open">offen</option>
+                  <option value="submitted">wartet auf Bestätigung</option>
+                  <option value="approved">bestätigt</option>
+                  <option value="rejected">abgelehnt</option>
+                </select>
+              </label>
+            </div>
+            <div id="task-editor-reminder-wrap" class="reminder-wrap">
+              <p class="reminder-title">Erinnerung vor Fälligkeit</p>
+              <div id="task-editor-reminder-options" class="reminder-options">
+                <label class="reminder-option"><input type="checkbox" value="15" />15 Min</label>
+                <label class="reminder-option"><input type="checkbox" value="30" />30 Min</label>
+                <label class="reminder-option"><input type="checkbox" value="60" />1 Stunde</label>
+                <label class="reminder-option"><input type="checkbox" value="120" />2 Stunden</label>
+                <label class="reminder-option"><input type="checkbox" value="1440" />1 Tag</label>
+                <label class="reminder-option"><input type="checkbox" value="2880" />2 Tage</label>
+              </div>
+              <p class="muted">Nur möglich, wenn eine Fälligkeit gesetzt ist.</p>
+            </div>
+            <div class="row-wrap">
+              <button id="task-editor-save-btn">Änderungen speichern</button>
+              <button id="task-editor-cancel-btn">Abbrechen</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab-special-tasks" class="tab-panel">
+          <h3>Sonderaufgaben</h3>
+
+          <div id="manager-special-task-section" class="section-block">
+            <h4>Sonderaufgaben verwalten</h4>
+            <div class="row-wrap">
+              <button id="toggle-special-task-create-btn" type="button">Neue Sonderaufgabe</button>
+            </div>
+
+            <div id="special-task-create-section" class="section-block hidden">
+              <div class="form-grid">
+                <label>Titel<input id="special-task-title" type="text" /></label>
+                <label>Beschreibung<input id="special-task-description" type="text" /></label>
+                <label>Punkte<input id="special-task-points" type="number" min="0" value="5" /></label>
+                <label>Intervall
+                  <select id="special-task-interval">
+                    <option value="daily">täglich</option>
+                    <option value="weekly">wöchentlich</option>
+                    <option value="monthly">monatlich</option>
+                  </select>
+                </label>
+                <label>Max. Annahmen pro Intervall
+                  <input id="special-task-limit" type="number" min="1" value="1" />
+                </label>
+                <label>Status
+                  <select id="special-task-active">
+                    <option value="true">aktiv</option>
+                    <option value="false">deaktiviert</option>
+                  </select>
+                </label>
+              </div>
+              <button id="create-special-task-btn">Sonderaufgabe speichern</button>
+            </div>
+
+            <div id="special-task-manager-cards" class="entity-cards-grid"></div>
+
+            <div id="special-task-editor-section" class="section-block hidden">
+              <h5>Sonderaufgabe bearbeiten</h5>
+              <div class="form-grid">
+                <label>Titel<input id="special-task-editor-title" type="text" /></label>
+                <label>Beschreibung<input id="special-task-editor-description" type="text" /></label>
+                <label>Punkte<input id="special-task-editor-points" type="number" min="0" /></label>
+                <label>Intervall
+                  <select id="special-task-editor-interval">
+                    <option value="daily">täglich</option>
+                    <option value="weekly">wöchentlich</option>
+                    <option value="monthly">monatlich</option>
+                  </select>
+                </label>
+                <label>Max. Annahmen pro Intervall
+                  <input id="special-task-editor-limit" type="number" min="1" />
+                </label>
+                <label>Status
+                  <select id="special-task-editor-active">
+                    <option value="true">aktiv</option>
+                    <option value="false">deaktiviert</option>
+                  </select>
+                </label>
+              </div>
+              <div class="row-wrap">
+                <button id="special-task-editor-save-btn">Änderungen speichern</button>
+                <button id="special-task-editor-cancel-btn">Abbrechen</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="child-special-task-section" class="section-block hidden">
+            <h4>Sonderaufgaben zum Annehmen</h4>
+            <div id="child-special-task-cards" class="request-card-list"></div>
+          </div>
+        </section>
+
+        <section id="tab-events" class="tab-panel">
+          <h3>Kalender</h3>
+          <div class="row-wrap">
+            <button id="toggle-event-create-btn" type="button">Neuer Termin</button>
+          </div>
+          <div id="event-create-section" class="section-block hidden">
+            <div class="form-grid">
+              <label>Titel<input id="event-title" type="text" /></label>
+              <label>Beschreibung<input id="event-description" type="text" /></label>
+              <label>Verantwortlich
+                <select id="event-responsible"></select>
+              </label>
+              <label>Start<input id="event-start" type="datetime-local" /></label>
+              <label>Ende<input id="event-end" type="datetime-local" /></label>
+            </div>
+            <button id="create-event-btn">Termin speichern</button>
+          </div>
+
+          <h4>Termine</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Titel</th><th>Verantwortlich</th><th>Start</th><th>Ende</th></tr></thead>
+              <tbody id="events-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="tab-rewards" class="tab-panel">
+          <h3>Belohnungen</h3>
+
+          <div class="row-wrap">
+            <button id="toggle-reward-create-btn" type="button">Neue Belohnung</button>
+          </div>
+
+          <div id="reward-create-section" class="section-block hidden">
+            <h4>Neue Belohnung</h4>
+            <div class="form-grid">
+              <label>Titel<input id="reward-title" type="text" /></label>
+              <label>Beschreibung<input id="reward-description" type="text" /></label>
+              <label>Kostenpunkte<input id="reward-cost" type="number" min="1" value="50" /></label>
+            </div>
+            <button id="create-reward-btn">Belohnung speichern</button>
+          </div>
+
+          <div id="reward-redeem-section" class="section-block">
+            <h4>Belohnung einlösen</h4>
+            <p class="muted">Deine Punkte: <strong id="child-reward-points">-</strong></p>
+            <div class="form-grid compact">
+              <label>Belohnung
+                <select id="redeem-reward-select"></select>
+              </label>
+              <label>Kommentar<input id="redeem-comment" type="text" /></label>
+            </div>
+            <button id="redeem-reward-btn">Einlösung anfragen</button>
+          </div>
+
+          <div id="reward-review-cards-section" class="section-block">
+            <h4>Belohnungen bestätigen</h4>
+            <div id="manager-reward-review-cards" class="request-card-list"></div>
+          </div>
+
+          <div class="section-block">
+            <h4>Belohnungsliste</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Belohnung</th><th>Beschreibung</th><th>Kosten</th><th>Status</th><th id="reward-actions-header">Aktionen</th></tr></thead>
+                <tbody id="rewards-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="reward-editor-section" class="section-block hidden">
+            <h4>Belohnung bearbeiten</h4>
+            <div class="form-grid">
+              <label>Titel<input id="reward-editor-title" type="text" /></label>
+              <label>Beschreibung<input id="reward-editor-description" type="text" /></label>
+              <label>Kostenpunkte<input id="reward-editor-cost" type="number" min="1" /></label>
+              <label>Status
+                <select id="reward-editor-active">
+                  <option value="true">aktiv</option>
+                  <option value="false">deaktiviert</option>
+                </select>
+              </label>
+            </div>
+            <div class="row-wrap">
+              <button id="reward-editor-save-btn">Änderungen speichern</button>
+              <button id="reward-editor-cancel-btn">Abbrechen</button>
+            </div>
+          </div>
+
+          <h4>Einlösungen</h4>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Belohnung</th><th>Angefragt von</th><th>Status</th><th>Zeitpunkt</th></tr></thead>
+              <tbody id="redemptions-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="tab-points" class="tab-panel">
+          <h3>Punkte</h3>
+          <p class="muted">Punkte werden bei bestätigten Aufgaben gutgeschrieben und bei bestätigten Belohnungen abgezogen.</p>
+
+          <div id="points-manager-block" class="section-block">
+            <h4>Personen und Punkte</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>Rolle</th><th>Punkte</th><th>Aktionen</th></tr></thead>
+                <tbody id="points-users-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="points-adjust-section" class="section-block hidden">
+            <h4>Punkte bearbeiten</h4>
+            <p id="points-adjust-user-label" class="muted"></p>
+            <div class="form-grid compact">
+              <label>Punkte Delta (+/-)
+                <input id="points-adjust-delta" type="number" />
+              </label>
+              <label>Beschreibung
+                <input id="points-adjust-description" type="text" />
+              </label>
+            </div>
+            <div class="row-wrap">
+              <button id="points-adjust-save-btn">Speichern</button>
+              <button id="points-adjust-cancel-btn">Abbrechen</button>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h4 id="points-history-title">Punkte-Historie</h4>
+            <p id="points-history-info" class="muted"></p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Zeit</th><th>Delta</th><th>Quelle</th><th>Beschreibung</th></tr></thead>
+                <tbody id="points-history-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab-system" class="tab-panel">
+          <h3>System</h3>
+          <p class="muted">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></p>
+          <pre id="log-output"></pre>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/app.js?v=20260219e"></script>
+  </body>
+</html>
