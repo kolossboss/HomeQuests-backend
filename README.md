@@ -2,6 +2,27 @@
 
 Dieses Verzeichnis ist als eigenstaendiges Repo nutzbar (API + Webapp unter `/`).
 
+## Codex Workflow (einfach)
+
+Im Repo gibt es jetzt ein Helfer-Skript:
+
+```bash
+./tools/codex_git_flow.sh
+```
+
+Dein Standardablauf:
+
+```bash
+cd /Users/macminiserver/Documents/Xcode/Familienplaner/HomeQuests-backend-local
+./tools/codex_git_flow.sh start feature-name
+# Aenderungen machen lassen (z. B. durch Codex)
+./tools/codex_git_flow.sh save "Feature: kurze Beschreibung"
+```
+
+Hinweis:
+- `save` ist absichtlich nur auf `codex/*`-Branches erlaubt.
+- So bleibt `main` geschuetzt und du arbeitest sauber ueber Feature-Branches.
+
 ## 1) Nur Backend/Webapp in ein eigenes GitHub-Repo pushen
 
 Diese Variante behaelt die Historie des `backend`-Ordners:
