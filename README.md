@@ -1,54 +1,14 @@
 # HomeQuests Backend + Webapp
 
-Dieses Verzeichnis ist als eigenstaendiges Repo nutzbar (API + Webapp unter `/`).
+FastAPI-Backend mit Webapp (`/`) und PostgreSQL.
 
-## Codex Workflow (einfach)
-
-Im Repo gibt es jetzt ein Helfer-Skript:
+## Lokal starten
 
 ```bash
-./tools/codex_git_flow.sh
-```
-
-Dein Standardablauf:
-
-```bash
-cd /Users/macminiserver/Documents/Xcode/Familienplaner/HomeQuests-backend-local
-./tools/codex_git_flow.sh start feature-name
-# Aenderungen machen lassen (z. B. durch Codex)
-./tools/codex_git_flow.sh save "Feature: kurze Beschreibung"
-```
-
-Hinweis:
-- `save` ist absichtlich nur auf `codex/*`-Branches erlaubt.
-- So bleibt `main` geschuetzt und du arbeitest sauber ueber Feature-Branches.
-
-## 1) Nur Backend/Webapp in ein eigenes GitHub-Repo pushen
-
-Diese Variante behaelt die Historie des `backend`-Ordners:
-
-```bash
-cd /Users/macminiserver/Documents/Xcode/HomeQuests
-git subtree split --prefix=backend -b codex/backend-only
-git remote add backend-origin git@github.com:DEIN_USER/homequests-backend.git
-git push backend-origin codex/backend-only:main
-```
-
-Optional Branch lokal entfernen:
-
-```bash
-git branch -D codex/backend-only
-```
-
-## 2) Lokal mit Docker starten (im Backend-Repo)
-
-```bash
-cd backend
 docker compose up --build
 ```
 
 Danach:
-
 - Webapp: `http://localhost:8010/`
 - API-Doku: `http://localhost:8010/docs`
 - Health: `http://localhost:8010/health`
@@ -56,46 +16,58 @@ Danach:
 Optional anderer Port:
 
 ```bash
-cd backend
 API_PORT=8025 docker compose up --build
 ```
 
-## 3) Docker-Image bauen und direkt nutzen
+## Automatisches Docker-Image in GHCR
 
-Image bauen:
+Dieses Repo hat eine GitHub Action unter:
+- `.github/workflows/docker-ghcr.yml`
+
+Die Action baut und pusht bei jedem Push auf `main` nach:
+- `ghcr.io/kolossboss/homequests-api:latest`
+- `ghcr.io/kolossboss/homequests-api:sha-<commit>`
+
+Wichtig in GitHub:
+1. Repo `Settings -> Actions -> General`: Workflows erlaubt.
+2. Repo `Settings -> Actions -> General -> Workflow permissions`:
+   - `Read and write permissions` aktivieren.
+3. Optional: Package-Sichtbarkeit in GHCR auf `Public` setzen,
+   damit Portainer ohne Registry-Login pullen kann.
+
+## Portainer / Proxmox Nutzung
+
+Fuer Portainer liegt eine image-basierte Compose-Datei bereit:
+- `docker-compose.portainer.yml`
+
+Sie nutzt:
+- `image: ghcr.io/kolossboss/homequests-api:latest`
+- `pull_policy: always`
+
+Start:
 
 ```bash
-cd backend
-docker build -t ghcr.io/DEIN_USER/homequests-backend:latest .
+docker compose -f docker-compose.portainer.yml up -d
 ```
 
-Bei GHCR anmelden und pushen:
+Hinweis:
+- Wenn GHCR-Package privat ist, musst du in Portainer eine Registry
+  fuer `ghcr.io` mit GitHub-Token hinterlegen.
+
+## Codex Workflow (sicher)
+
+Helfer-Skript:
 
 ```bash
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u DEIN_USER --password-stdin
-docker push ghcr.io/DEIN_USER/homequests-backend:latest
+./tools/codex_git_flow.sh
 ```
 
-Image direkt starten:
+Standardablauf:
 
 ```bash
-docker run --rm -p 8010:8000 \
-  -e DATABASE_URL='postgresql+psycopg2://homequests:homequests@HOST:5432/homequests' \
-  -e SECRET_KEY='CHANGE_THIS_SECRET' \
-  ghcr.io/DEIN_USER/homequests-backend:latest
+./tools/codex_git_flow.sh start feature-name
+# Aenderungen machen lassen
+./tools/codex_git_flow.sh save "Feature: kurze Beschreibung"
 ```
 
-Hinweis: Fuer den produktiven Betrieb ist ein separater PostgreSQL-Container oder Managed-Postgres noetig.
-
-## 4) Codex mit Repo nutzen
-
-Ja, das geht direkt:
-
-1. Repo lokal klonen oder im bestehenden Ordner lassen.
-2. Ordner in Codex oeffnen.
-3. In Codex Aufgaben geben wie:
-   - "Implementiere Feature X im Backend"
-   - "Schreibe Tests"
-   - "Erstelle Commit und Push auf Branch `codex/feature-x`"
-
-Wenn `origin` gesetzt ist und du eingeloggt bist, kann Codex die Git-Schritte lokal ausfuehren.
+`save` ist absichtlich nur auf `codex/*`-Branches erlaubt.
