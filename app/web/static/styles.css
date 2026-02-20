@@ -425,6 +425,13 @@ label {
   color: var(--text-soft);
 }
 
+.checkbox-line {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+
 input,
 select,
 button {

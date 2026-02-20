@@ -46,6 +46,12 @@ with engine.begin() as conn:
     if engine.dialect.name == "postgresql":
         conn.execute(
             text(
+                "ALTER TABLE users "
+                "ALTER COLUMN email DROP NOT NULL"
+            )
+        )
+        conn.execute(
+            text(
                 """
                 DO $$
                 BEGIN

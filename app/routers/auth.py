@@ -23,9 +23,11 @@ def bootstrap(payload: BootstrapRequest, db: Session = Depends(get_db)):
     if existing > 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
 
-    family = Family(name=payload.family_name)
+    email = payload.email.lower() if payload.email else None
+
+    family = Family(name="Haushalt")
     user = User(
-        email=payload.email.lower(),
+        email=email,
         display_name=payload.display_name,
         password_hash=hash_password(payload.password),
     )

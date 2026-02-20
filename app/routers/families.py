@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -68,8 +69,19 @@ def create_member(
     if not family:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Familie nicht gefunden")
 
-    existing_user = db.query(User).filter(User.email == payload.email.lower()).first()
+    normalized_email = payload.email.lower() if payload.email else None
+    existing_user = db.query(User).filter(User.email == normalized_email).first() if normalized_email else None
     if existing_user:
+        other_household = (
+            db.query(FamilyMembership)
+            .filter(FamilyMembership.user_id == existing_user.id, FamilyMembership.family_id != family_id)
+            .first()
+        )
+        if other_household:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Benutzer gehört bereits zu einem anderen Haushalt",
+            )
         already_member = (
             db.query(FamilyMembership)
             .filter(FamilyMembership.family_id == family_id, FamilyMembership.user_id == existing_user.id)
@@ -79,13 +91,23 @@ def create_member(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Benutzer ist bereits Mitglied")
         user = existing_user
     else:
+        display_name_taken = (
+            db.query(User)
+            .filter(func.lower(User.display_name) == payload.display_name.lower())
+            .first()
+        )
+        if display_name_taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Name ist bereits vergeben. Bitte einen anderen Namen wählen",
+            )
         if not payload.password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Passwort erforderlich für neue Benutzer",
             )
         user = User(
-            email=payload.email.lower(),
+            email=normalized_email,
             display_name=payload.display_name,
             password_hash=hash_password(payload.password),
         )
@@ -149,6 +171,17 @@ def update_member(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mindestens ein Admin muss in der Familie verbleiben",
+        )
+
+    duplicate_name = (
+        db.query(User)
+        .filter(func.lower(User.display_name) == payload.display_name.lower(), User.id != user.id)
+        .first()
+    )
+    if duplicate_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name ist bereits vergeben. Bitte einen anderen Namen wählen",
         )
 
     user.display_name = payload.display_name
