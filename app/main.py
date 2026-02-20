@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from starlette.requests import Request
 
 from .config import settings
@@ -22,53 +23,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
 
-with engine.begin() as conn:
-    conn.execute(
-        text(
-            "ALTER TABLE tasks "
-            "ADD COLUMN IF NOT EXISTS recurrence_type VARCHAR(16) NOT NULL DEFAULT 'none'"
-        )
-    )
-    conn.execute(
-        text(
-            "ALTER TABLE tasks "
-            "ADD COLUMN IF NOT EXISTS reminder_offsets_minutes JSON NOT NULL DEFAULT '[]'"
-        )
-    )
-    conn.execute(
-        text(
-            "ALTER TABLE tasks "
-            "ADD COLUMN IF NOT EXISTS special_template_id INTEGER NULL"
-        )
-    )
-    if engine.dialect.name == "postgresql":
+    with engine.begin() as conn:
         conn.execute(
             text(
-                "ALTER TABLE users "
-                "ALTER COLUMN email DROP NOT NULL"
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS recurrence_type VARCHAR(16) NOT NULL DEFAULT 'none'"
             )
         )
         conn.execute(
             text(
-                """
-                DO $$
-                BEGIN
-                    IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'specialtaskintervalenum') THEN
-                        IF NOT EXISTS (
-                            SELECT 1
-                            FROM pg_enum e
-                            JOIN pg_type t ON t.oid = e.enumtypid
-                            WHERE t.typname = 'specialtaskintervalenum' AND e.enumlabel = 'monthly'
-                        ) THEN
-                            ALTER TYPE specialtaskintervalenum ADD VALUE 'monthly';
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS reminder_offsets_minutes JSON NOT NULL DEFAULT '[]'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS special_template_id INTEGER NULL"
+            )
+        )
+        if engine.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "ALTER TABLE users "
+                    "ALTER COLUMN email DROP NOT NULL"
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'specialtaskintervalenum') THEN
+                            IF NOT EXISTS (
+                                SELECT 1
+                                FROM pg_enum e
+                                JOIN pg_type t ON t.oid = e.enumtypid
+                                WHERE t.typname = 'specialtaskintervalenum' AND e.enumlabel = 'monthly'
+                            ) THEN
+                                ALTER TYPE specialtaskintervalenum ADD VALUE 'monthly';
+                            END IF;
                         END IF;
-                    END IF;
-                END $$;
-                """
+                    END $$;
+                    """
+                )
             )
-        )
+except OperationalError as exc:
+    raise RuntimeError(
+        "Datenbankverbindung fehlgeschlagen. "
+        "Prüfe DATABASE_URL und den Host. "
+        "In Docker-Compose muss der DB-Service erreichbar sein (Standard-Host: 'db')."
+    ) from exc
 
 base_dir = Path(__file__).parent
 static_dir = base_dir / "web" / "static"
