@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from .models import (
     ApprovalDecisionEnum,
@@ -24,10 +24,16 @@ class LoginRequest(BaseModel):
 
 
 class BootstrapRequest(BaseModel):
-    family_name: str = Field(min_length=2, max_length=120)
-    email: EmailStr
+    email: EmailStr | None = None
     display_name: str = Field(min_length=2, max_length=120)
     password: str = Field(min_length=8, max_length=128)
+    password_confirm: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_passwords(self):
+        if self.password != self.password_confirm:
+            raise ValueError("Passwort und Passwort-Wiederholung stimmen nicht überein")
+        return self
 
 
 class BootstrapStatusOut(BaseModel):
@@ -36,7 +42,7 @@ class BootstrapStatusOut(BaseModel):
 
 class UserOut(BaseModel):
     id: int
-    email: EmailStr
+    email: EmailStr | None
     display_name: str
     is_active: bool
 
@@ -55,17 +61,24 @@ class FamilyMemberOut(BaseModel):
     family_id: int
     user_id: int
     display_name: str
-    email: EmailStr
+    email: EmailStr | None
     is_active: bool
     role: RoleEnum
     created_at: datetime
 
 
 class MemberCreate(BaseModel):
-    email: EmailStr
+    email: EmailStr | None = None
     display_name: str = Field(min_length=2, max_length=120)
     password: str | None = Field(default=None, min_length=8, max_length=128)
+    password_confirm: str | None = Field(default=None, min_length=8, max_length=128)
     role: RoleEnum
+
+    @model_validator(mode="after")
+    def validate_passwords(self):
+        if self.password != self.password_confirm:
+            raise ValueError("Passwort und Passwort-Wiederholung stimmen nicht überein")
+        return self
 
 
 class MemberUpdate(BaseModel):

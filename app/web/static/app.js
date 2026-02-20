@@ -69,6 +69,14 @@ function isValidEmail(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
+function setPasswordInputVisibility(inputIds, visible) {
+  inputIds.forEach((id) => {
+    const input = byId(id);
+    if (!input) return;
+    input.type = visible ? "text" : "password";
+  });
+}
+
 function toIsoOrNull(datetimeLocal) {
   if (!datetimeLocal) return null;
   return new Date(datetimeLocal).toISOString();
@@ -624,6 +632,10 @@ async function initAuthPanel() {
   appPanel.classList.add("hidden");
   toggleHidden("login-section", true);
   toggleHidden("bootstrap-section", true);
+  if (byId("boot-password-visible")) byId("boot-password-visible").checked = false;
+  if (byId("member-password-visible")) byId("member-password-visible").checked = false;
+  setPasswordInputVisibility(["boot-password", "boot-password-confirm"], false);
+  setPasswordInputVisibility(["member-password", "member-password-confirm"], false);
 
   try {
     const status = await api("/auth/bootstrap-status");
@@ -677,7 +689,7 @@ function renderMembers() {
         : "-";
       return `<tr>
         <td>${member.display_name}</td>
-        <td>${member.email}</td>
+        <td>${member.email || "-"}</td>
         <td>${roleLabel(member.role)}</td>
         <td>${member.is_active ? "ja" : "nein"}</td>
         <td>${actions}</td>
@@ -689,7 +701,7 @@ function renderMembers() {
     .map(
       (member) => `<tr>
         <td>${member.display_name}</td>
-        <td>${member.email}</td>
+        <td>${member.email || "-"}</td>
         <td>${roleLabel(member.role)}</td>
         <td>${member.is_active ? "ja" : "nein"}</td>
       </tr>`
@@ -1340,7 +1352,8 @@ async function refreshFamilyData() {
     }
   }
 
-  userInfo.textContent = `Angemeldet als ${state.me.display_name} (${state.me.email}) | Rolle: ${roleLabel(state.currentRole)}`;
+  const emailPart = state.me.email ? ` (${state.me.email})` : "";
+  userInfo.textContent = `Angemeldet als ${state.me.display_name}${emailPart} | Rolle: ${roleLabel(state.currentRole)}`;
 }
 
 async function refreshSession() {
@@ -1353,18 +1366,23 @@ async function refreshSession() {
     state.me = await api("/auth/me");
     state.families = await api("/families/my");
 
-    familySelect.innerHTML = "";
-    state.families.forEach((family) => {
-      const option = document.createElement("option");
-      option.value = String(family.id);
-      option.textContent = family.name;
-      familySelect.appendChild(option);
-    });
+    if (familySelect) {
+      familySelect.innerHTML = "";
+      state.families.forEach((family) => {
+        const option = document.createElement("option");
+        option.value = String(family.id);
+        option.textContent = family.name;
+        familySelect.appendChild(option);
+      });
+    }
 
     state.familyId = state.families[0]?.id || null;
     if (!state.familyId) throw new Error("Keine Familie gefunden");
 
-    familySelect.value = String(state.familyId);
+    if (familySelect) {
+      familySelect.value = String(state.familyId);
+    }
+    toggleHidden("family-select-wrap", true);
 
     authPanel.classList.add("hidden");
     appPanel.classList.remove("hidden");
@@ -1405,32 +1423,32 @@ async function login() {
 }
 
 async function bootstrap() {
-  clearInvalid(["boot-family", "boot-name", "boot-email", "boot-password"]);
-  const familyInput = byId("boot-family");
+  clearInvalid(["boot-name", "boot-email", "boot-password", "boot-password-confirm"]);
   const nameInput = byId("boot-name");
   const emailInput = byId("boot-email");
   const passwordInput = byId("boot-password");
+  const passwordConfirmInput = byId("boot-password-confirm");
 
-  const family_name = familyInput.value.trim();
   const display_name = nameInput.value.trim();
   const email = emailInput.value.trim();
   const password = passwordInput.value;
+  const password_confirm = passwordConfirmInput.value;
 
   let invalid = false;
-  if (!family_name) {
-    setInvalid(familyInput, true);
-    invalid = true;
-  }
   if (!display_name) {
     setInvalid(nameInput, true);
     invalid = true;
   }
-  if (!isValidEmail(email)) {
+  if (email && !isValidEmail(email)) {
     setInvalid(emailInput, true);
     invalid = true;
   }
   if (password.length < 8) {
     setInvalid(passwordInput, true);
+    invalid = true;
+  }
+  if (password !== password_confirm || password_confirm.length < 8) {
+    setInvalid(passwordConfirmInput, true);
     invalid = true;
   }
   if (invalid) {
@@ -1440,7 +1458,7 @@ async function bootstrap() {
 
   const data = await api("/auth/bootstrap", {
     method: "POST",
-    body: { family_name, display_name, email, password },
+    body: { display_name, email: email || null, password, password_confirm },
   });
 
   state.token = data.access_token;
@@ -1470,26 +1488,32 @@ function logout() {
 async function createMember() {
   if (!canManageMembers()) return;
 
-  clearInvalid(["member-name", "member-email", "member-password"]);
+  clearInvalid(["member-name", "member-email", "member-password", "member-password-confirm"]);
   const nameInput = byId("member-name");
   const emailInput = byId("member-email");
   const passwordInput = byId("member-password");
+  const passwordConfirmInput = byId("member-password-confirm");
 
   const display_name = nameInput.value.trim();
   const email = emailInput.value.trim();
   const password = passwordInput.value;
+  const password_confirm = passwordConfirmInput.value;
 
   let invalid = false;
   if (!display_name) {
     setInvalid(nameInput, true);
     invalid = true;
   }
-  if (!isValidEmail(email)) {
+  if (email && !isValidEmail(email)) {
     setInvalid(emailInput, true);
     invalid = true;
   }
-  if (password && password.length < 8) {
+  if (password.length < 8) {
     setInvalid(passwordInput, true);
+    invalid = true;
+  }
+  if (password !== password_confirm || password_confirm.length < 8) {
+    setInvalid(passwordConfirmInput, true);
     invalid = true;
   }
   if (invalid) {
@@ -1501,8 +1525,9 @@ async function createMember() {
     method: "POST",
     body: {
       display_name,
-      email,
-      password: password || null,
+      email: email || null,
+      password,
+      password_confirm,
       role: byId("member-role").value,
     },
   });
@@ -1510,6 +1535,7 @@ async function createMember() {
   nameInput.value = "";
   emailInput.value = "";
   passwordInput.value = "";
+  passwordConfirmInput.value = "";
   setSectionOpen("member-create-section", "toggle-member-create-btn", false, "Neues Mitglied", "Eingabe schließen");
   await refreshFamilyData();
 }
@@ -2096,10 +2122,12 @@ async function savePointsAdjust() {
   await refreshFamilyData();
 }
 
-familySelect.addEventListener("change", async (event) => {
-  state.familyId = Number(event.target.value);
-  await refreshFamilyData();
-});
+if (familySelect) {
+  familySelect.addEventListener("change", async (event) => {
+    state.familyId = Number(event.target.value);
+    await refreshFamilyData();
+  });
+}
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
@@ -2349,6 +2377,12 @@ byId("task-recurrence").addEventListener("change", syncTaskCreateTimingUI);
 byId("task-due-mode").addEventListener("change", syncTaskCreateTimingUI);
 byId("task-editor-recurrence").addEventListener("change", syncTaskEditorTimingUI);
 byId("task-editor-due-mode").addEventListener("change", syncTaskEditorTimingUI);
+byId("boot-password-visible").addEventListener("change", (event) =>
+  setPasswordInputVisibility(["boot-password", "boot-password-confirm"], event.target.checked)
+);
+byId("member-password-visible").addEventListener("change", (event) =>
+  setPasswordInputVisibility(["member-password", "member-password-confirm"], event.target.checked)
+);
 
 byId("login-btn").addEventListener("click", () => login().catch((error) => log("Login Fehler", { error: error.message })));
 byId("bootstrap-btn").addEventListener("click", () => bootstrap().catch((error) => log("Initialisierung Fehler", { error: error.message })));

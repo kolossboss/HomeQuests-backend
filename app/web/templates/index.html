@@ -28,12 +28,13 @@
 
         <div id="bootstrap-section" class="hidden">
           <h2>Erstinitialisierung</h2>
-          <p class="muted">Nur beim allerersten Start notwendig.</p>
+          <p class="muted">Nur beim allerersten Start notwendig. Der Haushalt wird automatisch angelegt.</p>
           <div class="form-grid">
-            <label>Familienname<input id="boot-family" type="text" placeholder="Familie" /></label>
             <label>Name<input id="boot-name" type="text" placeholder="Admin Name" /></label>
-            <label>E-Mail<input id="boot-email" type="email" placeholder="admin@example.com" /></label>
+            <label>E-Mail (optional)<input id="boot-email" type="email" placeholder="optional@example.com" /></label>
             <label>Passwort<input id="boot-password" type="password" placeholder="mind. 8 Zeichen" /></label>
+            <label>Passwort wiederholen<input id="boot-password-confirm" type="password" placeholder="Passwort wiederholen" /></label>
+            <label class="checkbox-line"><input id="boot-password-visible" type="checkbox" /> Passwort anzeigen</label>
           </div>
           <button id="bootstrap-btn">Initialisieren</button>
         </div>
@@ -46,7 +47,7 @@
             <p id="user-info" class="muted"></p>
           </div>
           <div class="toolbar-actions">
-            <label>Familie
+            <label id="family-select-wrap" class="hidden">Familie
               <select id="family-select"></select>
             </label>
             <button id="logout-btn">Logout</button>
@@ -176,8 +177,9 @@
             <h4>Neues Mitglied</h4>
             <div class="form-grid">
               <label>Name<input id="member-name" type="text" /></label>
-              <label>E-Mail<input id="member-email" type="email" /></label>
+              <label>E-Mail (optional)<input id="member-email" type="email" /></label>
               <label>Passwort (neu)<input id="member-password" type="password" /></label>
+              <label>Passwort wiederholen<input id="member-password-confirm" type="password" /></label>
               <label>Rolle
                 <select id="member-role">
                   <option value="admin">Admin</option>
@@ -185,6 +187,7 @@
                   <option value="child">Kind</option>
                 </select>
               </label>
+              <label class="checkbox-line"><input id="member-password-visible" type="checkbox" /> Passwort anzeigen</label>
             </div>
             <button id="create-member-btn">Mitglied hinzufügen</button>
           </div>
@@ -589,6 +592,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260219e"></script>
+    <script src="/static/app.js?v=20260220a"></script>
   </body>
 </html>
