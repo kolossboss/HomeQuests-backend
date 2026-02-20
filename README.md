@@ -28,6 +28,7 @@ Dieses Repo enthaelt das FastAPI-Backend plus Weboberflaeche.
 ## Lokal starten (Developer)
 
 ```bash
+docker volume create homequests_postgres_data
 docker compose up --build
 ```
 
@@ -77,8 +78,16 @@ Diese Datei zieht ein fertiges GHCR-Image (`pull_policy: always`).
 
 Setze im Stack mindestens:
 
+- `POSTGRES_DB`
+- `POSTGRES_USER`
 - `POSTGRES_PASSWORD`
+- `POSTGRES_VOLUME_NAME` (z. B. `homequests_postgres_data`)
 - `SECRET_KEY`
+
+Optional:
+
+- `DB_HOST` und `DB_PORT` (wenn DB nicht im selben Stack läuft)
+- `DATABASE_URL` (überschreibt alle Einzelwerte)
 
 Beispiel fuer starken `SECRET_KEY`:
 
@@ -91,6 +100,29 @@ Alternative:
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
+
+### Wichtige Fehlerbilder
+
+- Niemals `down -v` im Produktivbetrieb nutzen, da Volumes sonst gelöscht werden.
+- Das DB-Volume ist als externes Volume konfiguriert und muss existieren:
+  ```bash
+  docker volume create homequests_postgres_data
+  ```
+- Falls deine Altdaten noch in `familienplaner_postgres_data` liegen, setze:
+  ```bash
+  POSTGRES_VOLUME_NAME=familienplaner_postgres_data
+  ```
+
+- `could not translate host name "db" to address`
+  - Stack wurde nicht als kompletter Compose-Stack gestartet oder `DATABASE_URL` zeigt auf falschen Host.
+  - In Portainer immer `db` + `api` zusammen deployen oder `DATABASE_URL` auf externe DB setzen.
+
+- `Conflict. The container name "/homequests-db" is already in use`
+  - Altcontainer entfernen und Stack neu deployen:
+    ```bash
+    docker rm -f homequests-db homequests-api 2>/dev/null || true
+    ```
+  - Hinweis: Feste `container_name` sind jetzt aus den Compose-Dateien entfernt.
 
 ### GHCR privat vs. public
 
@@ -108,7 +140,7 @@ Wenn das Package public ist:
 2. PR auf `main`
 3. Merge auf `main`
 4. GitHub Action baut/pusht neues Image
-5. In Portainer Stack `Update/Re-deploy` ausfuehren
+5. In Portainer Stack `Update/Re-deploy` ausfuehren (Volume bleibt erhalten)
 
 ## Git-Workflow fuer dieses Repo
 
