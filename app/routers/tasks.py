@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -26,6 +26,7 @@ from ..schemas import (
     SpecialTaskTemplateCreate,
     SpecialTaskTemplateOut,
     SpecialTaskTemplateUpdate,
+    TaskActiveUpdate,
     TaskCreate,
     TaskOut,
     TaskReminderOut,
@@ -36,6 +37,14 @@ from ..schemas import (
 from ..services import emit_live_event
 
 router = APIRouter(tags=["tasks"])
+
+
+def _as_utc_naive(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _add_months(value: datetime, months: int) -> datetime:
@@ -56,15 +65,42 @@ def _add_months(value: datetime, months: int) -> datetime:
     return value.replace(year=year, month=month, day=day)
 
 
-def _next_due(due_at: datetime | None, recurrence_type: str) -> datetime | None:
-    base = due_at or datetime.utcnow()
+def _next_due(due_at: datetime | None, recurrence_type: str, active_weekdays: list[int] | None = None) -> datetime | None:
+    base = _as_utc_naive(due_at) or datetime.utcnow()
     if recurrence_type == RecurrenceTypeEnum.daily.value:
-        return base + timedelta(days=1)
+        allowed = sorted(set(active_weekdays or [0, 1, 2, 3, 4, 5, 6]))
+        candidate = base + timedelta(days=1)
+        for _ in range(14):
+            if candidate.weekday() in allowed:
+                return candidate
+            candidate += timedelta(days=1)
+        return candidate
     if recurrence_type == RecurrenceTypeEnum.weekly.value:
         return base + timedelta(days=7)
     if recurrence_type == RecurrenceTypeEnum.monthly.value:
         return _add_months(base, 1)
     return None
+
+
+def _align_due_for_active_task(
+    due_at: datetime | None,
+    recurrence_type: str,
+    active_weekdays: list[int] | None = None,
+) -> datetime | None:
+    due_at = _as_utc_naive(due_at)
+    if not due_at or recurrence_type == RecurrenceTypeEnum.none.value:
+        return due_at
+
+    now = datetime.utcnow()
+    candidate = due_at
+    for _ in range(370):
+        if candidate > now:
+            return candidate
+        next_candidate = _next_due(candidate, recurrence_type, active_weekdays)
+        if not next_candidate or next_candidate == candidate:
+            return candidate
+        candidate = next_candidate
+    return candidate
 
 
 def _ensure_assignee_in_family(db: Session, family_id: int, assignee_id: int) -> None:
@@ -142,6 +178,7 @@ def list_upcoming_task_reminders(
         db.query(Task)
         .filter(
             Task.family_id == family_id,
+            Task.is_active == True,  # noqa: E712
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.submitted]),
             Task.due_at.is_not(None),
         )
@@ -156,7 +193,10 @@ def list_upcoming_task_reminders(
     for task in query.all():
         if not task.due_at:
             continue
-        for offset in sorted(set(task.reminder_offsets_minutes or [])):
+        allowed_offsets = sorted(set(task.reminder_offsets_minutes or []))
+        if task.recurrence_type == RecurrenceTypeEnum.daily.value:
+            allowed_offsets = [offset for offset in allowed_offsets if offset in {15, 30, 60, 120}]
+        for offset in allowed_offsets:
             notify_at = task.due_at - timedelta(minutes=offset)
             if now <= notify_at <= window_end:
                 reminders.append(
@@ -191,11 +231,17 @@ def create_task(
         title=payload.title,
         description=payload.description,
         assignee_id=payload.assignee_id,
-        due_at=payload.due_at,
+        due_at=_align_due_for_active_task(
+            payload.due_at,
+            payload.recurrence_type.value,
+            payload.active_weekdays,
+        ),
         points=payload.points,
         reminder_offsets_minutes=payload.reminder_offsets_minutes,
+        active_weekdays=payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else [],
         recurrence_type=payload.recurrence_type.value,
         special_template_id=None,
+        is_active=True,
         created_by_id=current_user.id,
     )
     db.add(task)
@@ -231,10 +277,16 @@ def update_task(
     task.title = payload.title
     task.description = payload.description
     task.assignee_id = payload.assignee_id
-    task.due_at = payload.due_at
+    task.due_at = _align_due_for_active_task(
+        payload.due_at,
+        payload.recurrence_type.value,
+        payload.active_weekdays,
+    ) if payload.is_active else payload.due_at
     task.points = payload.points
     task.reminder_offsets_minutes = payload.reminder_offsets_minutes
+    task.active_weekdays = payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else []
     task.recurrence_type = payload.recurrence_type.value
+    task.is_active = payload.is_active
     task.status = payload.status
 
     # Keep workflow tables and points consistent when admin/parents adjust status manually.
@@ -297,10 +349,12 @@ def update_task(
                 title=task.title,
                 description=task.description,
                 assignee_id=task.assignee_id,
-                due_at=_next_due(task.due_at, task.recurrence_type),
+                due_at=_next_due(task.due_at, task.recurrence_type, task.active_weekdays),
                 points=task.points,
                 reminder_offsets_minutes=task.reminder_offsets_minutes,
+                active_weekdays=task.active_weekdays,
                 recurrence_type=task.recurrence_type,
+                is_active=True,
                 status=TaskStatusEnum.open,
                 created_by_id=current_user.id,
             )
@@ -318,7 +372,7 @@ def update_task(
         db,
         family_id=task.family_id,
         event_type="task.updated",
-        payload={"task_id": task.id, "status": task.status.value, "assignee_id": task.assignee_id},
+        payload={"task_id": task.id, "status": task.status.value, "is_active": task.is_active, "assignee_id": task.assignee_id},
     )
     db.commit()
     db.refresh(task)
@@ -502,8 +556,10 @@ def claim_special_task(
         due_at=None,
         points=template.points,
         reminder_offsets_minutes=[],
+        active_weekdays=[],
         recurrence_type=RecurrenceTypeEnum.none.value,
         special_template_id=template.id,
+        is_active=True,
         status=TaskStatusEnum.open,
         created_by_id=current_user.id,
     )
@@ -636,10 +692,12 @@ def review_task(
                 title=task.title,
                 description=task.description,
                 assignee_id=task.assignee_id,
-                due_at=_next_due(task.due_at, task.recurrence_type),
+                due_at=_next_due(task.due_at, task.recurrence_type, task.active_weekdays),
                 points=task.points,
                 reminder_offsets_minutes=task.reminder_offsets_minutes,
+                active_weekdays=task.active_weekdays,
                 recurrence_type=task.recurrence_type,
+                is_active=True,
                 status=TaskStatusEnum.open,
                 created_by_id=current_user.id,
             )
@@ -660,6 +718,36 @@ def review_task(
         family_id=task.family_id,
         event_type="task.reviewed",
         payload={"task_id": task.id, "status": task.status.value, "assignee_id": task.assignee_id},
+    )
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+@router.post("/tasks/{task_id}/active", response_model=TaskOut)
+def set_task_active(
+    task_id: int,
+    payload: TaskActiveUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
+
+    membership_context = get_membership_or_403(db, task.family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    task.is_active = payload.is_active
+    if task.is_active:
+        task.due_at = _align_due_for_active_task(task.due_at, task.recurrence_type, task.active_weekdays)
+
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=task.family_id,
+        event_type="task.updated",
+        payload={"task_id": task.id, "status": task.status.value, "is_active": task.is_active, "assignee_id": task.assignee_id},
     )
     db.commit()
     db.refresh(task)

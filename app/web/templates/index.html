@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260219a" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260221b" />
   </head>
   <body>
     <main class="container">
@@ -257,6 +257,19 @@
                   <option value="week_flexible">ganze Woche verfügbar</option>
                 </select>
               </label>
+              <label id="task-daily-time-row" class="hidden">Tägliche Uhrzeit<input id="task-daily-time" type="time" value="18:00" /></label>
+              <div id="task-weekdays-row" class="weekday-picker hidden">
+                <span>Aktive Tage</span>
+                <div id="task-weekdays" class="weekday-options">
+                  <label class="weekday-option"><input type="checkbox" value="0" checked />Mo</label>
+                  <label class="weekday-option"><input type="checkbox" value="1" checked />Di</label>
+                  <label class="weekday-option"><input type="checkbox" value="2" checked />Mi</label>
+                  <label class="weekday-option"><input type="checkbox" value="3" checked />Do</label>
+                  <label class="weekday-option"><input type="checkbox" value="4" checked />Fr</label>
+                  <label class="weekday-option"><input type="checkbox" value="5" checked />Sa</label>
+                  <label class="weekday-option"><input type="checkbox" value="6" checked />So</label>
+                </div>
+              </div>
               <label id="task-due-row">Fälligkeit<input id="task-due" type="datetime-local" /></label>
               <label>Punkte<input id="task-points" type="number" min="0" value="10" /></label>
             </div>
@@ -277,10 +290,16 @@
 
           <div id="child-task-categories-section" class="section-block hidden">
             <h4>Deine Aufgaben</h4>
-            <div class="child-task-columns">
+            <div class="child-task-primary">
+              <article class="task-category-card today-due-card">
+                <h5>Heute fällig</h5>
+                <div id="child-today-task-cards" class="task-card-list"></div>
+              </article>
+            </div>
+            <div class="child-task-columns child-task-secondary-columns">
               <article class="task-category-card">
-                <h5>Offene Aufgaben</h5>
-                <div id="child-open-task-cards" class="task-card-list"></div>
+                <h5>Demnächst fällig</h5>
+                <div id="child-upcoming-task-cards" class="task-card-list"></div>
               </article>
               <article class="task-category-card">
                 <h5>Wochenaufgaben</h5>
@@ -341,6 +360,19 @@
                   <option value="week_flexible">ganze Woche verfügbar</option>
                 </select>
               </label>
+              <label id="task-editor-daily-time-row" class="hidden">Tägliche Uhrzeit<input id="task-editor-daily-time" type="time" value="18:00" /></label>
+              <div id="task-editor-weekdays-row" class="weekday-picker hidden">
+                <span>Aktive Tage</span>
+                <div id="task-editor-weekdays" class="weekday-options">
+                  <label class="weekday-option"><input type="checkbox" value="0" checked />Mo</label>
+                  <label class="weekday-option"><input type="checkbox" value="1" checked />Di</label>
+                  <label class="weekday-option"><input type="checkbox" value="2" checked />Mi</label>
+                  <label class="weekday-option"><input type="checkbox" value="3" checked />Do</label>
+                  <label class="weekday-option"><input type="checkbox" value="4" checked />Fr</label>
+                  <label class="weekday-option"><input type="checkbox" value="5" checked />Sa</label>
+                  <label class="weekday-option"><input type="checkbox" value="6" checked />So</label>
+                </div>
+              </div>
               <label id="task-editor-due-row">Fälligkeit<input id="task-editor-due" type="datetime-local" /></label>
               <label>Status
                 <select id="task-editor-status">
@@ -348,6 +380,12 @@
                   <option value="submitted">wartet auf Bestätigung</option>
                   <option value="approved">bestätigt</option>
                   <option value="rejected">abgelehnt</option>
+                </select>
+              </label>
+              <label>Aktiv
+                <select id="task-editor-active">
+                  <option value="true">ja</option>
+                  <option value="false">nein</option>
                 </select>
               </label>
             </div>
@@ -592,6 +630,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260220a"></script>
+    <script src="/static/app.js?v=20260221d"></script>
   </body>
 </html>

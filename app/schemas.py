@@ -89,6 +89,8 @@ class MemberUpdate(BaseModel):
 
 
 ALLOWED_TASK_REMINDER_MINUTES = {15, 30, 60, 120, 1440, 2880}
+ALLOWED_DAILY_REMINDER_MINUTES = {15, 30, 60, 120}
+ALLOWED_WEEKDAYS = {0, 1, 2, 3, 4, 5, 6}
 
 
 def _normalize_task_reminders(value: list[int]) -> list[int]:
@@ -100,6 +102,14 @@ def _normalize_task_reminders(value: list[int]) -> list[int]:
     return unique_sorted
 
 
+def _normalize_weekdays(value: list[int]) -> list[int]:
+    unique_sorted = sorted(set(value))
+    invalid = [entry for entry in unique_sorted if entry not in ALLOWED_WEEKDAYS]
+    if invalid:
+        raise ValueError("Ungültige Wochentage. Erlaubt sind 0=Mo bis 6=So")
+    return unique_sorted
+
+
 class TaskCreate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
     description: str | None = None
@@ -107,12 +117,36 @@ class TaskCreate(BaseModel):
     due_at: datetime | None = None
     points: int = Field(default=0, ge=0)
     reminder_offsets_minutes: list[int] = Field(default_factory=list)
+    active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
 
     @field_validator("reminder_offsets_minutes")
     @classmethod
     def validate_reminder_offsets_minutes(cls, value: list[int]) -> list[int]:
         return _normalize_task_reminders(value)
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @model_validator(mode="after")
+    def validate_task_schedule(self):
+        if self.recurrence_type == RecurrenceTypeEnum.daily:
+            if not self.due_at:
+                raise ValueError("Bei täglicher Wiederholung ist eine Uhrzeit erforderlich")
+            if not self.active_weekdays:
+                raise ValueError("Bei täglicher Wiederholung muss mindestens ein Wochentag gewählt sein")
+            invalid_daily = [entry for entry in self.reminder_offsets_minutes if entry not in ALLOWED_DAILY_REMINDER_MINUTES]
+            if invalid_daily:
+                raise ValueError("Bei täglicher Wiederholung sind nur Erinnerungen bis 2 Stunden erlaubt")
+        elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
+            if self.reminder_offsets_minutes:
+                raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
+            self.active_weekdays = []
+        else:
+            self.active_weekdays = []
+        return self
 
 
 class TaskUpdate(BaseModel):
@@ -122,13 +156,38 @@ class TaskUpdate(BaseModel):
     due_at: datetime | None = None
     points: int = Field(default=0, ge=0)
     reminder_offsets_minutes: list[int] = Field(default_factory=list)
+    active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
+    is_active: bool = True
     status: TaskStatusEnum = TaskStatusEnum.open
 
     @field_validator("reminder_offsets_minutes")
     @classmethod
     def validate_reminder_offsets_minutes(cls, value: list[int]) -> list[int]:
         return _normalize_task_reminders(value)
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @model_validator(mode="after")
+    def validate_task_schedule(self):
+        if self.recurrence_type == RecurrenceTypeEnum.daily:
+            if not self.due_at:
+                raise ValueError("Bei täglicher Wiederholung ist eine Uhrzeit erforderlich")
+            if not self.active_weekdays:
+                raise ValueError("Bei täglicher Wiederholung muss mindestens ein Wochentag gewählt sein")
+            invalid_daily = [entry for entry in self.reminder_offsets_minutes if entry not in ALLOWED_DAILY_REMINDER_MINUTES]
+            if invalid_daily:
+                raise ValueError("Bei täglicher Wiederholung sind nur Erinnerungen bis 2 Stunden erlaubt")
+        elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
+            if self.reminder_offsets_minutes:
+                raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
+            self.active_weekdays = []
+        else:
+            self.active_weekdays = []
+        return self
 
 
 class TaskOut(BaseModel):
@@ -140,8 +199,10 @@ class TaskOut(BaseModel):
     due_at: datetime | None
     points: int
     reminder_offsets_minutes: list[int]
+    active_weekdays: list[int]
     recurrence_type: RecurrenceTypeEnum
     special_template_id: int | None
+    is_active: bool
     status: TaskStatusEnum
     created_by_id: int
     created_at: datetime
@@ -166,6 +227,10 @@ class TaskReminderOut(BaseModel):
     due_at: datetime
     reminder_offset_minutes: int
     notify_at: datetime
+
+
+class TaskActiveUpdate(BaseModel):
+    is_active: bool
 
 
 class CalendarEventCreate(BaseModel):

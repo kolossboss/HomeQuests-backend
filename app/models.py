@@ -100,11 +100,13 @@ class Task(Base):
     due_at: Mapped[datetime | None] = mapped_column(DateTime)
     points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reminder_offsets_minutes: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
+    active_weekdays: Mapped[list[int]] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6], nullable=False)
     recurrence_type: Mapped[str] = mapped_column(String(16), default=RecurrenceTypeEnum.none.value, nullable=False)
     special_template_id: Mapped[int | None] = mapped_column(
         ForeignKey("special_task_templates.id", ondelete="SET NULL"),
         index=True,
     )
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     status: Mapped[TaskStatusEnum] = mapped_column(SqlEnum(TaskStatusEnum), default=TaskStatusEnum.open, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
