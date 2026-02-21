@@ -1,17 +1,17 @@
-name: ${COMPOSE_PROJECT_NAME:-homequests}
+name: homequests
 
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-homequests}
-      POSTGRES_USER: ${POSTGRES_USER:-homequests}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-homequests}
+      POSTGRES_DB: homequests
+      POSTGRES_USER: homequests
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-homequests} -d ${POSTGRES_DB:-homequests}"]
+      test: ["CMD-SHELL", "pg_isready -U homequests -d homequests"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -21,9 +21,9 @@ services:
       context: .
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-homequests}:${POSTGRES_PASSWORD:-homequests}@${DB_HOST:-db}:${DB_PORT:-5432}/${POSTGRES_DB:-homequests}}
-      SECRET_KEY: ${SECRET_KEY:-CHANGE_THIS_SECRET}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-525600}
+      DATABASE_URL: postgresql+psycopg2://homequests:${POSTGRES_PASSWORD}@db:5432/homequests
+      SECRET_KEY: ${SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: 525600
     depends_on:
       db:
         condition: service_healthy
@@ -32,5 +32,3 @@ services:
 
 volumes:
   postgres_data:
-    external: true
-    name: ${POSTGRES_VOLUME_NAME:-homequests_postgres_data}
