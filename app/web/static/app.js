@@ -41,6 +41,9 @@ const TASK_REMINDER_LABELS = {
   1440: "1 Tag",
   2880: "2 Tage",
 };
+const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const DAILY_REMINDER_OFFSETS = [15, 30, 60, 120];
+const ALL_REMINDER_OFFSETS = [15, 30, 60, 120, 1440, 2880];
 
 function byId(id) {
   return document.getElementById(id);
@@ -82,6 +85,13 @@ function toIsoOrNull(datetimeLocal) {
   return new Date(datetimeLocal).toISOString();
 }
 
+function toLocalIsoNoTimezoneOrNull(datetimeLocal) {
+  if (!datetimeLocal) return null;
+  const value = String(datetimeLocal).trim();
+  if (!value) return null;
+  return value.length === 16 ? `${value}:00` : value;
+}
+
 function toDatetimeLocalValue(isoString) {
   if (!isoString) return "";
   const date = new Date(isoString);
@@ -89,10 +99,19 @@ function toDatetimeLocalValue(isoString) {
   return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 16);
 }
 
+function toTimeValueFromIso(isoString) {
+  if (!isoString) return "18:00";
+  const localValue = toDatetimeLocalValue(isoString);
+  return localValue ? localValue.slice(11, 16) : "18:00";
+}
+
 function fmtDate(value) {
   if (!value) return "-";
   try {
-    return new Date(value).toLocaleString("de-DE");
+    const date = new Date(value);
+    const datePart = date.toLocaleDateString("de-DE");
+    const timePart = date.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    return `${datePart} ${timePart}`;
   } catch (_) {
     return value;
   }
@@ -155,6 +174,82 @@ function setSelectedReminderOffsets(containerId, offsets = []) {
   });
 }
 
+function applyReminderOptionRestrictions(containerId, allowedOffsets, clearHidden = true) {
+  const container = byId(containerId);
+  if (!container) return;
+  const allowed = new Set((allowedOffsets || []).map((entry) => Number(entry)));
+  Array.from(container.querySelectorAll("input[type=\"checkbox\"]")).forEach((checkbox) => {
+    const value = Number(checkbox.value);
+    const visible = allowed.has(value);
+    if (!visible && clearHidden) checkbox.checked = false;
+    checkbox.disabled = !visible;
+    const chip = checkbox.closest(".reminder-option");
+    if (chip) chip.classList.toggle("hidden", !visible);
+  });
+}
+
+function getSelectedWeekdays(containerId) {
+  const container = byId(containerId);
+  if (!container) return [];
+  return Array.from(container.querySelectorAll("input[type=\"checkbox\"]:checked"))
+    .map((checkbox) => Number(checkbox.value))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+    .sort((a, b) => a - b);
+}
+
+function setSelectedWeekdays(containerId, weekdays = []) {
+  const container = byId(containerId);
+  if (!container) return;
+  const selected = new Set((weekdays || []).map((entry) => Number(entry)));
+  Array.from(container.querySelectorAll("input[type=\"checkbox\"]")).forEach((checkbox) => {
+    checkbox.checked = selected.has(Number(checkbox.value));
+  });
+}
+
+function weekdaysText(weekdays = []) {
+  const normalized = Array.from(new Set((weekdays || []).map((entry) => Number(entry))))
+    .filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+    .sort((a, b) => a - b);
+  if (!normalized.length) return "Mo-So";
+  if (normalized.length === 7) return "Mo-So";
+  return normalized.map((weekday) => WEEKDAY_LABELS[weekday]).join(", ");
+}
+
+function weekdayFromDate(date) {
+  const jsDay = date.getDay();
+  return jsDay === 0 ? 6 : jsDay - 1;
+}
+
+function buildNextDailyDueIso(timeValue, weekdays = []) {
+  if (!timeValue) return null;
+  const [hourStr, minuteStr] = String(timeValue).split(":");
+  const hours = Number(hourStr);
+  const minutes = Number(minuteStr);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+
+  const allowed = new Set(
+    (weekdays || []).map((entry) => Number(entry)).filter((value) => Number.isInteger(value) && value >= 0 && value <= 6)
+  );
+  if (!allowed.size) return null;
+
+  const now = new Date();
+  for (let offset = 0; offset < 14; offset += 1) {
+    const candidate = new Date(now);
+    candidate.setSeconds(0, 0);
+    candidate.setDate(now.getDate() + offset);
+    candidate.setHours(hours, minutes, 0, 0);
+    if (!allowed.has(weekdayFromDate(candidate))) continue;
+    if (candidate <= now) continue;
+    const year = candidate.getFullYear();
+    const month = String(candidate.getMonth() + 1).padStart(2, "0");
+    const day = String(candidate.getDate()).padStart(2, "0");
+    const hour = String(candidate.getHours()).padStart(2, "0");
+    const minute = String(candidate.getMinutes()).padStart(2, "0");
+    return `${year}-${month}-${day}T${hour}:${minute}:00`;
+  }
+  return null;
+}
+
 function specialIntervalLabel(intervalType) {
   const map = {
     daily: "täglich",
@@ -178,9 +273,25 @@ function pointsDeltaLabel(delta) {
 }
 
 function taskDueText(task) {
+  if (task.due_at && task.recurrence_type === "daily") return `Nächste Fälligkeit: ${fmtDate(task.due_at)}`;
   if (task.due_at) return fmtDate(task.due_at);
   if (task.recurrence_type === "weekly") return "Diese Woche frei planbar";
   return "kein fester Zeitpunkt";
+}
+
+function taskRecurrenceText(task) {
+  const base = recurrenceLabel(task.recurrence_type);
+  if (task.recurrence_type === "daily") {
+    return `${base} (${weekdaysText(task.active_weekdays || [])})`;
+  }
+  return base;
+}
+
+function taskScheduleMeta(task) {
+  if (task.recurrence_type === "daily") {
+    return `Wiederholung: ${taskRecurrenceText(task)} • ${taskDueText(task)}`;
+  }
+  return `Wiederholung: ${taskRecurrenceText(task)} • Fällig: ${taskDueText(task)}`;
 }
 
 function parseDateSafe(value) {
@@ -189,8 +300,71 @@ function parseDateSafe(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function startOfDay(date) {
+  const value = new Date(date);
+  value.setHours(0, 0, 0, 0);
+  return value;
+}
+
+function isSameCalendarDay(first, second) {
+  return first.getFullYear() === second.getFullYear()
+    && first.getMonth() === second.getMonth()
+    && first.getDate() === second.getDate();
+}
+
+function childTaskDueText(task) {
+  if (task.special_template_id && !task.due_at) {
+    return "Heute";
+  }
+  const dueDate = parseDateSafe(task.due_at);
+  if (!dueDate) return taskDueText(task);
+
+  const now = new Date();
+  const tomorrow = startOfDay(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const timePart = dueDate.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+
+  if (isSameCalendarDay(dueDate, now)) {
+    return `Heute ${timePart}`;
+  }
+  if (isSameCalendarDay(dueDate, tomorrow)) {
+    return `Morgen ${timePart}`;
+  }
+  return fmtDate(task.due_at);
+}
+
 function getTaskActivityDate(task) {
   return parseDateSafe(task.updated_at || task.created_at || task.due_at);
+}
+
+function recurringTaskKey(task) {
+  if (task.recurrence_type === "none") return null;
+  return [
+    task.assignee_id,
+    task.title || "",
+    task.description || "",
+    task.recurrence_type || "",
+    task.special_template_id || 0,
+  ].join("|");
+}
+
+function newestRecurringEntries(tasks) {
+  const fixed = [];
+  const latestByKey = new Map();
+  tasks.forEach((task) => {
+    const key = recurringTaskKey(task);
+    if (!key) {
+      fixed.push(task);
+      return;
+    }
+    const existing = latestByKey.get(key);
+    const currentTime = getTaskActivityDate(task)?.getTime() || 0;
+    const existingTime = existing ? (getTaskActivityDate(existing)?.getTime() || 0) : -1;
+    if (!existing || currentTime >= existingTime) {
+      latestByKey.set(key, task);
+    }
+  });
+  return [...fixed, ...Array.from(latestByKey.values())];
 }
 
 function startOfWeek(baseDate = new Date()) {
@@ -338,9 +512,10 @@ function getSelectedFamilyId() {
 }
 
 function getVisibleTasksForDashboard() {
-  if (!isChildRole() || !state.me) return state.tasks;
+  const activeOrDoneTasks = state.tasks.filter((task) => task.is_active !== false || task.status === "approved");
+  if (!isChildRole() || !state.me) return activeOrDoneTasks;
   const now = new Date();
-  return state.tasks.filter(
+  return activeOrDoneTasks.filter(
     (task) =>
       task.assignee_id === state.me.id &&
       !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)
@@ -652,6 +827,7 @@ async function initAuthPanel() {
 
 function syncTaskCreateTimingUI() {
   const recurrence = byId("task-recurrence").value;
+  const daily = recurrence === "daily";
   const weekly = recurrence === "weekly";
   const dueMode = byId("task-due-mode").value;
 
@@ -659,14 +835,26 @@ function syncTaskCreateTimingUI() {
     byId("task-due-mode").value = "exact";
   }
 
+  toggleHidden("task-daily-time-row", !daily);
+  toggleHidden("task-weekdays-row", !daily);
+  if (!daily) {
+    setInvalid(byId("task-weekdays-row"), false);
+    setInvalid(byId("task-daily-time"), false);
+  }
   toggleHidden("task-due-mode-row", !weekly);
-  const hideDue = weekly && dueMode === "week_flexible";
+  const hideDue = daily || (weekly && dueMode === "week_flexible");
   toggleHidden("task-due-row", hideDue);
   if (hideDue) byId("task-due").value = "";
+
+  const hideReminders = weekly && dueMode === "week_flexible";
+  toggleHidden("task-reminder-wrap", hideReminders);
+  if (hideReminders) setSelectedReminderOffsets("task-reminder-options", []);
+  applyReminderOptionRestrictions("task-reminder-options", daily ? DAILY_REMINDER_OFFSETS : ALL_REMINDER_OFFSETS);
 }
 
 function syncTaskEditorTimingUI() {
   const recurrence = byId("task-editor-recurrence").value;
+  const daily = recurrence === "daily";
   const weekly = recurrence === "weekly";
   const dueMode = byId("task-editor-due-mode").value;
 
@@ -674,10 +862,21 @@ function syncTaskEditorTimingUI() {
     byId("task-editor-due-mode").value = "exact";
   }
 
+  toggleHidden("task-editor-daily-time-row", !daily);
+  toggleHidden("task-editor-weekdays-row", !daily);
+  if (!daily) {
+    setInvalid(byId("task-editor-weekdays-row"), false);
+    setInvalid(byId("task-editor-daily-time"), false);
+  }
   toggleHidden("task-editor-due-mode-row", !weekly);
-  const hideDue = weekly && dueMode === "week_flexible";
+  const hideDue = daily || (weekly && dueMode === "week_flexible");
   toggleHidden("task-editor-due-row", hideDue);
   if (hideDue) byId("task-editor-due").value = "";
+
+  const hideReminders = weekly && dueMode === "week_flexible";
+  toggleHidden("task-editor-reminder-wrap", hideReminders);
+  if (hideReminders) setSelectedReminderOffsets("task-editor-reminder-options", []);
+  applyReminderOptionRestrictions("task-editor-reminder-options", daily ? DAILY_REMINDER_OFFSETS : ALL_REMINDER_OFFSETS);
 }
 
 function renderMembers() {
@@ -835,14 +1034,15 @@ function renderTasks() {
           (task) => `<article class="entity-card">
             <div class="entity-card-head">
               <p class="entity-card-title">${task.title}</p>
-              <span class="entity-tag">${statusLabel(task.status)}</span>
+              <span class="entity-tag">${task.is_active === false ? "deaktiviert" : statusLabel(task.status)}</span>
             </div>
             <p class="entity-card-meta">${task.description || "Ohne Beschreibung"}</p>
             <p class="entity-card-meta">Zuständig: ${memberName(task.assignee_id)} • ${task.points} Punkte</p>
-            <p class="entity-card-meta">Wiederholung: ${recurrenceLabel(task.recurrence_type)} • Fällig: ${taskDueText(task)}</p>
+            <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
             <div class="request-card-actions">
               <button data-task-action="edit" data-task-id="${task.id}">Bearbeiten</button>
+              <button data-task-action="toggle-active" data-task-id="${task.id}">${task.is_active === false ? "Aktivieren" : "Deaktivieren"}</button>
               <button class="btn-secondary" data-task-action="delete" data-task-id="${task.id}">Löschen</button>
             </div>
           </article>`
@@ -862,7 +1062,7 @@ function renderTasks() {
             <p class="entity-card-meta">${task.description || "Ohne Beschreibung"}</p>
             <p class="entity-card-meta">Zuständig: ${memberName(task.assignee_id)} • ${task.points} Punkte</p>
             <p class="entity-card-meta">Abgeschlossen am: ${fmtDate(task.updated_at || task.created_at)}</p>
-            <p class="entity-card-meta">Wiederholung: ${recurrenceLabel(task.recurrence_type)} • Fällig: ${taskDueText(task)}</p>
+            <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
           </article>`
         )
@@ -886,23 +1086,36 @@ function renderChildTaskLists() {
   if (!state.me) return;
 
   const ownTasks = state.tasks.filter((task) => task.assignee_id === state.me.id);
+  const ownVisibleTasks = ownTasks.filter((task) => task.is_active !== false || task.status === "approved");
   const now = new Date();
-  const actionableTasks = ownTasks
+  const tomorrowStart = startOfDay(now);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const actionableTasks = newestRecurringEntries(ownVisibleTasks
     .filter((task) => task.status === "open" || task.status === "rejected")
-    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now));
+    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)));
 
   const overdueTasks = actionableTasks.filter((task) => task.due_at && new Date(task.due_at) < now);
   const weekTasks = actionableTasks.filter(
     (task) => task.recurrence_type === "weekly" && !(task.due_at && new Date(task.due_at) < now)
   );
-  const openTasks = actionableTasks.filter(
-    (task) =>
-      !(task.due_at && new Date(task.due_at) < now) &&
-      task.recurrence_type !== "weekly"
-  );
+  const todayTasks = actionableTasks.filter((task) => {
+    if (task.recurrence_type === "weekly") return false;
+    if (task.special_template_id) return true;
+    const due = parseDateSafe(task.due_at);
+    return Boolean(due) && due >= now && due < tomorrowStart;
+  });
+  const upcomingTasks = actionableTasks.filter((task) => {
+    if (task.recurrence_type === "weekly") return false;
+    if (task.special_template_id) return false;
+    const due = parseDateSafe(task.due_at);
+    if (!due) return true;
+    return due >= tomorrowStart;
+  });
 
-  const waitingTasks = ownTasks.filter((task) => task.status === "submitted");
-  const completedTasks = ownTasks.filter((task) => task.status === "approved");
+  const waitingTasks = newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "submitted"));
+  const completedTasks = ownVisibleTasks.filter(
+    (task) => task.status === "approved" && task.recurrence_type === "none"
+  );
 
   function renderTaskCards(targetId, tasks, emptyText, overdue = false) {
     const target = byId(targetId);
@@ -916,13 +1129,14 @@ function renderChildTaskLists() {
       .map(
         (task) => `<button class="task-card-btn ${overdue ? "overdue" : ""}" data-task-id="${task.id}">
           <span class="task-card-title">${task.title}</span>
-          <span class="task-card-meta">${taskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
+          <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
         </button>`
       )
       .join("");
   }
 
-  renderTaskCards("child-open-task-cards", openTasks, "Keine offenen Aufgaben");
+  renderTaskCards("child-today-task-cards", todayTasks, "Heute keine fälligen Aufgaben");
+  renderTaskCards("child-upcoming-task-cards", upcomingTasks, "Keine Aufgaben für die nächsten Tage");
   renderTaskCards("child-week-task-cards", weekTasks, "Keine Wochenaufgaben");
   renderTaskCards("child-overdue-task-cards", overdueTasks, "Keine überfälligen Aufgaben", true);
 
@@ -931,7 +1145,7 @@ function renderChildTaskLists() {
       .map(
         (task) => `<article class="request-card">
           <p class="request-card-title">${task.title}</p>
-          <p class="request-card-meta">Eingereicht: ${fmtDate(task.updated_at || task.created_at)} • ${taskDueText(task)}</p>
+          <p class="request-card-meta">Eingereicht: ${fmtDate(task.updated_at || task.created_at)} • ${childTaskDueText(task)}</p>
         </article>`
       )
       .join("")
@@ -942,7 +1156,7 @@ function renderChildTaskLists() {
       .map(
         (task) => `<article class="request-card">
           <p class="request-card-title">${task.title}</p>
-          <p class="request-card-meta">Bestätigt • ${taskDueText(task)}</p>
+          <p class="request-card-meta">Bestätigt • ${childTaskDueText(task)}</p>
         </article>`
       )
       .join("")
@@ -1061,9 +1275,13 @@ function fillTaskEditorForm() {
   byId("task-editor-recurrence").value = task.recurrence_type || "none";
   byId("task-editor-due-mode").value = isWeeklyFlexible ? "week_flexible" : "exact";
   byId("task-editor-due").value = toDatetimeLocalValue(task.due_at);
+  byId("task-editor-daily-time").value = toTimeValueFromIso(task.due_at);
+  setSelectedWeekdays("task-editor-weekdays", (task.active_weekdays && task.active_weekdays.length) ? task.active_weekdays : [0, 1, 2, 3, 4, 5, 6]);
+  setInvalid(byId("task-editor-weekdays-row"), false);
   byId("task-editor-points").value = String(task.points ?? 0);
   setSelectedReminderOffsets("task-editor-reminder-options", task.reminder_offsets_minutes || []);
   byId("task-editor-status").value = task.status || "open";
+  byId("task-editor-active").value = task.is_active === false ? "false" : "true";
   syncTaskEditorTimingUI();
 }
 
@@ -1714,19 +1932,23 @@ async function claimSpecialTaskTemplate(templateId) {
 async function createTask() {
   if (!isManagerRole()) return;
 
-  clearInvalid(["task-title", "task-assignee", "task-points", "task-due"]);
+  clearInvalid(["task-title", "task-assignee", "task-points", "task-due", "task-daily-time"]);
   const titleInput = byId("task-title");
   const assigneeInput = byId("task-assignee");
   const pointsInput = byId("task-points");
   const dueInput = byId("task-due");
+  const dailyTimeInput = byId("task-daily-time");
 
   const title = titleInput.value.trim();
   const assignee_id = Number(assigneeInput.value);
   const points = Number(pointsInput.value || 0);
   const recurrence_type = byId("task-recurrence").value;
+  const active_weekdays = recurrence_type === "daily" ? getSelectedWeekdays("task-weekdays") : [];
   const dueMode = recurrence_type === "weekly" ? byId("task-due-mode").value : "exact";
   const dueRaw = dueInput.value;
-  const reminder_offsets_minutes = getSelectedReminderOffsets("task-reminder-options");
+  const reminder_offsets_minutes = (recurrence_type === "weekly" && dueMode === "week_flexible")
+    ? []
+    : getSelectedReminderOffsets("task-reminder-options");
 
   let invalid = false;
   if (!title) {
@@ -1741,11 +1963,21 @@ async function createTask() {
     setInvalid(pointsInput, true);
     invalid = true;
   }
-  if (recurrence_type === "weekly" && dueMode === "exact" && !dueRaw) {
+  if (recurrence_type === "daily" && !dailyTimeInput.value) {
+    setInvalid(dailyTimeInput, true);
+    invalid = true;
+  }
+  if (recurrence_type === "daily" && active_weekdays.length === 0) {
+    setInvalid(byId("task-weekdays-row"), true);
+    invalid = true;
+  } else {
+    setInvalid(byId("task-weekdays-row"), false);
+  }
+  if ((recurrence_type === "weekly" && dueMode === "exact" && !dueRaw) || ((recurrence_type === "none" || recurrence_type === "monthly") && reminder_offsets_minutes.length > 0 && !dueRaw)) {
     setInvalid(dueInput, true);
     invalid = true;
   }
-  if (reminder_offsets_minutes.length > 0 && !dueRaw) {
+  if (recurrence_type === "weekly" && dueMode === "exact" && reminder_offsets_minutes.length > 0 && !dueRaw) {
     setInvalid(dueInput, true);
     invalid = true;
   }
@@ -1754,7 +1986,19 @@ async function createTask() {
     return;
   }
 
-  const due_at = recurrence_type === "weekly" && dueMode === "week_flexible" ? null : toIsoOrNull(dueRaw);
+  let due_at = null;
+  if (recurrence_type === "daily") {
+    due_at = buildNextDailyDueIso(dailyTimeInput.value, active_weekdays);
+    if (!due_at) {
+      setInvalid(dailyTimeInput, true);
+      log("Aufgabe: Ungültige tägliche Uhrzeit oder Wochentage");
+      return;
+    }
+  } else if (recurrence_type === "weekly" && dueMode === "week_flexible") {
+    due_at = null;
+  } else {
+    due_at = toLocalIsoNoTimezoneOrNull(dueRaw);
+  }
 
   await api(`/families/${getSelectedFamilyId()}/tasks`, {
     method: "POST",
@@ -1765,6 +2009,7 @@ async function createTask() {
       due_at,
       points,
       reminder_offsets_minutes,
+      active_weekdays,
       recurrence_type,
     },
   });
@@ -1772,8 +2017,11 @@ async function createTask() {
   titleInput.value = "";
   byId("task-description").value = "";
   byId("task-due").value = "";
+  byId("task-daily-time").value = "18:00";
+  setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
   byId("task-due-mode").value = "exact";
   setSelectedReminderOffsets("task-reminder-options", []);
+  setInvalid(byId("task-weekdays-row"), false);
   syncTaskCreateTimingUI();
   setSectionOpen("task-create-section", "toggle-task-create-btn", false, "Neue Aufgabe", "Eingabe schließen");
   await refreshFamilyData();
@@ -1782,7 +2030,7 @@ async function createTask() {
 async function updateTask() {
   if (!isManagerRole()) return;
 
-  clearInvalid(["task-editor-title", "task-editor-assignee", "task-editor-points", "task-editor-due"]);
+  clearInvalid(["task-editor-title", "task-editor-assignee", "task-editor-points", "task-editor-due", "task-editor-daily-time"]);
   const taskId = state.selectedTaskId;
   if (!taskId) {
     log("Bitte zuerst eine Aufgabe in der Tabelle auf Bearbeiten klicken");
@@ -1793,14 +2041,18 @@ async function updateTask() {
   const assigneeInput = byId("task-editor-assignee");
   const pointsInput = byId("task-editor-points");
   const dueInput = byId("task-editor-due");
+  const dailyTimeInput = byId("task-editor-daily-time");
 
   const title = titleInput.value.trim();
   const assignee_id = Number(assigneeInput.value);
   const points = Number(pointsInput.value || 0);
   const recurrence_type = byId("task-editor-recurrence").value;
+  const active_weekdays = recurrence_type === "daily" ? getSelectedWeekdays("task-editor-weekdays") : [];
   const dueMode = recurrence_type === "weekly" ? byId("task-editor-due-mode").value : "exact";
   const dueRaw = dueInput.value;
-  const reminder_offsets_minutes = getSelectedReminderOffsets("task-editor-reminder-options");
+  const reminder_offsets_minutes = (recurrence_type === "weekly" && dueMode === "week_flexible")
+    ? []
+    : getSelectedReminderOffsets("task-editor-reminder-options");
 
   let invalid = false;
   if (!title) {
@@ -1815,11 +2067,21 @@ async function updateTask() {
     setInvalid(pointsInput, true);
     invalid = true;
   }
-  if (recurrence_type === "weekly" && dueMode === "exact" && !dueRaw) {
+  if (recurrence_type === "daily" && !dailyTimeInput.value) {
+    setInvalid(dailyTimeInput, true);
+    invalid = true;
+  }
+  if (recurrence_type === "daily" && active_weekdays.length === 0) {
+    setInvalid(byId("task-editor-weekdays-row"), true);
+    invalid = true;
+  } else {
+    setInvalid(byId("task-editor-weekdays-row"), false);
+  }
+  if ((recurrence_type === "weekly" && dueMode === "exact" && !dueRaw) || ((recurrence_type === "none" || recurrence_type === "monthly") && reminder_offsets_minutes.length > 0 && !dueRaw)) {
     setInvalid(dueInput, true);
     invalid = true;
   }
-  if (reminder_offsets_minutes.length > 0 && !dueRaw) {
+  if (recurrence_type === "weekly" && dueMode === "exact" && reminder_offsets_minutes.length > 0 && !dueRaw) {
     setInvalid(dueInput, true);
     invalid = true;
   }
@@ -1828,7 +2090,19 @@ async function updateTask() {
     return;
   }
 
-  const due_at = recurrence_type === "weekly" && dueMode === "week_flexible" ? null : toIsoOrNull(dueRaw);
+  let due_at = null;
+  if (recurrence_type === "daily") {
+    due_at = buildNextDailyDueIso(dailyTimeInput.value, active_weekdays);
+    if (!due_at) {
+      setInvalid(dailyTimeInput, true);
+      log("Aufgabe bearbeiten: Ungültige tägliche Uhrzeit oder Wochentage");
+      return;
+    }
+  } else if (recurrence_type === "weekly" && dueMode === "week_flexible") {
+    due_at = null;
+  } else {
+    due_at = toLocalIsoNoTimezoneOrNull(dueRaw);
+  }
 
   await api(`/tasks/${taskId}`, {
     method: "PUT",
@@ -1839,6 +2113,8 @@ async function updateTask() {
       due_at,
       points,
       reminder_offsets_minutes,
+      active_weekdays,
+      is_active: byId("task-editor-active").value === "true",
       status: byId("task-editor-status").value,
       recurrence_type,
     },
@@ -1862,6 +2138,15 @@ async function deleteTask(taskId) {
   if (state.selectedTaskId === taskId) {
     closeTaskEditor();
   }
+  await refreshFamilyData();
+}
+
+async function setTaskActive(taskId, is_active) {
+  if (!isManagerRole()) return;
+  await api(`/tasks/${taskId}/active`, {
+    method: "POST",
+    body: { is_active },
+  });
   await refreshFamilyData();
 }
 
@@ -2162,6 +2447,20 @@ byId("tasks-manager-cards").addEventListener("click", async (event) => {
       log("Aufgabe löschen fehlgeschlagen", { error: error.message });
     }
   }
+
+  if (action === "toggle-active") {
+    const task = state.tasks.find((entry) => entry.id === taskId);
+    if (!task) return;
+    const nextActive = task.is_active === false;
+    const actionLabel = nextActive ? "aktivieren" : "deaktivieren";
+    const confirmed = window.confirm(`Aufgabe \"${task.title}\" wirklich ${actionLabel}?`);
+    if (!confirmed) return;
+    try {
+      await setTaskActive(taskId, nextActive);
+    } catch (error) {
+      log("Aufgabe aktiv/deaktivieren fehlgeschlagen", { error: error.message });
+    }
+  }
 });
 
 byId("special-task-manager-cards").addEventListener("click", async (event) => {
@@ -2333,9 +2632,8 @@ byId("child-task-categories-section").addEventListener("click", async (event) =>
   const confirmed = window.confirm(`Aufgabe \"${taskTitle}\" als erledigt melden?`);
   if (!confirmed) return;
 
-  const note = window.prompt("Optionaler Kommentar zur Erledigung:", "") || null;
   try {
-    await submitTaskById(taskId, note);
+    await submitTaskById(taskId, null);
   } catch (error) {
     log("Aufgabe konnte nicht eingereicht werden", { error: error.message });
   }
@@ -2411,6 +2709,10 @@ byId("redeem-reward-btn").addEventListener("click", () =>
 );
 
 initInlineEditorHomes();
+setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
+setSelectedWeekdays("task-editor-weekdays", [0, 1, 2, 3, 4, 5, 6]);
+byId("task-daily-time").value = byId("task-daily-time").value || "18:00";
+byId("task-editor-daily-time").value = byId("task-editor-daily-time").value || "18:00";
 syncTaskCreateTimingUI();
 syncTaskEditorTimingUI();
 refreshSession().catch((error) => log("Initialisierung fehlgeschlagen", { error: error.message }));

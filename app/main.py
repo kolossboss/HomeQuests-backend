@@ -42,7 +42,19 @@ try:
         conn.execute(
             text(
                 "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS active_weekdays JSON NOT NULL DEFAULT '[0,1,2,3,4,5,6]'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
                 "ADD COLUMN IF NOT EXISTS special_template_id INTEGER NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"
             )
         )
         if engine.dialect.name == "postgresql":
