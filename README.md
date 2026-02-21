@@ -1,47 +1,33 @@
 # HomeQuests Backend + WebUI
 
-HomeQuests ist ein Familienplaner fuer Aufgaben, Punkte und Belohnungen.
-Dieses Repository enthaelt das Backend (FastAPI) und die WebUI.
+HomeQuests ist ein Backend mit WebUI fuer Familienorganisation:
+Aufgaben planen, Punkte vergeben, Belohnungen einloesen und den Verlauf verfolgen.
 
-## Was die App kann
+## Funktionen
 
-- Rollenmodell mit `admin`, `parent`, `child`
+- Rollen: `admin`, `parent`, `child`
 - Login mit JWT
-- Bootstrap fuer die Ersteinrichtung
-- Aufgaben mit Wiederholung (`einmalig`, `taeglich`, `woechentlich`, `monatlich`)
-- Aufgaben-Freigaben (Kind reicht ein, Eltern pruefen)
-- Sonderaufgaben mit Intervall-Limits
-- Belohnungen mit Einloesung und Freigabe
-- Punktekonten und Verlauf (Ledger)
+- Ersteinrichtung (Bootstrap) beim ersten Start
+- Aufgaben mit Wiederholung (einmalig, taeglich, woechentlich, monatlich)
+- Aufgaben-Einreichung und Eltern-Freigabe
+- Sonderaufgaben mit Limits pro Intervall
+- Belohnungen und Einloesungen
+- Punktekonten + Ledger-Historie
 - Familienkalender
 - Live-Updates per SSE
 - WebUI unter `/`
 
-## Tech Stack
+## Schnellstart (lokal)
 
-- Python 3.12
-- FastAPI
-- PostgreSQL
-- Docker / Docker Compose
-- GitHub Actions + GHCR (Container Registry)
+Voraussetzung: Docker + Docker Compose
 
-## Schnellstart (lokal mit Docker)
-
-Voraussetzung: Docker + Docker Compose sind installiert.
-
-1. Persistentes Docker-Volume anlegen:
-
-```bash
-docker volume create homequests_postgres_data
-```
-
-2. Sicheren Secret Key erzeugen:
+1. Sicheren Key erzeugen:
 
 ```bash
 openssl rand -hex 64
 ```
 
-3. Starten (mindestens zwei ENV setzen):
+2. Starten (nur 2 Variablen noetig):
 
 ```bash
 POSTGRES_PASSWORD='DEIN_STARKES_DB_PASSWORT' \
@@ -49,83 +35,67 @@ SECRET_KEY='DEIN_SECRET_KEY' \
 docker compose up --build -d
 ```
 
-4. Aufrufen:
+3. Aufrufen:
 
 - WebUI: `http://localhost:8010/`
 - API Doku (Swagger): `http://localhost:8010/docs`
-- Health: `http://localhost:8010/health`
+- Healthcheck: `http://localhost:8010/health`
 
-## Erster Login / Ersteinrichtung
+## Erster Start
 
-Beim ersten Start ist noch kein Benutzer vorhanden.
-In der WebUI fuehrst du die Bootstrap-Erstellung durch:
+Beim ersten Aufruf ist noch kein Benutzer vorhanden.
+In der WebUI die Ersteinrichtung ausfuellen:
 
 - Name
 - E-Mail (optional)
-- Passwort + Passwort-Bestaetigung
+- Passwort + Passwort-Wiederholung
 
-Danach kannst du dich normal anmelden und weitere Mitglieder anlegen.
+Danach ist der erste Admin angelegt.
 
-## Wichtige Endpunkte
+## Deployment mit Portainer / Proxmox
+
+Nutze diese Datei im Stack:
+
+- `docker-compose.portainer.yml`
+
+Noetige Stack-Variablen:
+
+- `POSTGRES_PASSWORD`
+- `SECRET_KEY`
+
+Dann Stack deployen und bei Updates einfach `Update/Re-deploy` ausfuehren.
+
+## API
+
+Wichtige Endpunkte:
 
 - `POST /auth/bootstrap`
 - `GET /auth/bootstrap-status`
 - `POST /auth/login`
 - `GET /auth/me`
-- `GET /docs` (Swagger UI)
+- `GET /docs`
 - `GET /health`
 
-## Deployment mit Portainer / Proxmox
+## Docker-Image via GitHub
 
-Fuer Portainer ist eine image-basierte Compose-Datei vorhanden:
-
-- `docker-compose.portainer.yml`
-
-Diese nutzt das GHCR-Image:
+Bei jedem Merge auf `main` baut GitHub Actions automatisch ein neues Image:
 
 - `ghcr.io/kolossboss/homequests-api:latest`
-
-### Minimale ENV-Variablen in Portainer
-
-- `POSTGRES_PASSWORD`
-- `SECRET_KEY`
-
-Weitere Werte sind in der Compose-Datei bereits sinnvoll vorbelegt.
-
-## GitHub + Container Image (GHCR)
-
-Beim Push auf `main` baut GitHub Actions automatisch ein neues Docker-Image und pusht nach GHCR.
+- `ghcr.io/kolossboss/homequests-api:sha-<commit>`
 
 Workflow-Datei:
 
 - `.github/workflows/docker-ghcr.yml`
 
-Image-Tags:
-
-- `ghcr.io/kolossboss/homequests-api:latest`
-- `ghcr.io/kolossboss/homequests-api:sha-<commit>`
-
-### Wenn Repository/Package privat ist
-
-Portainer braucht dann GHCR-Registry-Credentials:
-
-- Registry: `ghcr.io`
-- Username: `kolossboss`
-- Passwort: GitHub PAT (classic) mit mindestens `read:packages`
-
-## Update-Ablauf (empfohlen)
-
-1. Aenderungen per PR nach `main` mergen.
-2. GitHub Action baut/pusht neues Image.
-3. In Portainer Stack `Update/Re-deploy` ausfuehren.
-
-Hinweis: Nicht mit `down -v` arbeiten, wenn Daten erhalten bleiben sollen.
+Hinweis:
+- Wenn das Image spaeter `public` ist, koennen Nutzer es ohne GHCR-Login pullen.
+- Solange es `private` ist, braucht Portainer Registry-Credentials fuer `ghcr.io`.
 
 ## Troubleshooting
 
 - Fehler `could not translate host name "db"`:
-  - Stack nicht komplett gestartet oder falscher DB-Host in `DATABASE_URL`.
+  - Stack unvollstaendig gestartet oder falsche Compose-Datei genutzt.
 - Fehler `Datenbankverbindung fehlgeschlagen`:
-  - `POSTGRES_PASSWORD`/`DATABASE_URL` pruefen.
-- Leere DB nach Neustart:
-  - Sicherstellen, dass das persistente Volume verwendet wird.
+  - `POSTGRES_PASSWORD` und `SECRET_KEY` gesetzt?
+- Daten nach Neustart weg:
+  - Nicht mit `down -v` arbeiten.
