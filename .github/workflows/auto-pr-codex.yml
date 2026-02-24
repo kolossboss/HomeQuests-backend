@@ -6,7 +6,7 @@ on:
       - "codex/**"
 
 permissions:
-  contents: read
+  contents: write
   pull-requests: write
 
 concurrency:
@@ -42,34 +42,78 @@ jobs:
               per_page: 100
             });
 
+            let pr = openPrs[0];
             if (openPrs.length > 0) {
               core.info(`PR existiert bereits: #${openPrs[0].number}`);
-              return;
             }
 
-            const title = `Auto PR: ${branch}`;
-            const body = [
-              "Automatisch erstellt durch GitHub Actions.",
-              "",
-              `- Quelle: \`${branch}\``,
-              `- Ziel: \`${base}\``
-            ].join("\n");
+            if (!pr) {
+              const title = `Auto PR: ${branch}`;
+              const body = [
+                "Automatisch erstellt durch GitHub Actions.",
+                "",
+                `- Quelle: \`${branch}\``,
+                `- Ziel: \`${base}\``
+              ].join("\n");
 
+              try {
+                const created = await github.rest.pulls.create({
+                  owner,
+                  repo,
+                  title,
+                  head: branch,
+                  base,
+                  body,
+                  maintainer_can_modify: true
+                });
+                pr = created.data;
+                core.info(`PR erstellt: #${pr.number}`);
+              } catch (error) {
+                const message = String(error?.message || "");
+                if (error?.status === 422 && message.includes("A pull request already exists")) {
+                  core.info("PR existiert bereits (422), kein Fehler.");
+                  return;
+                }
+                if (message.includes("not permitted to create or approve pull requests")) {
+                  core.warning(
+                    "GitHub Actions darf in diesem Repo keine PRs erstellen. " +
+                    "Aktiviere in Settings -> Actions -> General: " +
+                    "'Read and write permissions' und 'Allow GitHub Actions to create and approve pull requests'."
+                  );
+                  return;
+                }
+                throw error;
+              }
+            }
+
+            // Auto-Merge aktivieren (squash), sobald PR-Checks gruen sind.
             try {
-              const { data: pr } = await github.rest.pulls.create({
-                owner,
-                repo,
-                title,
-                head: branch,
-                base,
-                body,
-                maintainer_can_modify: true
-              });
-              core.info(`PR erstellt: #${pr.number}`);
+              await github.graphql(
+                `
+                mutation($pullRequestId: ID!) {
+                  enablePullRequestAutoMerge(
+                    input: { pullRequestId: $pullRequestId, mergeMethod: SQUASH }
+                  ) {
+                    pullRequest {
+                      number
+                    }
+                  }
+                }
+                `,
+                { pullRequestId: pr.node_id }
+              );
+              core.info(`Auto-Merge aktiviert fuer PR #${pr.number}`);
             } catch (error) {
               const message = String(error?.message || "");
-              if (error?.status === 422 && message.includes("A pull request already exists")) {
-                core.info("PR existiert bereits (422), kein Fehler.");
+              if (
+                message.includes("Resource not accessible by integration") ||
+                message.includes("Auto merge is not allowed") ||
+                message.includes("not permitted to create or approve pull requests")
+              ) {
+                core.warning(
+                  "Auto-Merge konnte nicht aktiviert werden. " +
+                  "Pruefe Repo-Settings: Allow auto-merge + Actions darf PRs erstellen/approven."
+                );
                 return;
               }
               throw error;
