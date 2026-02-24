@@ -105,6 +105,37 @@ jobs:
               core.info(`Auto-Merge aktiviert fuer PR #${pr.number}`);
             } catch (error) {
               const message = String(error?.message || "");
+              if (message.includes("Protected branch rules not configured for this branch")) {
+                core.warning(
+                  "Auto-Merge via GraphQL braucht Branch-Protection-Regeln. " +
+                  "Fallback: versuche direkten Squash-Merge."
+                );
+                try {
+                  await github.rest.pulls.merge({
+                    owner,
+                    repo,
+                    pull_number: pr.number,
+                    merge_method: "squash"
+                  });
+                  core.info(`PR #${pr.number} direkt per Squash gemerged.`);
+                  return;
+                } catch (mergeError) {
+                  const mergeMessage = String(mergeError?.message || "");
+                  if (
+                    mergeMessage.includes("Pull Request is not mergeable") ||
+                    mergeMessage.includes("Required status check") ||
+                    mergeMessage.includes("Review required") ||
+                    mergeMessage.includes("Method Not Allowed")
+                  ) {
+                    core.warning(
+                      "PR konnte nicht direkt gemerged werden (Checks/Reviews/Policies). " +
+                      "PR bleibt offen und kann manuell gemerged werden."
+                    );
+                    return;
+                  }
+                  throw mergeError;
+                }
+              }
               if (
                 message.includes("Resource not accessible by integration") ||
                 message.includes("Auto merge is not allowed") ||
