@@ -272,6 +272,18 @@
                   <label class="weekday-option"><input type="checkbox" value="6" checked />So</label>
                 </div>
               </div>
+              <label id="task-weekly-day-row" class="hidden">Wochentag
+                <select id="task-weekly-day">
+                  <option value="0">Montag</option>
+                  <option value="1">Dienstag</option>
+                  <option value="2">Mittwoch</option>
+                  <option value="3">Donnerstag</option>
+                  <option value="4">Freitag</option>
+                  <option value="5">Samstag</option>
+                  <option value="6">Sonntag</option>
+                </select>
+              </label>
+              <label id="task-weekly-time-row" class="hidden">Wöchentliche Uhrzeit<input id="task-weekly-time" type="time" value="09:00" /></label>
               <label id="task-due-row">Fälligkeit<input id="task-due" type="datetime-local" /></label>
               <label>Punkte<input id="task-points" type="number" min="0" value="10" /></label>
             </div>
@@ -375,6 +387,18 @@
                   <label class="weekday-option"><input type="checkbox" value="6" checked />So</label>
                 </div>
               </div>
+              <label id="task-editor-weekly-day-row" class="hidden">Wochentag
+                <select id="task-editor-weekly-day">
+                  <option value="0">Montag</option>
+                  <option value="1">Dienstag</option>
+                  <option value="2">Mittwoch</option>
+                  <option value="3">Donnerstag</option>
+                  <option value="4">Freitag</option>
+                  <option value="5">Samstag</option>
+                  <option value="6">Sonntag</option>
+                </select>
+              </label>
+              <label id="task-editor-weekly-time-row" class="hidden">Wöchentliche Uhrzeit<input id="task-editor-weekly-time" type="time" value="09:00" /></label>
               <label id="task-editor-due-row">Fälligkeit<input id="task-editor-due" type="datetime-local" /></label>
               <label>Status
                 <select id="task-editor-status">
@@ -632,6 +656,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260221d"></script>
+    <script src="/static/app.js?v=20260221e"></script>
   </body>
 </html>

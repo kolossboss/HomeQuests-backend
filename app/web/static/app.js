@@ -220,6 +220,15 @@ function weekdayFromDate(date) {
   return jsDay === 0 ? 6 : jsDay - 1;
 }
 
+function toLocalIsoFromDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hour}:${minute}:00`;
+}
+
 function buildNextDailyDueIso(timeValue, weekdays = []) {
   if (!timeValue) return null;
   const [hourStr, minuteStr] = String(timeValue).split(":");
@@ -240,14 +249,31 @@ function buildNextDailyDueIso(timeValue, weekdays = []) {
     candidate.setHours(hours, minutes, 0, 0);
     if (!allowed.has(weekdayFromDate(candidate))) continue;
     if (candidate <= now) continue;
-    const year = candidate.getFullYear();
-    const month = String(candidate.getMonth() + 1).padStart(2, "0");
-    const day = String(candidate.getDate()).padStart(2, "0");
-    const hour = String(candidate.getHours()).padStart(2, "0");
-    const minute = String(candidate.getMinutes()).padStart(2, "0");
-    return `${year}-${month}-${day}T${hour}:${minute}:00`;
+    return toLocalIsoFromDate(candidate);
   }
   return null;
+}
+
+function buildNextWeeklyDueIso(weekdayValue, timeValue) {
+  const weekday = Number(weekdayValue);
+  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6 || !timeValue) return null;
+  const [hourStr, minuteStr] = String(timeValue).split(":");
+  const hours = Number(hourStr);
+  const minutes = Number(minuteStr);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+
+  const now = new Date();
+  const candidate = new Date(now);
+  candidate.setSeconds(0, 0);
+  candidate.setHours(hours, minutes, 0, 0);
+
+  const todayWeekday = weekdayFromDate(candidate);
+  const delta = (weekday - todayWeekday + 7) % 7;
+  candidate.setDate(candidate.getDate() + delta);
+  if (candidate <= now) {
+    candidate.setDate(candidate.getDate() + 7);
+  }
+  return toLocalIsoFromDate(candidate);
 }
 
 function specialIntervalLabel(intervalType) {
@@ -830,6 +856,7 @@ function syncTaskCreateTimingUI() {
   const daily = recurrence === "daily";
   const weekly = recurrence === "weekly";
   const dueMode = byId("task-due-mode").value;
+  const weeklyExact = weekly && dueMode === "exact";
 
   if (!weekly) {
     byId("task-due-mode").value = "exact";
@@ -837,12 +864,18 @@ function syncTaskCreateTimingUI() {
 
   toggleHidden("task-daily-time-row", !daily);
   toggleHidden("task-weekdays-row", !daily);
+  toggleHidden("task-weekly-day-row", !weeklyExact);
+  toggleHidden("task-weekly-time-row", !weeklyExact);
   if (!daily) {
     setInvalid(byId("task-weekdays-row"), false);
     setInvalid(byId("task-daily-time"), false);
   }
+  if (!weeklyExact) {
+    setInvalid(byId("task-weekly-day"), false);
+    setInvalid(byId("task-weekly-time"), false);
+  }
   toggleHidden("task-due-mode-row", !weekly);
-  const hideDue = daily || (weekly && dueMode === "week_flexible");
+  const hideDue = daily || weekly;
   toggleHidden("task-due-row", hideDue);
   if (hideDue) byId("task-due").value = "";
 
@@ -857,6 +890,7 @@ function syncTaskEditorTimingUI() {
   const daily = recurrence === "daily";
   const weekly = recurrence === "weekly";
   const dueMode = byId("task-editor-due-mode").value;
+  const weeklyExact = weekly && dueMode === "exact";
 
   if (!weekly) {
     byId("task-editor-due-mode").value = "exact";
@@ -864,12 +898,18 @@ function syncTaskEditorTimingUI() {
 
   toggleHidden("task-editor-daily-time-row", !daily);
   toggleHidden("task-editor-weekdays-row", !daily);
+  toggleHidden("task-editor-weekly-day-row", !weeklyExact);
+  toggleHidden("task-editor-weekly-time-row", !weeklyExact);
   if (!daily) {
     setInvalid(byId("task-editor-weekdays-row"), false);
     setInvalid(byId("task-editor-daily-time"), false);
   }
+  if (!weeklyExact) {
+    setInvalid(byId("task-editor-weekly-day"), false);
+    setInvalid(byId("task-editor-weekly-time"), false);
+  }
   toggleHidden("task-editor-due-mode-row", !weekly);
-  const hideDue = daily || (weekly && dueMode === "week_flexible");
+  const hideDue = daily || weekly;
   toggleHidden("task-editor-due-row", hideDue);
   if (hideDue) byId("task-editor-due").value = "";
 
@@ -1276,6 +1316,14 @@ function fillTaskEditorForm() {
   byId("task-editor-due-mode").value = isWeeklyFlexible ? "week_flexible" : "exact";
   byId("task-editor-due").value = toDatetimeLocalValue(task.due_at);
   byId("task-editor-daily-time").value = toTimeValueFromIso(task.due_at);
+  if (task.recurrence_type === "weekly" && task.due_at) {
+    const weeklyDate = new Date(task.due_at);
+    byId("task-editor-weekly-day").value = String(weekdayFromDate(weeklyDate));
+    byId("task-editor-weekly-time").value = toTimeValueFromIso(task.due_at);
+  } else {
+    byId("task-editor-weekly-day").value = "0";
+    byId("task-editor-weekly-time").value = "09:00";
+  }
   setSelectedWeekdays("task-editor-weekdays", (task.active_weekdays && task.active_weekdays.length) ? task.active_weekdays : [0, 1, 2, 3, 4, 5, 6]);
   setInvalid(byId("task-editor-weekdays-row"), false);
   byId("task-editor-points").value = String(task.points ?? 0);
@@ -1932,12 +1980,14 @@ async function claimSpecialTaskTemplate(templateId) {
 async function createTask() {
   if (!isManagerRole()) return;
 
-  clearInvalid(["task-title", "task-assignee", "task-points", "task-due", "task-daily-time"]);
+  clearInvalid(["task-title", "task-assignee", "task-points", "task-due", "task-daily-time", "task-weekly-day", "task-weekly-time"]);
   const titleInput = byId("task-title");
   const assigneeInput = byId("task-assignee");
   const pointsInput = byId("task-points");
   const dueInput = byId("task-due");
   const dailyTimeInput = byId("task-daily-time");
+  const weeklyDayInput = byId("task-weekly-day");
+  const weeklyTimeInput = byId("task-weekly-time");
 
   const title = titleInput.value.trim();
   const assignee_id = Number(assigneeInput.value);
@@ -1967,17 +2017,17 @@ async function createTask() {
     setInvalid(dailyTimeInput, true);
     invalid = true;
   }
+  if (recurrence_type === "weekly" && dueMode === "exact" && !weeklyTimeInput.value) {
+    setInvalid(weeklyTimeInput, true);
+    invalid = true;
+  }
   if (recurrence_type === "daily" && active_weekdays.length === 0) {
     setInvalid(byId("task-weekdays-row"), true);
     invalid = true;
   } else {
     setInvalid(byId("task-weekdays-row"), false);
   }
-  if ((recurrence_type === "weekly" && dueMode === "exact" && !dueRaw) || ((recurrence_type === "none" || recurrence_type === "monthly") && reminder_offsets_minutes.length > 0 && !dueRaw)) {
-    setInvalid(dueInput, true);
-    invalid = true;
-  }
-  if (recurrence_type === "weekly" && dueMode === "exact" && reminder_offsets_minutes.length > 0 && !dueRaw) {
+  if ((recurrence_type === "none" || recurrence_type === "monthly") && reminder_offsets_minutes.length > 0 && !dueRaw) {
     setInvalid(dueInput, true);
     invalid = true;
   }
@@ -1992,6 +2042,13 @@ async function createTask() {
     if (!due_at) {
       setInvalid(dailyTimeInput, true);
       log("Aufgabe: Ungültige tägliche Uhrzeit oder Wochentage");
+      return;
+    }
+  } else if (recurrence_type === "weekly" && dueMode === "exact") {
+    due_at = buildNextWeeklyDueIso(weeklyDayInput.value, weeklyTimeInput.value);
+    if (!due_at) {
+      setInvalid(weeklyTimeInput, true);
+      log("Aufgabe: Ungültige wöchentliche Uhrzeit oder Wochentag");
       return;
     }
   } else if (recurrence_type === "weekly" && dueMode === "week_flexible") {
@@ -2018,6 +2075,8 @@ async function createTask() {
   byId("task-description").value = "";
   byId("task-due").value = "";
   byId("task-daily-time").value = "18:00";
+  byId("task-weekly-day").value = "0";
+  byId("task-weekly-time").value = "09:00";
   setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
   byId("task-due-mode").value = "exact";
   setSelectedReminderOffsets("task-reminder-options", []);
@@ -2030,7 +2089,7 @@ async function createTask() {
 async function updateTask() {
   if (!isManagerRole()) return;
 
-  clearInvalid(["task-editor-title", "task-editor-assignee", "task-editor-points", "task-editor-due", "task-editor-daily-time"]);
+  clearInvalid(["task-editor-title", "task-editor-assignee", "task-editor-points", "task-editor-due", "task-editor-daily-time", "task-editor-weekly-day", "task-editor-weekly-time"]);
   const taskId = state.selectedTaskId;
   if (!taskId) {
     log("Bitte zuerst eine Aufgabe in der Tabelle auf Bearbeiten klicken");
@@ -2042,6 +2101,8 @@ async function updateTask() {
   const pointsInput = byId("task-editor-points");
   const dueInput = byId("task-editor-due");
   const dailyTimeInput = byId("task-editor-daily-time");
+  const weeklyDayInput = byId("task-editor-weekly-day");
+  const weeklyTimeInput = byId("task-editor-weekly-time");
 
   const title = titleInput.value.trim();
   const assignee_id = Number(assigneeInput.value);
@@ -2071,17 +2132,17 @@ async function updateTask() {
     setInvalid(dailyTimeInput, true);
     invalid = true;
   }
+  if (recurrence_type === "weekly" && dueMode === "exact" && !weeklyTimeInput.value) {
+    setInvalid(weeklyTimeInput, true);
+    invalid = true;
+  }
   if (recurrence_type === "daily" && active_weekdays.length === 0) {
     setInvalid(byId("task-editor-weekdays-row"), true);
     invalid = true;
   } else {
     setInvalid(byId("task-editor-weekdays-row"), false);
   }
-  if ((recurrence_type === "weekly" && dueMode === "exact" && !dueRaw) || ((recurrence_type === "none" || recurrence_type === "monthly") && reminder_offsets_minutes.length > 0 && !dueRaw)) {
-    setInvalid(dueInput, true);
-    invalid = true;
-  }
-  if (recurrence_type === "weekly" && dueMode === "exact" && reminder_offsets_minutes.length > 0 && !dueRaw) {
+  if ((recurrence_type === "none" || recurrence_type === "monthly") && reminder_offsets_minutes.length > 0 && !dueRaw) {
     setInvalid(dueInput, true);
     invalid = true;
   }
@@ -2096,6 +2157,13 @@ async function updateTask() {
     if (!due_at) {
       setInvalid(dailyTimeInput, true);
       log("Aufgabe bearbeiten: Ungültige tägliche Uhrzeit oder Wochentage");
+      return;
+    }
+  } else if (recurrence_type === "weekly" && dueMode === "exact") {
+    due_at = buildNextWeeklyDueIso(weeklyDayInput.value, weeklyTimeInput.value);
+    if (!due_at) {
+      setInvalid(weeklyTimeInput, true);
+      log("Aufgabe bearbeiten: Ungültige wöchentliche Uhrzeit oder Wochentag");
       return;
     }
   } else if (recurrence_type === "weekly" && dueMode === "week_flexible") {
@@ -2713,6 +2781,10 @@ setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
 setSelectedWeekdays("task-editor-weekdays", [0, 1, 2, 3, 4, 5, 6]);
 byId("task-daily-time").value = byId("task-daily-time").value || "18:00";
 byId("task-editor-daily-time").value = byId("task-editor-daily-time").value || "18:00";
+byId("task-weekly-day").value = byId("task-weekly-day").value || "0";
+byId("task-weekly-time").value = byId("task-weekly-time").value || "09:00";
+byId("task-editor-weekly-day").value = byId("task-editor-weekly-day").value || "0";
+byId("task-editor-weekly-time").value = byId("task-editor-weekly-time").value || "09:00";
 syncTaskCreateTimingUI();
 syncTaskEditorTimingUI();
 refreshSession().catch((error) => log("Initialisierung fehlgeschlagen", { error: error.message }));
