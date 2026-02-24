@@ -30,9 +30,10 @@ openssl rand -hex 64
 2. Starten (nur 2 Variablen noetig):
 
 ```bash
+docker compose pull
 POSTGRES_PASSWORD='DEIN_STARKES_DB_PASSWORT' \
 SECRET_KEY='DEIN_SECRET_KEY' \
-docker compose up --build -d
+docker compose up -d
 ```
 
 3. Aufrufen:
@@ -87,9 +88,10 @@ Workflow-Datei:
 
 - `.github/workflows/docker-ghcr.yml`
 
-Hinweis:
-- Wenn das Image spaeter `public` ist, koennen Nutzer es ohne GHCR-Login pullen.
-- Solange es `private` ist, braucht Portainer Registry-Credentials fuer `ghcr.io`.
+Aktueller Stand:
+- Das Image ist public und kann ohne GHCR-Login gezogen werden.
+- Richtiger Compose-Image-Pfad:
+  - `image: ghcr.io/kolossboss/homequests-api:latest`
 
 ## Troubleshooting
 
