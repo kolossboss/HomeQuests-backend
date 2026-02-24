@@ -17,8 +17,8 @@ services:
       retries: 10
 
   api:
-    build:
-      context: .
+    image: ghcr.io/kolossboss/homequests-api:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql+psycopg2://homequests:${POSTGRES_PASSWORD}@db:5432/homequests
