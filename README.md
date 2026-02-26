@@ -3,6 +3,14 @@
 HomeQuests ist ein Backend mit WebUI fuer Familienorganisation:
 Aufgaben planen, Punkte vergeben, Belohnungen einloesen und den Verlauf verfolgen.
 
+## Offizielle iOS App
+
+<a href="https://apps.apple.com/us/app/homequests/id6759489304">
+  <img src="app/web/static/favicon-homequests.png" alt="HomeQuests iOS App Icon" width="96" />
+</a>
+
+- App Store: [HomeQuests fuer iOS](https://apps.apple.com/us/app/homequests/id6759489304)
+
 ## Funktionen
 
 - Rollen: `admin`, `parent`, `child`
