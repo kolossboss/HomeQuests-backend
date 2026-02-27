@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -26,6 +27,21 @@ from ..schemas import (
 from ..services import emit_live_event, get_points_balance
 
 router = APIRouter(tags=["rewards"])
+
+
+def _reserved_points_for_redemption(db: Session, family_id: int, user_id: int, redemption_id: int) -> int:
+    result = (
+        db.query(func.coalesce(func.sum(PointsLedger.points_delta), 0))
+        .filter(
+            PointsLedger.family_id == family_id,
+            PointsLedger.user_id == user_id,
+            PointsLedger.source_type == PointsSourceEnum.reward_redemption,
+            PointsLedger.source_id == redemption_id,
+        )
+        .scalar()
+    )
+    # Reservierungen sind negative Deltas.
+    return abs(min(int(result or 0), 0))
 
 
 @router.get("/families/{family_id}/rewards", response_model=list[RewardOut])
@@ -157,6 +173,20 @@ def redeem_reward(
     )
     db.add(redemption)
     db.flush()
+
+    # Punkte sofort reservieren, damit keine Mehrfachanfragen über das verfügbare Guthaben hinaus möglich sind.
+    db.add(
+        PointsLedger(
+            family_id=reward.family_id,
+            user_id=current_user.id,
+            source_type=PointsSourceEnum.reward_redemption,
+            source_id=redemption.id,
+            points_delta=-reward.cost_points,
+            description=f"Reserviert für Belohnung: {reward.title}",
+            created_by_id=current_user.id,
+        )
+    )
+
     emit_live_event(
         db,
         family_id=reward.family_id,
@@ -223,22 +253,45 @@ def review_redemption(
     if payload.decision not in {RedemptionStatusEnum.approved, RedemptionStatusEnum.rejected}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ungültige Entscheidung")
 
-    if payload.decision == RedemptionStatusEnum.approved:
-        balance = get_points_balance(db, reward.family_id, redemption.requested_by_id)
-        if balance < reward.cost_points:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nicht genug Punkte")
+    reserved_points = _reserved_points_for_redemption(
+        db,
+        family_id=reward.family_id,
+        user_id=redemption.requested_by_id,
+        redemption_id=redemption.id,
+    )
 
-        db.add(
-            PointsLedger(
-                family_id=reward.family_id,
-                user_id=redemption.requested_by_id,
-                source_type=PointsSourceEnum.reward_redemption,
-                source_id=redemption.id,
-                points_delta=-reward.cost_points,
-                description=f"Einlösung: {reward.title}",
-                created_by_id=current_user.id,
+    if payload.decision == RedemptionStatusEnum.approved:
+        # Rückwärtskompatibel: alte Anfragen hatten ggf. noch keine Reservierung.
+        missing_points = max(reward.cost_points - reserved_points, 0)
+        if missing_points > 0:
+            balance = get_points_balance(db, reward.family_id, redemption.requested_by_id)
+            if balance < missing_points:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nicht genug Punkte")
+
+            db.add(
+                PointsLedger(
+                    family_id=reward.family_id,
+                    user_id=redemption.requested_by_id,
+                    source_type=PointsSourceEnum.reward_redemption,
+                    source_id=redemption.id,
+                    points_delta=-missing_points,
+                    description=f"Einlösung: {reward.title}",
+                    created_by_id=current_user.id,
+                )
             )
-        )
+    else:
+        if reserved_points > 0:
+            db.add(
+                PointsLedger(
+                    family_id=reward.family_id,
+                    user_id=redemption.requested_by_id,
+                    source_type=PointsSourceEnum.reward_redemption,
+                    source_id=redemption.id,
+                    points_delta=reserved_points,
+                    description=f"Reservierung freigegeben: {reward.title}",
+                    created_by_id=current_user.id,
+                )
+            )
 
     redemption.status = payload.decision
     redemption.comment = payload.comment
