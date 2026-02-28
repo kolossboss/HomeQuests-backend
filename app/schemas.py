@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
@@ -244,6 +245,11 @@ class TaskReviewRequest(BaseModel):
     comment: str | None = None
 
 
+class MissedTaskReviewRequest(BaseModel):
+    action: Literal["delete", "penalty"]
+    comment: str | None = None
+
+
 class TaskReminderOut(BaseModel):
     task_id: int
     title: str
@@ -282,6 +288,7 @@ class RewardCreate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
     description: str | None = None
     cost_points: int = Field(ge=1)
+    is_shareable: bool = False
     is_active: bool = True
 
 
@@ -289,6 +296,7 @@ class RewardUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
     description: str | None = None
     cost_points: int = Field(ge=1)
+    is_shareable: bool = False
     is_active: bool = True
 
 
@@ -298,6 +306,7 @@ class RewardOut(BaseModel):
     title: str
     description: str | None
     cost_points: int
+    is_shareable: bool
     is_active: bool
 
     model_config = {"from_attributes": True}

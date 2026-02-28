@@ -564,23 +564,29 @@
               <label>Titel<input id="reward-title" type="text" /></label>
               <label>Beschreibung<input id="reward-description" type="text" /></label>
               <label>Kostenpunkte<input id="reward-cost" type="number" min="1" value="50" /></label>
+              <label>Aufteilbar
+                <select id="reward-shareable">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </label>
             </div>
             <button id="create-reward-btn">Belohnung speichern</button>
           </div>
 
           <div id="reward-redeem-section" class="section-block">
-            <h4>Punkte zu Belohnung beitragen</h4>
+            <h4 id="reward-redeem-heading">Belohnung anfragen</h4>
             <p class="muted">Deine Punkte: <strong id="child-reward-points">-</strong></p>
             <div class="form-grid compact">
               <label>Belohnung
                 <select id="redeem-reward-select"></select>
               </label>
-              <label>Punkte beitragen<input id="redeem-points" type="number" min="1" value="10" /></label>
+              <label id="redeem-points-label">Punkte beitragen<input id="redeem-points" type="number" min="1" value="10" /></label>
               <label>Kommentar (optional)<input id="redeem-comment" type="text" /></label>
             </div>
             <p id="reward-contribution-status" class="muted"></p>
             <div id="reward-contribution-list" class="request-card-list"></div>
-            <button id="redeem-reward-btn">Beitrag hinzufügen</button>
+            <button id="redeem-reward-btn">Einlösung anfragen</button>
           </div>
 
           <div id="reward-review-cards-section" class="section-block">
@@ -592,7 +598,7 @@
             <h4>Belohnungsliste</h4>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Belohnung</th><th>Beschreibung</th><th>Kosten</th><th>Status</th><th id="reward-actions-header">Aktionen</th></tr></thead>
+                <thead><tr><th>Belohnung</th><th>Beschreibung</th><th>Kosten</th><th>Aufteilbar</th><th>Status</th><th id="reward-actions-header">Aktionen</th></tr></thead>
                 <tbody id="rewards-body"></tbody>
               </table>
             </div>
@@ -604,6 +610,12 @@
               <label>Titel<input id="reward-editor-title" type="text" /></label>
               <label>Beschreibung<input id="reward-editor-description" type="text" /></label>
               <label>Kostenpunkte<input id="reward-editor-cost" type="number" min="1" /></label>
+              <label>Aufteilbar
+                <select id="reward-editor-shareable">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </label>
               <label>Status
                 <select id="reward-editor-active">
                   <option value="true">aktiv</option>
@@ -677,6 +689,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260228a"></script>
+    <script src="/static/app.js?v=20260228c"></script>
   </body>
 </html>
