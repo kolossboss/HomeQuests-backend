@@ -6,6 +6,7 @@ on:
       - "codex/**"
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -31,6 +32,21 @@ jobs:
               core.info(`Skip: branch ${branch}`);
               return;
             }
+
+            const dispatchDockerBuild = async (reason) => {
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner,
+                  repo,
+                  workflow_id: "docker-ghcr.yml",
+                  ref: base
+                });
+                core.info(`Docker-Workflow per Dispatch gestartet (${reason}).`);
+              } catch (dispatchError) {
+                const dispatchMessage = String(dispatchError?.message || dispatchError);
+                core.warning(`Docker-Workflow-Dispatch fehlgeschlagen: ${dispatchMessage}`);
+              }
+            };
 
             const headRef = `${owner}:${branch}`;
             const { data: openPrs } = await github.rest.pulls.list({
@@ -103,6 +119,29 @@ jobs:
                 { pullRequestId: pr.node_id }
               );
               core.info(`Auto-Merge aktiviert fuer PR #${pr.number}`);
+
+              // Auto-Merge braucht manchmal laenger; wir warten bis zu 6 Minuten auf den Merge.
+              const maxChecks = 120;
+              const delayMs = 3000;
+              for (let i = 1; i <= maxChecks; i++) {
+                const { data: currentPr } = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: pr.number
+                });
+
+                if (currentPr.merged) {
+                  core.info(`PR #${pr.number} wurde per Auto-Merge zusammengefuehrt.`);
+                  await dispatchDockerBuild(`PR #${pr.number} auto-gemerged`);
+                  return;
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+              }
+
+              core.warning(
+                `PR #${pr.number} ist nach ${Math.round((maxChecks * delayMs) / 1000)}s noch nicht gemerged.`
+              );
             } catch (error) {
               const message = String(error?.message || "");
               if (message.includes("Protected branch rules not configured for this branch")) {
@@ -118,6 +157,7 @@ jobs:
                     merge_method: "squash"
                   });
                   core.info(`PR #${pr.number} direkt per Squash gemerged.`);
+                  await dispatchDockerBuild(`PR #${pr.number} direkt gemerged`);
                   return;
                 } catch (mergeError) {
                   const mergeMessage = String(mergeError?.message || "");
