@@ -56,7 +56,16 @@ class RedemptionStatusEnum(str, Enum):
 class PointsSourceEnum(str, Enum):
     task_approval = "task_approval"
     reward_redemption = "reward_redemption"
+    reward_contribution = "reward_contribution"
+    task_penalty = "task_penalty"
     manual_adjustment = "manual_adjustment"
+
+
+class RewardContributionStatusEnum(str, Enum):
+    reserved = "reserved"
+    submitted = "submitted"
+    released = "released"
+    consumed = "consumed"
 
 
 class Family(Base):
@@ -102,6 +111,9 @@ class Task(Base):
     reminder_offsets_minutes: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
     active_weekdays: Mapped[list[int]] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6], nullable=False)
     recurrence_type: Mapped[str] = mapped_column(String(16), default=RecurrenceTypeEnum.none.value, nullable=False)
+    penalty_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
+    penalty_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    penalty_last_applied_at: Mapped[datetime | None] = mapped_column(DateTime)
     special_template_id: Mapped[int | None] = mapped_column(
         ForeignKey("special_task_templates.id", ondelete="SET NULL"),
         index=True,
@@ -172,6 +184,24 @@ class RewardRedemption(Base):
     reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class RewardContribution(Base):
+    __tablename__ = "reward_contributions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    reward_id: Mapped[int] = mapped_column(ForeignKey("rewards.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    points_reserved: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[RewardContributionStatusEnum] = mapped_column(
+        SqlEnum(RewardContributionStatusEnum),
+        default=RewardContributionStatusEnum.reserved,
+        nullable=False,
+    )
+    redemption_id: Mapped[int | None] = mapped_column(ForeignKey("reward_redemptions.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class PointsLedger(Base):

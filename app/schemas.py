@@ -5,6 +5,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 from .models import (
     ApprovalDecisionEnum,
     RecurrenceTypeEnum,
+    RewardContributionStatusEnum,
     RedemptionStatusEnum,
     RoleEnum,
     SpecialTaskIntervalEnum,
@@ -119,6 +120,8 @@ class TaskCreate(BaseModel):
     reminder_offsets_minutes: list[int] = Field(default_factory=list)
     active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
+    penalty_enabled: bool = False
+    penalty_points: int = Field(default=0, ge=0, le=9999)
 
     @field_validator("reminder_offsets_minutes")
     @classmethod
@@ -143,9 +146,17 @@ class TaskCreate(BaseModel):
         elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
             if self.reminder_offsets_minutes:
                 raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
+            if self.penalty_enabled:
+                raise ValueError("Minuspunkte benötigen bei wöchentlichen Aufgaben einen festen Zeitpunkt")
             self.active_weekdays = []
         else:
             self.active_weekdays = []
+
+        if self.recurrence_type not in {RecurrenceTypeEnum.daily, RecurrenceTypeEnum.weekly}:
+            self.penalty_enabled = False
+            self.penalty_points = 0
+        elif self.penalty_enabled and self.penalty_points < 1:
+            raise ValueError("Minuspunkte müssen größer als 0 sein")
         return self
 
 
@@ -158,6 +169,8 @@ class TaskUpdate(BaseModel):
     reminder_offsets_minutes: list[int] = Field(default_factory=list)
     active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
+    penalty_enabled: bool = False
+    penalty_points: int = Field(default=0, ge=0, le=9999)
     is_active: bool = True
     status: TaskStatusEnum = TaskStatusEnum.open
 
@@ -184,9 +197,17 @@ class TaskUpdate(BaseModel):
         elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
             if self.reminder_offsets_minutes:
                 raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
+            if self.penalty_enabled:
+                raise ValueError("Minuspunkte benötigen bei wöchentlichen Aufgaben einen festen Zeitpunkt")
             self.active_weekdays = []
         else:
             self.active_weekdays = []
+
+        if self.recurrence_type not in {RecurrenceTypeEnum.daily, RecurrenceTypeEnum.weekly}:
+            self.penalty_enabled = False
+            self.penalty_points = 0
+        elif self.penalty_enabled and self.penalty_points < 1:
+            raise ValueError("Minuspunkte müssen größer als 0 sein")
         return self
 
 
@@ -201,6 +222,9 @@ class TaskOut(BaseModel):
     reminder_offsets_minutes: list[int]
     active_weekdays: list[int]
     recurrence_type: RecurrenceTypeEnum
+    penalty_enabled: bool
+    penalty_points: int
+    penalty_last_applied_at: datetime | None
     special_template_id: int | None
     is_active: bool
     status: TaskStatusEnum
@@ -299,6 +323,44 @@ class RedemptionOut(BaseModel):
     reviewed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class RewardContributionRequest(BaseModel):
+    points: int = Field(ge=1, le=9999)
+    comment: str | None = None
+
+
+class RewardContributionOut(BaseModel):
+    id: int
+    family_id: int
+    reward_id: int
+    user_id: int
+    points_reserved: int
+    status: RewardContributionStatusEnum
+    redemption_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RewardContributionProgressItemOut(BaseModel):
+    id: int
+    user_id: int
+    user_name: str
+    points_reserved: int
+    status: RewardContributionStatusEnum
+    created_at: datetime
+
+
+class RewardContributionProgressOut(BaseModel):
+    reward_id: int
+    reward_title: str
+    cost_points: int
+    total_reserved: int
+    remaining_points: int
+    pending_redemption_id: int | None
+    contributions: list[RewardContributionProgressItemOut]
 
 
 class LedgerEntryOut(BaseModel):

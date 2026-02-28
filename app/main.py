@@ -57,6 +57,24 @@ try:
                 "ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS penalty_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS penalty_points INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS penalty_last_applied_at TIMESTAMP NULL"
+            )
+        )
         if engine.dialect.name == "postgresql":
             conn.execute(
                 text(
@@ -77,6 +95,33 @@ try:
                                 WHERE t.typname = 'specialtaskintervalenum' AND e.enumlabel = 'monthly'
                             ) THEN
                                 ALTER TYPE specialtaskintervalenum ADD VALUE 'monthly';
+                            END IF;
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'pointssourceenum') THEN
+                            IF NOT EXISTS (
+                                SELECT 1
+                                FROM pg_enum e
+                                JOIN pg_type t ON t.oid = e.enumtypid
+                                WHERE t.typname = 'pointssourceenum' AND e.enumlabel = 'reward_contribution'
+                            ) THEN
+                                ALTER TYPE pointssourceenum ADD VALUE 'reward_contribution';
+                            END IF;
+                            IF NOT EXISTS (
+                                SELECT 1
+                                FROM pg_enum e
+                                JOIN pg_type t ON t.oid = e.enumtypid
+                                WHERE t.typname = 'pointssourceenum' AND e.enumlabel = 'task_penalty'
+                            ) THEN
+                                ALTER TYPE pointssourceenum ADD VALUE 'task_penalty';
                             END IF;
                         END IF;
                     END $$;
