@@ -741,8 +741,11 @@ def submit_task(
         if allowed_weekdays and datetime.utcnow().weekday() not in allowed_weekdays:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist heute nicht aktiv")
 
-    if task.due_at and task.due_at > datetime.utcnow():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
+    if task.due_at:
+        now_utc = datetime.utcnow()
+        # Heute fällige Aufgaben dürfen als erledigt gemeldet werden.
+        if task.due_at > now_utc and task.due_at.date() != now_utc.date():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
 
     submission = TaskSubmission(task_id=task.id, submitted_by_id=current_user.id, note=payload.note)
     db.add(submission)
