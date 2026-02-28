@@ -286,6 +286,15 @@
               <label id="task-weekly-time-row" class="hidden">Wöchentliche Uhrzeit<input id="task-weekly-time" type="time" value="09:00" /></label>
               <label id="task-due-row">Fälligkeit<input id="task-due" type="datetime-local" /></label>
               <label>Punkte<input id="task-points" type="number" min="0" value="10" /></label>
+              <label id="task-penalty-enabled-row">Minuspunkte bei verpasst
+                <select id="task-penalty-enabled">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </label>
+              <label id="task-penalty-points-row" class="hidden">Minuspunkte
+                <input id="task-penalty-points" type="number" min="1" value="5" />
+              </label>
             </div>
             <div id="task-reminder-wrap" class="reminder-wrap">
               <p class="reminder-title">Erinnerung vor Fälligkeit</p>
@@ -413,6 +422,15 @@
                   <option value="true">ja</option>
                   <option value="false">nein</option>
                 </select>
+              </label>
+              <label id="task-editor-penalty-enabled-row">Minuspunkte bei verpasst
+                <select id="task-editor-penalty-enabled">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </label>
+              <label id="task-editor-penalty-points-row" class="hidden">Minuspunkte
+                <input id="task-editor-penalty-points" type="number" min="1" value="5" />
               </label>
             </div>
             <div id="task-editor-reminder-wrap" class="reminder-wrap">
@@ -551,15 +569,18 @@
           </div>
 
           <div id="reward-redeem-section" class="section-block">
-            <h4>Belohnung einlösen</h4>
+            <h4>Punkte zu Belohnung beitragen</h4>
             <p class="muted">Deine Punkte: <strong id="child-reward-points">-</strong></p>
             <div class="form-grid compact">
               <label>Belohnung
                 <select id="redeem-reward-select"></select>
               </label>
-              <label>Kommentar<input id="redeem-comment" type="text" /></label>
+              <label>Punkte beitragen<input id="redeem-points" type="number" min="1" value="10" /></label>
+              <label>Kommentar (optional)<input id="redeem-comment" type="text" /></label>
             </div>
-            <button id="redeem-reward-btn">Einlösung anfragen</button>
+            <p id="reward-contribution-status" class="muted"></p>
+            <div id="reward-contribution-list" class="request-card-list"></div>
+            <button id="redeem-reward-btn">Beitrag hinzufügen</button>
           </div>
 
           <div id="reward-review-cards-section" class="section-block">
@@ -656,6 +677,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260221e"></script>
+    <script src="/static/app.js?v=20260228a"></script>
   </body>
 </html>

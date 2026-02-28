@@ -137,10 +137,95 @@ def _special_task_usage_count(
             Task.special_template_id == template_id,
             Task.assignee_id == assignee_id,
             Task.created_at >= start,
-            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.submitted, TaskStatusEnum.approved]),
         )
         .count()
     )
+
+
+def _apply_penalty_for_task(db: Session, task: Task) -> bool:
+    if not task.is_active:
+        return False
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+        return False
+    if task.recurrence_type not in {RecurrenceTypeEnum.daily.value, RecurrenceTypeEnum.weekly.value}:
+        return False
+    if not task.penalty_enabled or task.penalty_points <= 0:
+        return False
+    if not task.due_at:
+        return False
+
+    now = datetime.utcnow()
+    current_due = _as_utc_naive(task.due_at)
+    if not current_due:
+        return False
+
+    changed = False
+    last_penalty_at = _as_utc_naive(task.penalty_last_applied_at)
+    while current_due <= now:
+        if not last_penalty_at or last_penalty_at < current_due:
+            db.add(
+                PointsLedger(
+                    family_id=task.family_id,
+                    user_id=task.assignee_id,
+                    source_type=PointsSourceEnum.task_penalty,
+                    source_id=task.id,
+                    points_delta=-task.penalty_points,
+                    description=f"Minuspunkte (nicht erledigt): {task.title}",
+                    created_by_id=None,
+                )
+            )
+            task.penalty_last_applied_at = current_due
+            last_penalty_at = current_due
+            changed = True
+            emit_live_event(
+                db,
+                family_id=task.family_id,
+                event_type="points.adjusted",
+                payload={
+                    "user_id": task.assignee_id,
+                    "points_delta": -task.penalty_points,
+                    "task_id": task.id,
+                    "reason": "task_penalty",
+                },
+            )
+
+        next_due = _next_due(current_due, task.recurrence_type, task.active_weekdays)
+        if not next_due or next_due <= current_due:
+            break
+        current_due = next_due
+
+    if current_due != _as_utc_naive(task.due_at):
+        task.due_at = current_due
+        changed = True
+        emit_live_event(
+            db,
+            family_id=task.family_id,
+            event_type="task.updated",
+            payload={"task_id": task.id, "status": task.status.value, "is_active": task.is_active, "assignee_id": task.assignee_id},
+        )
+
+    return changed
+
+
+def _apply_penalties_for_family(db: Session, family_id: int) -> bool:
+    tasks = (
+        db.query(Task)
+        .filter(
+            Task.family_id == family_id,
+            Task.is_active == True,  # noqa: E712
+            Task.recurrence_type.in_([RecurrenceTypeEnum.daily.value, RecurrenceTypeEnum.weekly.value]),
+            Task.penalty_enabled == True,  # noqa: E712
+            Task.penalty_points > 0,
+            Task.due_at.is_not(None),
+            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
+        )
+        .all()
+    )
+
+    changed = False
+    for task in tasks:
+        changed = _apply_penalty_for_task(db, task) or changed
+    return changed
 
 
 @router.get("/families/{family_id}/tasks", response_model=list[TaskOut])
@@ -150,6 +235,8 @@ def list_tasks(
     db: Session = Depends(get_db),
 ):
     get_membership_or_403(db, family_id, current_user.id)
+    if _apply_penalties_for_family(db, family_id):
+        db.commit()
     return (
         db.query(Task)
         .filter(Task.family_id == family_id)
@@ -167,6 +254,8 @@ def list_upcoming_task_reminders(
     db: Session = Depends(get_db),
 ):
     context = get_membership_or_403(db, family_id, current_user.id)
+    if _apply_penalties_for_family(db, family_id):
+        db.commit()
     if context.role == RoleEnum.child:
         target_assignee_id = current_user.id
     else:
@@ -240,6 +329,9 @@ def create_task(
         reminder_offsets_minutes=payload.reminder_offsets_minutes,
         active_weekdays=payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else [],
         recurrence_type=payload.recurrence_type.value,
+        penalty_enabled=payload.penalty_enabled,
+        penalty_points=payload.penalty_points if payload.penalty_enabled else 0,
+        penalty_last_applied_at=None,
         special_template_id=None,
         is_active=True,
         created_by_id=current_user.id,
@@ -286,6 +378,10 @@ def update_task(
     task.reminder_offsets_minutes = payload.reminder_offsets_minutes
     task.active_weekdays = payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else []
     task.recurrence_type = payload.recurrence_type.value
+    task.penalty_enabled = payload.penalty_enabled
+    task.penalty_points = payload.penalty_points if payload.penalty_enabled else 0
+    if not payload.penalty_enabled:
+        task.penalty_last_applied_at = None
     task.is_active = payload.is_active
     task.status = payload.status
 
@@ -354,6 +450,9 @@ def update_task(
                 reminder_offsets_minutes=task.reminder_offsets_minutes,
                 active_weekdays=task.active_weekdays,
                 recurrence_type=task.recurrence_type,
+                penalty_enabled=task.penalty_enabled,
+                penalty_points=task.penalty_points,
+                penalty_last_applied_at=None,
                 is_active=True,
                 status=TaskStatusEnum.open,
                 created_by_id=current_user.id,
@@ -558,6 +657,9 @@ def claim_special_task(
         reminder_offsets_minutes=[],
         active_weekdays=[],
         recurrence_type=RecurrenceTypeEnum.none.value,
+        penalty_enabled=False,
+        penalty_points=0,
+        penalty_last_applied_at=None,
         special_template_id=template.id,
         is_active=True,
         status=TaskStatusEnum.open,
@@ -615,11 +717,23 @@ def submit_task(
 
     get_membership_or_403(db, task.family_id, current_user.id)
 
+    if _apply_penalty_for_task(db, task):
+        db.commit()
+        db.refresh(task)
+
     if task.assignee_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur zugewiesenes Familienmitglied darf einreichen")
 
-    if task.status == TaskStatusEnum.approved:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist bereits bestätigt")
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe kann aktuell nicht eingereicht werden")
+
+    if task.recurrence_type == RecurrenceTypeEnum.daily.value:
+        allowed_weekdays = set(task.active_weekdays or [])
+        if allowed_weekdays and datetime.utcnow().weekday() not in allowed_weekdays:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist heute nicht aktiv")
+
+    if task.due_at and task.due_at > datetime.utcnow():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
 
     submission = TaskSubmission(task_id=task.id, submitted_by_id=current_user.id, note=payload.note)
     db.add(submission)
@@ -697,6 +811,9 @@ def review_task(
                 reminder_offsets_minutes=task.reminder_offsets_minutes,
                 active_weekdays=task.active_weekdays,
                 recurrence_type=task.recurrence_type,
+                penalty_enabled=task.penalty_enabled,
+                penalty_points=task.penalty_points,
+                penalty_last_applied_at=None,
                 is_active=True,
                 status=TaskStatusEnum.open,
                 created_by_id=current_user.id,

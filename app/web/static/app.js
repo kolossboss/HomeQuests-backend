@@ -11,6 +11,7 @@ const state = {
   events: [],
   rewards: [],
   redemptions: [],
+  selectedRewardContribution: null,
   pointsBalances: [],
   pointsHistory: [],
   selectedTaskId: null,
@@ -288,7 +289,9 @@ function specialIntervalLabel(intervalType) {
 function pointsSourceLabel(sourceType) {
   const map = {
     task_approval: "Aufgabe bestätigt",
-    reward_redemption: "Belohnung eingeloest",
+    reward_redemption: "Belohnung eingelöst",
+    reward_contribution: "Belohnungsbeitrag",
+    task_penalty: "Minuspunkte Aufgabe",
     manual_adjustment: "Manuelle Anpassung",
   };
   return map[sourceType] || sourceType;
@@ -318,6 +321,11 @@ function taskScheduleMeta(task) {
     return `Wiederholung: ${taskRecurrenceText(task)} • ${taskDueText(task)}`;
   }
   return `Wiederholung: ${taskRecurrenceText(task)} • Fällig: ${taskDueText(task)}`;
+}
+
+function taskPenaltyText(task) {
+  if (!task.penalty_enabled || Number(task.penalty_points || 0) <= 0) return "Minuspunkte: aus";
+  return `Minuspunkte: -${task.penalty_points} bei verpasster Fälligkeit`;
 }
 
 function parseDateSafe(value) {
@@ -883,6 +891,16 @@ function syncTaskCreateTimingUI() {
   toggleHidden("task-reminder-wrap", hideReminders);
   if (hideReminders) setSelectedReminderOffsets("task-reminder-options", []);
   applyReminderOptionRestrictions("task-reminder-options", daily ? DAILY_REMINDER_OFFSETS : ALL_REMINDER_OFFSETS);
+
+  const penaltySupported = daily || weeklyExact;
+  if (!penaltySupported) {
+    byId("task-penalty-enabled").value = "false";
+    byId("task-penalty-points").value = "5";
+  }
+  toggleHidden("task-penalty-enabled-row", !penaltySupported);
+  const penaltyEnabled = penaltySupported && byId("task-penalty-enabled").value === "true";
+  toggleHidden("task-penalty-points-row", !penaltyEnabled);
+  setInvalid(byId("task-penalty-points"), false);
 }
 
 function syncTaskEditorTimingUI() {
@@ -917,6 +935,16 @@ function syncTaskEditorTimingUI() {
   toggleHidden("task-editor-reminder-wrap", hideReminders);
   if (hideReminders) setSelectedReminderOffsets("task-editor-reminder-options", []);
   applyReminderOptionRestrictions("task-editor-reminder-options", daily ? DAILY_REMINDER_OFFSETS : ALL_REMINDER_OFFSETS);
+
+  const penaltySupported = daily || weeklyExact;
+  if (!penaltySupported) {
+    byId("task-editor-penalty-enabled").value = "false";
+    byId("task-editor-penalty-points").value = "5";
+  }
+  toggleHidden("task-editor-penalty-enabled-row", !penaltySupported);
+  const penaltyEnabled = penaltySupported && byId("task-editor-penalty-enabled").value === "true";
+  toggleHidden("task-editor-penalty-points-row", !penaltyEnabled);
+  setInvalid(byId("task-editor-penalty-points"), false);
 }
 
 function renderMembers() {
@@ -1079,6 +1107,7 @@ function renderTasks() {
             <p class="entity-card-meta">${task.description || "Ohne Beschreibung"}</p>
             <p class="entity-card-meta">Zuständig: ${memberName(task.assignee_id)} • ${task.points} Punkte</p>
             <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
+            <p class="entity-card-meta">${taskPenaltyText(task)}</p>
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
             <div class="request-card-actions">
               <button data-task-action="edit" data-task-id="${task.id}">Bearbeiten</button>
@@ -1103,6 +1132,7 @@ function renderTasks() {
             <p class="entity-card-meta">Zuständig: ${memberName(task.assignee_id)} • ${task.points} Punkte</p>
             <p class="entity-card-meta">Abgeschlossen am: ${fmtDate(task.updated_at || task.created_at)}</p>
             <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
+            <p class="entity-card-meta">${taskPenaltyText(task)}</p>
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
           </article>`
         )
@@ -1330,6 +1360,8 @@ function fillTaskEditorForm() {
   setSelectedReminderOffsets("task-editor-reminder-options", task.reminder_offsets_minutes || []);
   byId("task-editor-status").value = task.status || "open";
   byId("task-editor-active").value = task.is_active === false ? "false" : "true";
+  byId("task-editor-penalty-enabled").value = task.penalty_enabled ? "true" : "false";
+  byId("task-editor-penalty-points").value = String(task.penalty_points ?? 5);
   syncTaskEditorTimingUI();
 }
 
@@ -1393,6 +1425,97 @@ function renderRewards() {
       fillRewardEditorForm();
     }
   }
+
+  renderSelectedRewardContribution();
+}
+
+function contributionStatusLabel(status) {
+  const map = {
+    reserved: "reserviert",
+    submitted: "eingereicht",
+    released: "freigegeben",
+    consumed: "eingelöst",
+  };
+  return map[status] || status;
+}
+
+function renderSelectedRewardContribution() {
+  const statusEl = byId("reward-contribution-status");
+  const listEl = byId("reward-contribution-list");
+  const contributeBtn = byId("redeem-reward-btn");
+  const pointsInput = byId("redeem-points");
+  if (!statusEl || !listEl || !contributeBtn || !pointsInput) return;
+
+  if (!isChildRole()) {
+    statusEl.textContent = "";
+    listEl.innerHTML = "";
+    contributeBtn.disabled = false;
+    return;
+  }
+
+  const rewardId = Number(byId("redeem-reward-select").value || 0);
+  const reward = state.rewards.find((entry) => entry.id === rewardId);
+  const progress = state.selectedRewardContribution;
+
+  if (!rewardId || !reward) {
+    statusEl.textContent = "Belohnung auswählen, um den Sammelstatus zu sehen.";
+    listEl.innerHTML = "";
+    contributeBtn.disabled = true;
+    return;
+  }
+
+  if (!progress || progress.reward_id !== rewardId) {
+    statusEl.textContent = `Belohnung: ${reward.title} • Lade Sammelstatus ...`;
+    listEl.innerHTML = "";
+    contributeBtn.disabled = true;
+    return;
+  }
+
+  const ownBalance = getOwnBalance();
+  const maxByRemaining = Number(progress.remaining_points || 0);
+  const maxByBalance = Number.isFinite(Number(ownBalance)) ? Number(ownBalance) : maxByRemaining;
+  const maxSelectable = Math.max(Math.min(maxByRemaining, maxByBalance), 0);
+  if (maxSelectable > 0) {
+    pointsInput.max = String(maxSelectable);
+    const current = Number(pointsInput.value || 0);
+    if (!current || current > maxSelectable) {
+      pointsInput.value = String(maxSelectable);
+    }
+  } else {
+    pointsInput.value = "";
+    pointsInput.removeAttribute("max");
+  }
+
+  const pendingText = progress.pending_redemption_id
+    ? " • Anfrage wartet bereits auf Bestätigung."
+    : "";
+  statusEl.textContent = `Gesamt: ${progress.total_reserved}/${progress.cost_points} Punkte • Fehlen: ${progress.remaining_points}${pendingText}`;
+
+  listEl.innerHTML = progress.contributions.length
+    ? progress.contributions
+      .map(
+        (entry) => `<article class="request-card">
+          <p class="request-card-title">${entry.user_name}: ${entry.points_reserved} Punkte</p>
+          <p class="request-card-meta">Status: ${contributionStatusLabel(entry.status)} • ${fmtDate(entry.created_at)}</p>
+        </article>`
+      )
+      .join("")
+    : "<p class=\"muted\">Noch keine Beiträge vorhanden.</p>";
+
+  contributeBtn.disabled = Boolean(progress.pending_redemption_id) || progress.remaining_points <= 0 || maxSelectable <= 0;
+}
+
+async function refreshSelectedRewardContribution() {
+  if (!isChildRole()) return;
+  const familyId = getSelectedFamilyId();
+  const rewardId = Number(byId("redeem-reward-select").value || 0);
+  if (!familyId || !rewardId) {
+    state.selectedRewardContribution = null;
+    renderSelectedRewardContribution();
+    return;
+  }
+  state.selectedRewardContribution = await api(`/families/${familyId}/rewards/${rewardId}/contributions`);
+  renderSelectedRewardContribution();
 }
 
 function fillRewardEditorForm() {
@@ -1420,9 +1543,7 @@ function closeRewardEditor() {
 }
 
 function renderRedemptions() {
-  const visible = isChildRole() && state.me
-    ? state.redemptions.filter((redemption) => redemption.requested_by_id === state.me.id)
-    : state.redemptions;
+  const visible = state.redemptions;
 
   byId("redemptions-body").innerHTML = visible
     .map((entry) => {
@@ -1549,6 +1670,9 @@ async function loadRewards() {
   if (!familyId) return;
   state.rewards = await api(`/families/${familyId}/rewards`);
   renderRewards();
+  if (isChildRole()) {
+    await refreshSelectedRewardContribution();
+  }
 }
 
 async function loadRedemptions() {
@@ -1598,6 +1722,7 @@ async function refreshFamilyData() {
   } else {
     byId("child-reward-points").textContent = "-";
     byId("stat-child-points-value").textContent = "-";
+    state.selectedRewardContribution = null;
     if (
       state.selectedPointsUserId &&
       !state.pointsBalances.some((entry) => entry.user_id === state.selectedPointsUserId)
@@ -1617,6 +1742,8 @@ async function refreshFamilyData() {
       renderPointsHistory();
     }
   }
+
+  renderSelectedRewardContribution();
 
   const emailPart = state.me.email ? ` (${state.me.email})` : "";
   userInfo.textContent = `Angemeldet als ${state.me.display_name}${emailPart} | Rolle: ${roleLabel(state.currentRole)}`;
@@ -1743,6 +1870,7 @@ function logout() {
   state.selectedSpecialTaskTemplateId = null;
   state.selectedMemberId = null;
   state.selectedRewardId = null;
+  state.selectedRewardContribution = null;
   state.selectedPointsUserId = null;
   state.specialTaskTemplates = [];
   state.availableSpecialTasks = [];
@@ -1980,7 +2108,7 @@ async function claimSpecialTaskTemplate(templateId) {
 async function createTask() {
   if (!isManagerRole()) return;
 
-  clearInvalid(["task-title", "task-assignee", "task-points", "task-due", "task-daily-time", "task-weekly-day", "task-weekly-time"]);
+  clearInvalid(["task-title", "task-assignee", "task-points", "task-due", "task-daily-time", "task-weekly-day", "task-weekly-time", "task-penalty-points"]);
   const titleInput = byId("task-title");
   const assigneeInput = byId("task-assignee");
   const pointsInput = byId("task-points");
@@ -1988,6 +2116,7 @@ async function createTask() {
   const dailyTimeInput = byId("task-daily-time");
   const weeklyDayInput = byId("task-weekly-day");
   const weeklyTimeInput = byId("task-weekly-time");
+  const penaltyPointsInput = byId("task-penalty-points");
 
   const title = titleInput.value.trim();
   const assignee_id = Number(assigneeInput.value);
@@ -1995,6 +2124,9 @@ async function createTask() {
   const recurrence_type = byId("task-recurrence").value;
   const active_weekdays = recurrence_type === "daily" ? getSelectedWeekdays("task-weekdays") : [];
   const dueMode = recurrence_type === "weekly" ? byId("task-due-mode").value : "exact";
+  const penaltySupported = recurrence_type === "daily" || (recurrence_type === "weekly" && dueMode === "exact");
+  const penalty_enabled = penaltySupported && byId("task-penalty-enabled").value === "true";
+  const penalty_points = penalty_enabled ? Number(penaltyPointsInput.value || 0) : 0;
   const dueRaw = dueInput.value;
   const reminder_offsets_minutes = (recurrence_type === "weekly" && dueMode === "week_flexible")
     ? []
@@ -2031,8 +2163,12 @@ async function createTask() {
     setInvalid(dueInput, true);
     invalid = true;
   }
+  if (penalty_enabled && (Number.isNaN(penalty_points) || penalty_points < 1)) {
+    setInvalid(penaltyPointsInput, true);
+    invalid = true;
+  }
   if (invalid) {
-    log("Aufgabe: Bitte Felder korrekt ausfuellen");
+    log("Aufgabe: Bitte Felder korrekt ausfüllen");
     return;
   }
 
@@ -2068,6 +2204,8 @@ async function createTask() {
       reminder_offsets_minutes,
       active_weekdays,
       recurrence_type,
+      penalty_enabled,
+      penalty_points,
     },
   });
 
@@ -2077,6 +2215,8 @@ async function createTask() {
   byId("task-daily-time").value = "18:00";
   byId("task-weekly-day").value = "0";
   byId("task-weekly-time").value = "09:00";
+  byId("task-penalty-enabled").value = "false";
+  byId("task-penalty-points").value = "5";
   setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
   byId("task-due-mode").value = "exact";
   setSelectedReminderOffsets("task-reminder-options", []);
@@ -2089,7 +2229,7 @@ async function createTask() {
 async function updateTask() {
   if (!isManagerRole()) return;
 
-  clearInvalid(["task-editor-title", "task-editor-assignee", "task-editor-points", "task-editor-due", "task-editor-daily-time", "task-editor-weekly-day", "task-editor-weekly-time"]);
+  clearInvalid(["task-editor-title", "task-editor-assignee", "task-editor-points", "task-editor-due", "task-editor-daily-time", "task-editor-weekly-day", "task-editor-weekly-time", "task-editor-penalty-points"]);
   const taskId = state.selectedTaskId;
   if (!taskId) {
     log("Bitte zuerst eine Aufgabe in der Tabelle auf Bearbeiten klicken");
@@ -2103,6 +2243,7 @@ async function updateTask() {
   const dailyTimeInput = byId("task-editor-daily-time");
   const weeklyDayInput = byId("task-editor-weekly-day");
   const weeklyTimeInput = byId("task-editor-weekly-time");
+  const penaltyPointsInput = byId("task-editor-penalty-points");
 
   const title = titleInput.value.trim();
   const assignee_id = Number(assigneeInput.value);
@@ -2110,6 +2251,9 @@ async function updateTask() {
   const recurrence_type = byId("task-editor-recurrence").value;
   const active_weekdays = recurrence_type === "daily" ? getSelectedWeekdays("task-editor-weekdays") : [];
   const dueMode = recurrence_type === "weekly" ? byId("task-editor-due-mode").value : "exact";
+  const penaltySupported = recurrence_type === "daily" || (recurrence_type === "weekly" && dueMode === "exact");
+  const penalty_enabled = penaltySupported && byId("task-editor-penalty-enabled").value === "true";
+  const penalty_points = penalty_enabled ? Number(penaltyPointsInput.value || 0) : 0;
   const dueRaw = dueInput.value;
   const reminder_offsets_minutes = (recurrence_type === "weekly" && dueMode === "week_flexible")
     ? []
@@ -2146,8 +2290,12 @@ async function updateTask() {
     setInvalid(dueInput, true);
     invalid = true;
   }
+  if (penalty_enabled && (Number.isNaN(penalty_points) || penalty_points < 1)) {
+    setInvalid(penaltyPointsInput, true);
+    invalid = true;
+  }
   if (invalid) {
-    log("Aufgabe bearbeiten: Bitte Felder korrekt ausfuellen");
+    log("Aufgabe bearbeiten: Bitte Felder korrekt ausfüllen");
     return;
   }
 
@@ -2182,6 +2330,8 @@ async function updateTask() {
       points,
       reminder_offsets_minutes,
       active_weekdays,
+      penalty_enabled,
+      penalty_points,
       is_active: byId("task-editor-active").value === "true",
       status: byId("task-editor-status").value,
       recurrence_type,
@@ -2379,15 +2529,32 @@ async function redeemReward() {
     throw new Error("Belohnung nicht gefunden");
   }
 
+  const points = Number(byId("redeem-points").value || 0);
+  if (!Number.isFinite(points) || points < 1) {
+    setInvalid(byId("redeem-points"), true);
+    throw new Error("Bitte gültige Punkte für den Beitrag eingeben");
+  }
+  setInvalid(byId("redeem-points"), false);
+
+  const progress = state.selectedRewardContribution;
+  if (progress && progress.reward_id === rewardId) {
+    if (progress.pending_redemption_id) {
+      throw new Error("Für diese Belohnung läuft bereits eine Anfrage");
+    }
+    if (points > progress.remaining_points) {
+      throw new Error(`Zu viele Punkte. Für diese Belohnung fehlen noch ${progress.remaining_points} Punkte.`);
+    }
+  }
+
   const ownBalance = getOwnBalance();
-  if (isChildRole() && ownBalance !== null && ownBalance < reward.cost_points) {
-    window.alert(`Nicht genug Punkte. Du hast ${ownBalance}, benötigt werden ${reward.cost_points}.`);
+  if (isChildRole() && ownBalance !== null && ownBalance < points) {
+    window.alert(`Nicht genug Punkte. Du hast ${ownBalance}, angefragt: ${points}.`);
     return;
   }
 
-  await api(`/rewards/${rewardId}/redeem`, {
+  await api(`/rewards/${rewardId}/contribute`, {
     method: "POST",
-    body: { comment: byId("redeem-comment").value.trim() || null },
+    body: { points, comment: byId("redeem-comment").value.trim() || null },
   });
 
   byId("redeem-comment").value = "";
@@ -2741,8 +2908,10 @@ byId("toggle-reward-create-btn").addEventListener("click", () =>
 
 byId("task-recurrence").addEventListener("change", syncTaskCreateTimingUI);
 byId("task-due-mode").addEventListener("change", syncTaskCreateTimingUI);
+byId("task-penalty-enabled").addEventListener("change", syncTaskCreateTimingUI);
 byId("task-editor-recurrence").addEventListener("change", syncTaskEditorTimingUI);
 byId("task-editor-due-mode").addEventListener("change", syncTaskEditorTimingUI);
+byId("task-editor-penalty-enabled").addEventListener("change", syncTaskEditorTimingUI);
 byId("boot-password-visible").addEventListener("change", (event) =>
   setPasswordInputVisibility(["boot-password", "boot-password-confirm"], event.target.checked)
 );
@@ -2767,6 +2936,9 @@ byId("create-event-btn").addEventListener("click", () => createEvent().catch((er
 byId("create-reward-btn").addEventListener("click", () => createReward().catch((error) => log("Belohnung Fehler", { error: error.message })));
 byId("reward-editor-save-btn").addEventListener("click", () => updateReward().catch((error) => log("Belohnung bearbeiten Fehler", { error: error.message })));
 byId("reward-editor-cancel-btn").addEventListener("click", closeRewardEditor);
+byId("redeem-reward-select").addEventListener("change", () =>
+  refreshSelectedRewardContribution().catch((error) => log("Belohnungsbeitrag Fehler", { error: error.message }))
+);
 byId("points-adjust-save-btn").addEventListener("click", () => savePointsAdjust().catch((error) => log("Punkte bearbeiten Fehler", { error: error.message })));
 byId("points-adjust-cancel-btn").addEventListener("click", closePointsAdjust);
 byId("redeem-reward-btn").addEventListener("click", () =>
@@ -2785,6 +2957,11 @@ byId("task-weekly-day").value = byId("task-weekly-day").value || "0";
 byId("task-weekly-time").value = byId("task-weekly-time").value || "09:00";
 byId("task-editor-weekly-day").value = byId("task-editor-weekly-day").value || "0";
 byId("task-editor-weekly-time").value = byId("task-editor-weekly-time").value || "09:00";
+byId("task-penalty-enabled").value = byId("task-penalty-enabled").value || "false";
+byId("task-penalty-points").value = byId("task-penalty-points").value || "5";
+byId("task-editor-penalty-enabled").value = byId("task-editor-penalty-enabled").value || "false";
+byId("task-editor-penalty-points").value = byId("task-editor-penalty-points").value || "5";
+byId("redeem-points").value = byId("redeem-points").value || "10";
 syncTaskCreateTimingUI();
 syncTaskEditorTimingUI();
 refreshSession().catch((error) => log("Initialisierung fehlgeschlagen", { error: error.message }));
