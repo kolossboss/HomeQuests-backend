@@ -6,6 +6,7 @@ on:
       - "codex/**"
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -31,6 +32,21 @@ jobs:
               core.info(`Skip: branch ${branch}`);
               return;
             }
+
+            const dispatchDockerBuild = async (reason) => {
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner,
+                  repo,
+                  workflow_id: "docker-ghcr.yml",
+                  ref: base
+                });
+                core.info(`Docker-Workflow per Dispatch gestartet (${reason}).`);
+              } catch (dispatchError) {
+                const dispatchMessage = String(dispatchError?.message || dispatchError);
+                core.warning(`Docker-Workflow-Dispatch fehlgeschlagen: ${dispatchMessage}`);
+              }
+            };
 
             const headRef = `${owner}:${branch}`;
             const { data: openPrs } = await github.rest.pulls.list({
@@ -118,6 +134,7 @@ jobs:
                     merge_method: "squash"
                   });
                   core.info(`PR #${pr.number} direkt per Squash gemerged.`);
+                  await dispatchDockerBuild(`PR #${pr.number} direkt gemerged`);
                   return;
                 } catch (mergeError) {
                   const mergeMessage = String(mergeError?.message || "");
