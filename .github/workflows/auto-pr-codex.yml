@@ -119,6 +119,29 @@ jobs:
                 { pullRequestId: pr.node_id }
               );
               core.info(`Auto-Merge aktiviert fuer PR #${pr.number}`);
+
+              // Falls Auto-Merge sofort greift, triggern wir danach direkt den Docker-Build.
+              const maxChecks = 8;
+              const delayMs = 3000;
+              for (let i = 1; i <= maxChecks; i++) {
+                const { data: currentPr } = await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: pr.number
+                });
+
+                if (currentPr.merged) {
+                  core.info(`PR #${pr.number} wurde per Auto-Merge zusammengefuehrt.`);
+                  await dispatchDockerBuild(`PR #${pr.number} auto-gemerged`);
+                  return;
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+              }
+
+              core.info(
+                `PR #${pr.number} ist noch nicht gemerged. Docker-Dispatch erfolgt beim naechsten Merge-Durchlauf.`
+              );
             } catch (error) {
               const message = String(error?.message || "");
               if (message.includes("Protected branch rules not configured for this branch")) {
