@@ -75,6 +75,12 @@ try:
                 "ADD COLUMN IF NOT EXISTS penalty_last_applied_at TIMESTAMP NULL"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE rewards "
+                "ADD COLUMN IF NOT EXISTS is_shareable BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
         if engine.dialect.name == "postgresql":
             conn.execute(
                 text(
@@ -106,6 +112,16 @@ try:
                     """
                     DO $$
                     BEGIN
+                        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'taskstatusenum') THEN
+                            IF NOT EXISTS (
+                                SELECT 1
+                                FROM pg_enum e
+                                JOIN pg_type t ON t.oid = e.enumtypid
+                                WHERE t.typname = 'taskstatusenum' AND e.enumlabel = 'missed_submitted'
+                            ) THEN
+                                ALTER TYPE taskstatusenum ADD VALUE 'missed_submitted';
+                            END IF;
+                        END IF;
                         IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'pointssourceenum') THEN
                             IF NOT EXISTS (
                                 SELECT 1

@@ -25,6 +25,7 @@ class RoleEnum(str, Enum):
 class TaskStatusEnum(str, Enum):
     open = "open"
     submitted = "submitted"
+    missed_submitted = "missed_submitted"
     approved = "approved"
     rejected = "rejected"
 
@@ -168,6 +169,7 @@ class Reward(Base):
     title: Mapped[str] = mapped_column(String(180), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     cost_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    is_shareable: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

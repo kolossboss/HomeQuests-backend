@@ -125,6 +125,8 @@ def get_reward_contribution_progress(
     reward = db.query(Reward).filter(Reward.id == reward_id, Reward.family_id == family_id).first()
     if not reward:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Belohnung nicht gefunden")
+    if not reward.is_shareable:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Diese Belohnung ist nicht aufteilbar")
     return _build_contribution_progress(db, reward)
 
 
@@ -143,6 +145,7 @@ def create_reward(
         title=payload.title,
         description=payload.description,
         cost_points=payload.cost_points,
+        is_shareable=payload.is_shareable,
         is_active=payload.is_active,
         created_by_id=current_user.id,
     )
@@ -176,6 +179,7 @@ def update_reward(
     reward.title = payload.title
     reward.description = payload.description
     reward.cost_points = payload.cost_points
+    reward.is_shareable = payload.is_shareable
     reward.is_active = payload.is_active
 
     db.flush()
@@ -232,6 +236,8 @@ def contribute_reward(
 
     if not reward.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Belohnung ist deaktiviert")
+    if not reward.is_shareable:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Diese Belohnung ist nicht aufteilbar")
 
     pending_redemption = _pending_redemption_for_reward(db, reward.family_id, reward.id)
     if pending_redemption:
@@ -335,6 +341,8 @@ def redeem_reward(
 
     if not reward.is_active:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Belohnung ist deaktiviert")
+    if reward.is_shareable:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Diese Belohnung ist aufteilbar. Bitte Beiträge nutzen")
 
     if _pending_redemption_for_reward(db, reward.family_id, reward.id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Für diese Belohnung läuft bereits eine Anfrage")

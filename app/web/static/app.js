@@ -127,6 +127,7 @@ function statusLabel(status) {
   const map = {
     open: "offen",
     submitted: "wartet auf Bestätigung",
+    missed_submitted: "nicht erledigt gemeldet",
     approved: "bestätigt",
     rejected: "abgelehnt",
     pending: "offen",
@@ -423,6 +424,10 @@ function isDateInRange(date, start, end) {
 function getTaskStatusCounts(tasks) {
   return tasks.reduce(
     (acc, task) => {
+      if (task.status === "missed_submitted") {
+        acc.submitted += 1;
+        return acc;
+      }
       if (Object.prototype.hasOwnProperty.call(acc, task.status)) {
         acc[task.status] += 1;
       }
@@ -1029,7 +1034,7 @@ function renderDashboardPoints() {
 }
 
 function getPendingTaskRequests() {
-  return state.tasks.filter((task) => task.status === "submitted");
+  return state.tasks.filter((task) => task.status === "submitted" || task.status === "missed_submitted");
 }
 
 function getPendingRewardRequests() {
@@ -1042,16 +1047,26 @@ function renderDashboardPendingRequests() {
 
   byId("dashboard-pending-task-cards").innerHTML = pendingTasks.length
     ? pendingTasks
-      .map(
-        (task) => `<article class="request-card">
+      .map((task) => {
+        if (task.status === "missed_submitted") {
+          return `<article class="request-card">
+          <p class="request-card-title">${memberName(task.assignee_id)} hat \"${task.title}\" als nicht erledigt gemeldet</p>
+          <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
+          <div class="request-card-actions">
+            <button data-dashboard-missed-task-action="delete" data-task-id="${task.id}">Löschen</button>
+            <button class="btn-secondary" data-dashboard-missed-task-action="penalty" data-task-id="${task.id}">Minuspunkte</button>
+          </div>
+        </article>`;
+        }
+        return `<article class="request-card">
           <p class="request-card-title">${memberName(task.assignee_id)} hat \"${task.title}\" als erledigt gemeldet</p>
           <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
           <div class="request-card-actions">
             <button data-dashboard-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
             <button class="btn-secondary" data-dashboard-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>
           </div>
-        </article>`
-      )
+        </article>`;
+      })
       .join("")
     : "<p class=\"muted\">Keine offenen Aufgabenanfragen</p>";
 
@@ -1182,12 +1197,14 @@ function renderChildTaskLists() {
     return due >= tomorrowStart;
   });
 
-  const waitingTasks = newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "submitted"));
+  const waitingTasks = newestRecurringEntries(
+    ownVisibleTasks.filter((task) => task.status === "submitted" || task.status === "missed_submitted")
+  );
   const completedTasks = ownVisibleTasks.filter(
     (task) => task.status === "approved" && task.recurrence_type === "none"
   );
 
-  function renderTaskCards(targetId, tasks, emptyText, overdue = false) {
+  function renderTaskCards(targetId, tasks, emptyText, overdue = false, actionable = true) {
     const target = byId(targetId);
     if (!target) return;
     if (tasks.length === 0) {
@@ -1196,17 +1213,33 @@ function renderChildTaskLists() {
     }
 
     target.innerHTML = tasks
-      .map(
-        (task) => `<button class="task-card-btn ${overdue ? "overdue" : ""}" data-task-id="${task.id}">
+      .map((task) => {
+        if (!actionable) {
+          return `<article class="request-card ${overdue ? "overdue" : ""}">
           <span class="task-card-title">${task.title}</span>
           <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
-        </button>`
-      )
+        </article>`;
+        }
+        if (overdue) {
+          return `<article class="request-card overdue">
+          <span class="task-card-title">${task.title}</span>
+          <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
+          <div class="request-card-actions">
+            <button data-task-id="${task.id}" data-task-action="submit_done">Als erledigt melden</button>
+            <button class="btn-secondary" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>
+          </div>
+        </article>`;
+        }
+        return `<button class="task-card-btn ${overdue ? "overdue" : ""}" data-task-id="${task.id}">
+          <span class="task-card-title">${task.title}</span>
+          <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
+        </button>`;
+      })
       .join("");
   }
 
   renderTaskCards("child-today-task-cards", todayTasks, "Heute keine fälligen Aufgaben");
-  renderTaskCards("child-upcoming-task-cards", upcomingTasks, "Keine Aufgaben für die nächsten Tage");
+  renderTaskCards("child-upcoming-task-cards", upcomingTasks, "Keine Aufgaben für die nächsten Tage", false, false);
   renderTaskCards("child-week-task-cards", weekTasks, "Keine Wochenaufgaben");
   renderTaskCards("child-overdue-task-cards", overdueTasks, "Keine überfälligen Aufgaben", true);
 
@@ -1215,7 +1248,9 @@ function renderChildTaskLists() {
       .map(
         (task) => `<article class="request-card">
           <p class="request-card-title">${task.title}</p>
-          <p class="request-card-meta">Eingereicht: ${fmtDate(task.updated_at || task.created_at)} • ${childTaskDueText(task)}</p>
+          <p class="request-card-meta">${
+            task.status === "missed_submitted" ? "Als nicht erledigt gemeldet" : "Eingereicht"
+          }: ${fmtDate(task.updated_at || task.created_at)} • ${childTaskDueText(task)}</p>
         </article>`
       )
       .join("")
@@ -1239,16 +1274,26 @@ function renderManagerTaskReviewCards() {
 
   byId("manager-task-review-cards").innerHTML = pendingTasks.length
     ? pendingTasks
-      .map(
-        (task) => `<article class="request-card">
+      .map((task) => {
+        if (task.status === "missed_submitted") {
+          return `<article class="request-card">
+          <p class="request-card-title">${memberName(task.assignee_id)}: ${task.title}</p>
+          <p class="request-card-meta">Als nicht erledigt gemeldet • ${taskDueText(task)}</p>
+          <div class="request-card-actions">
+            <button data-task-missed-review-action="delete" data-task-id="${task.id}">Löschen</button>
+            <button class="btn-secondary" data-task-missed-review-action="penalty" data-task-id="${task.id}">Minuspunkte</button>
+          </div>
+        </article>`;
+        }
+        return `<article class="request-card">
           <p class="request-card-title">${memberName(task.assignee_id)}: ${task.title}</p>
           <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
           <div class="request-card-actions">
             <button data-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
             <button class="btn-secondary" data-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>
           </div>
-        </article>`
-      )
+        </article>`;
+      })
       .join("")
     : "<p class=\"muted\">Keine wartenden Aufgaben.</p>";
 }
@@ -1403,6 +1448,7 @@ function renderRewards() {
         <td>${reward.title}</td>
         <td>${reward.description || "-"}</td>
         <td>${reward.cost_points}</td>
+        <td>${reward.is_shareable ? "ja" : "nein"}</td>
         <td>${reward.is_active ? "aktiv" : "deaktiviert"}</td>
         <td>${actions}</td>
       </tr>`;
@@ -1414,7 +1460,10 @@ function renderRewards() {
     "redeem-reward-select",
     state.rewards
       .filter((reward) => reward.is_active)
-      .map((reward) => ({ value: reward.id, label: `${reward.title} • ${reward.cost_points} Punkte` }))
+      .map((reward) => ({
+        value: reward.id,
+        label: `${reward.title} • ${reward.cost_points} Punkte${reward.is_shareable ? " • aufteilbar" : ""}`,
+      }))
   );
 
   if (state.selectedRewardId) {
@@ -1440,11 +1489,13 @@ function contributionStatusLabel(status) {
 }
 
 function renderSelectedRewardContribution() {
+  const headingEl = byId("reward-redeem-heading");
+  const pointsLabel = byId("redeem-points-label");
   const statusEl = byId("reward-contribution-status");
   const listEl = byId("reward-contribution-list");
   const contributeBtn = byId("redeem-reward-btn");
   const pointsInput = byId("redeem-points");
-  if (!statusEl || !listEl || !contributeBtn || !pointsInput) return;
+  if (!headingEl || !pointsLabel || !statusEl || !listEl || !contributeBtn || !pointsInput) return;
 
   if (!isChildRole()) {
     statusEl.textContent = "";
@@ -1458,11 +1509,31 @@ function renderSelectedRewardContribution() {
   const progress = state.selectedRewardContribution;
 
   if (!rewardId || !reward) {
-    statusEl.textContent = "Belohnung auswählen, um den Sammelstatus zu sehen.";
+    headingEl.textContent = "Belohnung anfragen";
+    pointsLabel.classList.remove("hidden");
+    contributeBtn.textContent = "Einlösung anfragen";
+    statusEl.textContent = "Belohnung auswählen.";
     listEl.innerHTML = "";
     contributeBtn.disabled = true;
     return;
   }
+
+  if (!reward.is_shareable) {
+    headingEl.textContent = "Belohnung direkt einlösen";
+    pointsLabel.classList.add("hidden");
+    pointsInput.value = String(reward.cost_points);
+    contributeBtn.textContent = "Einlösung anfragen";
+    listEl.innerHTML = "";
+    const ownBalance = getOwnBalance();
+    const hasEnoughPoints = ownBalance === null || ownBalance >= reward.cost_points;
+    statusEl.textContent = `Nicht aufteilbar • Kosten: ${reward.cost_points} Punkte`;
+    contributeBtn.disabled = !hasEnoughPoints;
+    return;
+  }
+
+  headingEl.textContent = "Punkte zu Belohnung beitragen";
+  pointsLabel.classList.remove("hidden");
+  contributeBtn.textContent = "Beitrag hinzufügen";
 
   if (!progress || progress.reward_id !== rewardId) {
     statusEl.textContent = `Belohnung: ${reward.title} • Lade Sammelstatus ...`;
@@ -1514,6 +1585,12 @@ async function refreshSelectedRewardContribution() {
     renderSelectedRewardContribution();
     return;
   }
+  const reward = state.rewards.find((entry) => entry.id === rewardId);
+  if (!reward || !reward.is_shareable) {
+    state.selectedRewardContribution = null;
+    renderSelectedRewardContribution();
+    return;
+  }
   state.selectedRewardContribution = await api(`/families/${familyId}/rewards/${rewardId}/contributions`);
   renderSelectedRewardContribution();
 }
@@ -1526,6 +1603,7 @@ function fillRewardEditorForm() {
   byId("reward-editor-title").value = reward.title || "";
   byId("reward-editor-description").value = reward.description || "";
   byId("reward-editor-cost").value = String(reward.cost_points);
+  byId("reward-editor-shareable").value = reward.is_shareable ? "true" : "false";
   byId("reward-editor-active").value = reward.is_active ? "true" : "false";
 }
 
@@ -2350,6 +2428,13 @@ async function submitTaskById(taskId, note = null) {
   await refreshFamilyData();
 }
 
+async function reportMissedTaskById(taskId) {
+  await api(`/tasks/${taskId}/report-missed`, {
+    method: "POST",
+  });
+  await refreshFamilyData();
+}
+
 async function deleteTask(taskId) {
   if (!isManagerRole()) return;
   await api(`/tasks/${taskId}`, { method: "DELETE" });
@@ -2453,12 +2538,14 @@ async function createReward() {
       title,
       description: byId("reward-description").value.trim() || null,
       cost_points,
+      is_shareable: byId("reward-shareable").value === "true",
       is_active: true,
     },
   });
 
   titleInput.value = "";
   byId("reward-description").value = "";
+  byId("reward-shareable").value = "false";
   setSectionOpen("reward-create-section", "toggle-reward-create-btn", false, "Neue Belohnung", "Eingabe schließen");
   await refreshFamilyData();
 }
@@ -2499,6 +2586,7 @@ async function updateReward() {
       title,
       description: byId("reward-editor-description").value.trim() || null,
       cost_points,
+      is_shareable: byId("reward-editor-shareable").value === "true",
       is_active: byId("reward-editor-active").value === "true",
     },
   });
@@ -2527,6 +2615,21 @@ async function redeemReward() {
   const reward = state.rewards.find((entry) => entry.id === rewardId);
   if (!reward) {
     throw new Error("Belohnung nicht gefunden");
+  }
+
+  if (!reward.is_shareable) {
+    const ownBalance = getOwnBalance();
+    if (isChildRole() && ownBalance !== null && ownBalance < reward.cost_points) {
+      window.alert(`Nicht genug Punkte. Du hast ${ownBalance}, benötigt: ${reward.cost_points}.`);
+      return;
+    }
+    await api(`/rewards/${rewardId}/redeem`, {
+      method: "POST",
+      body: { comment: byId("redeem-comment").value.trim() || null },
+    });
+    byId("redeem-comment").value = "";
+    await refreshFamilyData();
+    return;
   }
 
   const points = Number(byId("redeem-points").value || 0);
@@ -2566,6 +2669,15 @@ async function reviewTaskRequest(taskId, decision) {
   await api(`/tasks/${taskId}/review`, {
     method: "POST",
     body: { decision, comment: null },
+  });
+  await refreshFamilyData();
+}
+
+async function reviewMissedTaskRequest(taskId, action) {
+  if (!isManagerRole()) return;
+  await api(`/tasks/${taskId}/missed-review`, {
+    method: "POST",
+    body: { action, comment: null },
   });
   await refreshFamilyData();
 }
@@ -2790,6 +2902,19 @@ byId("dashboard-pending-section").addEventListener("click", async (event) => {
     return;
   }
 
+  const missedTaskButton = event.target.closest("button[data-dashboard-missed-task-action]");
+  if (missedTaskButton) {
+    const taskId = Number(missedTaskButton.dataset.taskId);
+    const action = missedTaskButton.dataset.dashboardMissedTaskAction;
+    if (!taskId || !action) return;
+    try {
+      await reviewMissedTaskRequest(taskId, action);
+    } catch (error) {
+      log("Nicht-erledigt Prüfung Fehler", { error: error.message });
+    }
+    return;
+  }
+
   const rewardReviewButton = event.target.closest("button[data-dashboard-reward-review-action]");
   if (rewardReviewButton) {
     const redemptionId = Number(rewardReviewButton.dataset.redemptionId);
@@ -2804,6 +2929,19 @@ byId("dashboard-pending-section").addEventListener("click", async (event) => {
 });
 
 byId("manager-task-review-cards").addEventListener("click", async (event) => {
+  const missedButton = event.target.closest("button[data-task-missed-review-action]");
+  if (missedButton) {
+    const taskId = Number(missedButton.dataset.taskId);
+    const action = missedButton.dataset.taskMissedReviewAction;
+    if (!taskId || !action) return;
+    try {
+      await reviewMissedTaskRequest(taskId, action);
+    } catch (error) {
+      log("Nicht-erledigt Prüfung Fehler", { error: error.message });
+    }
+    return;
+  }
+
   const button = event.target.closest("button[data-task-review-action]");
   if (!button) return;
 
@@ -2863,6 +3001,18 @@ byId("child-task-categories-section").addEventListener("click", async (event) =>
   if (!taskId) return;
   const task = state.tasks.find((entry) => entry.id === taskId);
   const taskTitle = task ? task.title : "Aufgabe";
+  const action = button.dataset.taskAction || "submit_done";
+
+  if (action === "report_missed") {
+    const confirmedMissed = window.confirm(`Aufgabe \"${taskTitle}\" als nicht erledigt melden?`);
+    if (!confirmedMissed) return;
+    try {
+      await reportMissedTaskById(taskId);
+    } catch (error) {
+      log("Nicht-erledigt melden fehlgeschlagen", { error: error.message });
+    }
+    return;
+  }
 
   const confirmed = window.confirm(`Aufgabe \"${taskTitle}\" als erledigt melden?`);
   if (!confirmed) return;
@@ -2961,6 +3111,8 @@ byId("task-penalty-enabled").value = byId("task-penalty-enabled").value || "fals
 byId("task-penalty-points").value = byId("task-penalty-points").value || "5";
 byId("task-editor-penalty-enabled").value = byId("task-editor-penalty-enabled").value || "false";
 byId("task-editor-penalty-points").value = byId("task-editor-penalty-points").value || "5";
+byId("reward-shareable").value = byId("reward-shareable").value || "false";
+byId("reward-editor-shareable").value = byId("reward-editor-shareable").value || "false";
 byId("redeem-points").value = byId("redeem-points").value || "10";
 syncTaskCreateTimingUI();
 syncTaskEditorTimingUI();

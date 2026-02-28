@@ -22,6 +22,7 @@ from ..models import (
 )
 from ..rbac import get_membership_or_403, require_roles
 from ..schemas import (
+    MissedTaskReviewRequest,
     SpecialTaskAvailabilityOut,
     SpecialTaskTemplateCreate,
     SpecialTaskTemplateOut,
@@ -226,6 +227,39 @@ def _apply_penalties_for_family(db: Session, family_id: int) -> bool:
     for task in tasks:
         changed = _apply_penalty_for_task(db, task) or changed
     return changed
+
+
+def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int) -> Task | None:
+    if source_task.recurrence_type == RecurrenceTypeEnum.none.value:
+        return None
+    next_due = _next_due(source_task.due_at, source_task.recurrence_type, source_task.active_weekdays)
+    next_task = Task(
+        family_id=source_task.family_id,
+        title=source_task.title,
+        description=source_task.description,
+        assignee_id=source_task.assignee_id,
+        due_at=next_due,
+        points=source_task.points,
+        reminder_offsets_minutes=source_task.reminder_offsets_minutes,
+        active_weekdays=source_task.active_weekdays,
+        recurrence_type=source_task.recurrence_type,
+        penalty_enabled=source_task.penalty_enabled,
+        penalty_points=source_task.penalty_points,
+        penalty_last_applied_at=None,
+        special_template_id=source_task.special_template_id,
+        is_active=True,
+        status=TaskStatusEnum.open,
+        created_by_id=created_by_id,
+    )
+    db.add(next_task)
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=source_task.family_id,
+        event_type="task.created",
+        payload={"task_id": next_task.id, "assignee_id": next_task.assignee_id},
+    )
+    return next_task
 
 
 @router.get("/families/{family_id}/tasks", response_model=list[TaskOut])
@@ -439,32 +473,7 @@ def update_task(
                 )
             )
 
-        if task.recurrence_type != RecurrenceTypeEnum.none.value:
-            next_task = Task(
-                family_id=task.family_id,
-                title=task.title,
-                description=task.description,
-                assignee_id=task.assignee_id,
-                due_at=_next_due(task.due_at, task.recurrence_type, task.active_weekdays),
-                points=task.points,
-                reminder_offsets_minutes=task.reminder_offsets_minutes,
-                active_weekdays=task.active_weekdays,
-                recurrence_type=task.recurrence_type,
-                penalty_enabled=task.penalty_enabled,
-                penalty_points=task.penalty_points,
-                penalty_last_applied_at=None,
-                is_active=True,
-                status=TaskStatusEnum.open,
-                created_by_id=current_user.id,
-            )
-            db.add(next_task)
-            db.flush()
-            emit_live_event(
-                db,
-                family_id=task.family_id,
-                event_type="task.created",
-                payload={"task_id": next_task.id, "assignee_id": next_task.assignee_id},
-            )
+        _create_next_recurring_task(db, task, current_user.id)
 
     db.flush()
     emit_live_event(
@@ -750,6 +759,45 @@ def submit_task(
     return task
 
 
+@router.post("/tasks/{task_id}/report-missed", response_model=TaskOut)
+def report_task_missed(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
+
+    get_membership_or_403(db, task.family_id, current_user.id)
+
+    if task.assignee_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur zugewiesenes Familienmitglied darf melden")
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe kann aktuell nicht als nicht erledigt gemeldet werden")
+    if not task.due_at or task.due_at >= datetime.utcnow():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nur überfällige Aufgaben können als nicht erledigt gemeldet werden")
+
+    db.add(
+        TaskSubmission(
+            task_id=task.id,
+            submitted_by_id=current_user.id,
+            note="Nicht erledigt gemeldet",
+        )
+    )
+    task.status = TaskStatusEnum.missed_submitted
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=task.family_id,
+        event_type="task.missed_reported",
+        payload={"task_id": task.id, "assignee_id": task.assignee_id},
+    )
+    db.commit()
+    db.refresh(task)
+    return task
+
+
 @router.post("/tasks/{task_id}/review", response_model=TaskOut)
 def review_task(
     task_id: int,
@@ -773,8 +821,10 @@ def review_task(
     if not latest_submission:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Keine Einreichung vorhanden")
 
-    if task.status == TaskStatusEnum.approved:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe wurde bereits bestätigt")
+    if task.status == TaskStatusEnum.missed_submitted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nicht-erledigt-Meldungen bitte über 'missed-review' bearbeiten")
+    if task.status != TaskStatusEnum.submitted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe wartet nicht auf Bestätigung")
 
     approval = TaskApproval(
         submission_id=latest_submission.id,
@@ -800,32 +850,7 @@ def review_task(
                 )
             )
 
-        if task.recurrence_type != RecurrenceTypeEnum.none.value:
-            next_task = Task(
-                family_id=task.family_id,
-                title=task.title,
-                description=task.description,
-                assignee_id=task.assignee_id,
-                due_at=_next_due(task.due_at, task.recurrence_type, task.active_weekdays),
-                points=task.points,
-                reminder_offsets_minutes=task.reminder_offsets_minutes,
-                active_weekdays=task.active_weekdays,
-                recurrence_type=task.recurrence_type,
-                penalty_enabled=task.penalty_enabled,
-                penalty_points=task.penalty_points,
-                penalty_last_applied_at=None,
-                is_active=True,
-                status=TaskStatusEnum.open,
-                created_by_id=current_user.id,
-            )
-            db.add(next_task)
-            db.flush()
-            emit_live_event(
-                db,
-                family_id=task.family_id,
-                event_type="task.created",
-                payload={"task_id": next_task.id, "assignee_id": next_task.assignee_id},
-            )
+        _create_next_recurring_task(db, task, current_user.id)
     else:
         task.status = TaskStatusEnum.rejected
 
@@ -839,6 +864,65 @@ def review_task(
     db.commit()
     db.refresh(task)
     return task
+
+
+@router.post("/tasks/{task_id}/missed-review")
+def review_missed_task(
+    task_id: int,
+    payload: MissedTaskReviewRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
+
+    membership_context = get_membership_or_403(db, task.family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    if task.status != TaskStatusEnum.missed_submitted:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe wartet nicht auf Nicht-erledigt-Prüfung")
+
+    due_at = _as_utc_naive(task.due_at)
+    deduction = 0
+    if payload.action == "penalty":
+        deduction = task.penalty_points if task.penalty_points > 0 else max(task.points, 0)
+        if due_at and task.penalty_last_applied_at and _as_utc_naive(task.penalty_last_applied_at) and _as_utc_naive(task.penalty_last_applied_at) >= due_at:
+            deduction = 0
+        if deduction > 0:
+            db.add(
+                PointsLedger(
+                    family_id=task.family_id,
+                    user_id=task.assignee_id,
+                    source_type=PointsSourceEnum.task_penalty,
+                    source_id=task.id,
+                    points_delta=-deduction,
+                    description=f"Nicht erledigt: {task.title}",
+                    created_by_id=current_user.id,
+                )
+            )
+            emit_live_event(
+                db,
+                family_id=task.family_id,
+                event_type="points.adjusted",
+                payload={"user_id": task.assignee_id, "points_delta": -deduction, "task_id": task.id, "reason": "task_penalty_manual"},
+            )
+
+    _create_next_recurring_task(db, task, current_user.id)
+
+    task_id_value = task.id
+    family_id_value = task.family_id
+    assignee_id_value = task.assignee_id
+    db.delete(task)
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=family_id_value,
+        event_type="task.deleted",
+        payload={"task_id": task_id_value, "assignee_id": assignee_id_value},
+    )
+    db.commit()
+    return {"deleted": True, "penalty_applied": deduction}
 
 
 @router.post("/tasks/{task_id}/active", response_model=TaskOut)
