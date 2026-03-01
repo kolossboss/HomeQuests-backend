@@ -67,7 +67,8 @@ def _add_months(value: datetime, months: int) -> datetime:
 
 
 def _next_due(due_at: datetime | None, recurrence_type: str, active_weekdays: list[int] | None = None) -> datetime | None:
-    base = _as_utc_naive(due_at) or datetime.utcnow()
+    normalized_due = _as_utc_naive(due_at)
+    base = normalized_due or datetime.utcnow()
     if recurrence_type == RecurrenceTypeEnum.daily.value:
         allowed = sorted(set(active_weekdays or [0, 1, 2, 3, 4, 5, 6]))
         candidate = base + timedelta(days=1)
@@ -77,6 +78,9 @@ def _next_due(due_at: datetime | None, recurrence_type: str, active_weekdays: li
             candidate += timedelta(days=1)
         return candidate
     if recurrence_type == RecurrenceTypeEnum.weekly.value:
+        # "Ganze Woche verfügbar" nutzt due_at=None und darf keinen festen Zeitpunkt erzeugen.
+        if normalized_due is None:
+            return None
         return base + timedelta(days=7)
     if recurrence_type == RecurrenceTypeEnum.monthly.value:
         return _add_months(base, 1)
