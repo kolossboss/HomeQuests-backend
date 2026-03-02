@@ -45,6 +45,20 @@ const TASK_REMINDER_LABELS = {
 const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const DAILY_REMINDER_OFFSETS = [15, 30, 60, 120];
 const ALL_REMINDER_OFFSETS = [15, 30, 60, 120, 1440, 2880];
+const LIVE_REFRESH_DEBOUNCE_MS = 350;
+const LIVE_RECONNECT_BASE_MS = 1000;
+const LIVE_RECONNECT_MAX_MS = 15000;
+
+let liveEventSource = null;
+let liveReconnectTimer = null;
+let liveRefreshTimer = null;
+let liveRefreshInFlight = false;
+let liveRefreshPending = false;
+let liveReconnectDelayMs = LIVE_RECONNECT_BASE_MS;
+let liveShouldRun = false;
+let liveConnected = false;
+let liveFamilyId = null;
+let liveCursor = 0;
 
 function byId(id) {
   return document.getElementById(id);
@@ -608,6 +622,179 @@ async function api(path, { method = "GET", body = null } = {}) {
     throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return payload;
+}
+
+function liveCursorStorageKey(familyId) {
+  return `fp_live_cursor_${familyId}`;
+}
+
+function loadLiveCursor(familyId) {
+  if (!familyId) return 0;
+  const raw = localStorage.getItem(liveCursorStorageKey(familyId));
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function saveLiveCursor(familyId, cursor) {
+  if (!familyId) return;
+  if (!Number.isInteger(cursor) || cursor < 0) return;
+  localStorage.setItem(liveCursorStorageKey(familyId), String(cursor));
+}
+
+function clearLiveReconnectTimer() {
+  if (liveReconnectTimer) {
+    window.clearTimeout(liveReconnectTimer);
+    liveReconnectTimer = null;
+  }
+}
+
+function clearLiveRefreshTimer() {
+  if (liveRefreshTimer) {
+    window.clearTimeout(liveRefreshTimer);
+    liveRefreshTimer = null;
+  }
+}
+
+function closeLiveSource() {
+  if (!liveEventSource) return;
+  liveEventSource.close();
+  liveEventSource = null;
+}
+
+function buildLiveStreamUrl(familyId) {
+  const params = new URLSearchParams();
+  if (liveCursor > 0) params.set("since_id", String(liveCursor));
+  params.set("access_token", state.token);
+  return `/families/${familyId}/live/stream?${params.toString()}`;
+}
+
+function queueLiveRefresh(reason = "live_update") {
+  if (!liveShouldRun || !state.token || !getSelectedFamilyId()) return;
+  if (liveRefreshTimer) return;
+  liveRefreshTimer = window.setTimeout(async () => {
+    liveRefreshTimer = null;
+    if (liveRefreshInFlight) {
+      liveRefreshPending = true;
+      return;
+    }
+
+    liveRefreshInFlight = true;
+    try {
+      await refreshFamilyData();
+    } catch (error) {
+      log("Live-Refresh Fehler", { error: error.message, reason });
+    } finally {
+      liveRefreshInFlight = false;
+      if (liveRefreshPending) {
+        liveRefreshPending = false;
+        queueLiveRefresh("queued_follow_up");
+      }
+    }
+  }, LIVE_REFRESH_DEBOUNCE_MS);
+}
+
+function scheduleLiveReconnect(familyId) {
+  if (!liveShouldRun || !state.token || !familyId) return;
+  clearLiveReconnectTimer();
+  const delay = liveReconnectDelayMs;
+  liveReconnectTimer = window.setTimeout(() => {
+    connectLiveUpdates(familyId);
+  }, delay);
+  liveReconnectDelayMs = Math.min(liveReconnectDelayMs * 2, LIVE_RECONNECT_MAX_MS);
+}
+
+function connectLiveUpdates(familyId) {
+  if (!liveShouldRun || !state.token || !familyId) return;
+  closeLiveSource();
+
+  const streamUrl = buildLiveStreamUrl(familyId);
+  let source = null;
+  try {
+    source = new EventSource(streamUrl);
+  } catch (error) {
+    log("Live-Updates Startfehler", { error: error.message });
+    scheduleLiveReconnect(familyId);
+    return;
+  }
+  liveEventSource = source;
+
+  source.onopen = () => {
+    liveReconnectDelayMs = LIVE_RECONNECT_BASE_MS;
+    if (!liveConnected) {
+      log("Live-Updates verbunden", { family_id: familyId });
+    }
+    liveConnected = true;
+  };
+
+  source.addEventListener("connected", (event) => {
+    try {
+      const payload = JSON.parse(event.data || "{}");
+      const connectedCursor = Number(payload.since_id || 0);
+      if (Number.isInteger(connectedCursor) && connectedCursor > liveCursor) {
+        liveCursor = connectedCursor;
+        saveLiveCursor(familyId, liveCursor);
+      }
+    } catch (_) {
+      // Ignore malformed connected payload and continue streaming.
+    }
+  });
+
+  source.addEventListener("family_update", (event) => {
+    try {
+      const payload = JSON.parse(event.data || "{}");
+      const eventId = Number(payload.id || event.lastEventId || 0);
+      if (Number.isInteger(eventId) && eventId > liveCursor) {
+        liveCursor = eventId;
+        saveLiveCursor(familyId, liveCursor);
+      }
+      queueLiveRefresh(payload.event_type || "family_update");
+    } catch (error) {
+      log("Live-Event Parse Fehler", { error: error.message });
+    }
+  });
+
+  source.onerror = () => {
+    closeLiveSource();
+    if (liveConnected) {
+      log("Live-Updates getrennt, verbinde neu ...", { family_id: familyId });
+    }
+    liveConnected = false;
+    scheduleLiveReconnect(familyId);
+  };
+}
+
+function startLiveUpdates() {
+  const familyId = getSelectedFamilyId();
+  if (!state.token || !familyId) return;
+  if (typeof EventSource === "undefined") {
+    log("Live-Updates nicht verfügbar", { reason: "EventSource wird vom Browser nicht unterstützt" });
+    return;
+  }
+
+  if (liveShouldRun && liveFamilyId === familyId && liveEventSource) return;
+  liveShouldRun = true;
+  liveFamilyId = familyId;
+  liveCursor = loadLiveCursor(familyId);
+  liveReconnectDelayMs = LIVE_RECONNECT_BASE_MS;
+  clearLiveReconnectTimer();
+  connectLiveUpdates(familyId);
+}
+
+function stopLiveUpdates({ resetCursor = false } = {}) {
+  liveShouldRun = false;
+  clearLiveReconnectTimer();
+  clearLiveRefreshTimer();
+  closeLiveSource();
+  liveConnected = false;
+  liveRefreshInFlight = false;
+  liveRefreshPending = false;
+  if (resetCursor && liveFamilyId) {
+    localStorage.removeItem(liveCursorStorageKey(liveFamilyId));
+    liveCursor = 0;
+  }
+  if (resetCursor) {
+    liveFamilyId = null;
+  }
 }
 
 function switchTab(name) {
@@ -1829,6 +2016,7 @@ async function refreshFamilyData() {
 
 async function refreshSession() {
   if (!state.token) {
+    stopLiveUpdates({ resetCursor: true });
     await initAuthPanel();
     return;
   }
@@ -1859,8 +2047,10 @@ async function refreshSession() {
     appPanel.classList.remove("hidden");
 
     await refreshFamilyData();
+    startLiveUpdates();
   } catch (error) {
     log("Session Fehler", { error: error.message });
+    stopLiveUpdates({ resetCursor: true });
     logout();
   }
 }
@@ -1939,6 +2129,7 @@ async function bootstrap() {
 
 function logout() {
   restoreAllInlineEditorSections();
+  stopLiveUpdates({ resetCursor: true });
   state.token = null;
   state.me = null;
   state.families = [];
@@ -2756,8 +2947,10 @@ async function savePointsAdjust() {
 
 if (familySelect) {
   familySelect.addEventListener("change", async (event) => {
+    stopLiveUpdates();
     state.familyId = Number(event.target.value);
     await refreshFamilyData();
+    startLiveUpdates();
   });
 }
 
