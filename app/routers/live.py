@@ -1,12 +1,12 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal, get_db
-from ..deps import get_current_user
+from ..deps import get_current_user_from_token_value
 from ..models import LiveUpdateEvent, User
 from ..rbac import get_membership_or_403
 from ..services import parse_live_payload
@@ -24,15 +24,36 @@ def _parse_last_event_id(last_event_id: str | None) -> int:
     return max(value, 0)
 
 
+def _extract_bearer_token(authorization: str | None, access_token: str | None) -> str:
+    token = (access_token or "").strip()
+    if token:
+        return token
+
+    raw_authorization = (authorization or "").strip()
+    if raw_authorization.lower().startswith("bearer "):
+        bearer_token = raw_authorization[7:].strip()
+        if bearer_token:
+            return bearer_token
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token fehlt",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 @router.get("/families/{family_id}/live/stream")
 async def stream_family_updates(
     family_id: int,
     request: Request,
     since_id: int = Query(default=0, ge=0),
+    access_token: str | None = Query(default=None),
+    authorization: str | None = Header(default=None, alias="Authorization"),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    token = _extract_bearer_token(authorization, access_token)
+    current_user: User = get_current_user_from_token_value(token, db)
     get_membership_or_403(db, family_id, current_user.id)
     cursor = max(since_id, _parse_last_event_id(last_event_id))
 
