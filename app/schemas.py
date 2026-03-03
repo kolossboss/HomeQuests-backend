@@ -516,6 +516,21 @@ class SpecialTaskAvailabilityOut(SpecialTaskTemplateOut):
 class SystemTestNotificationRequest(BaseModel):
     title: str = Field(min_length=2, max_length=120)
     message: str = Field(min_length=2, max_length=500)
+    recipient_user_ids: list[int] | None = None
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def validate_recipient_user_ids(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+
+        normalized: list[int] = []
+        for entry in value:
+            if entry < 1:
+                raise ValueError("Empfänger-IDs müssen größer als 0 sein")
+            if entry not in normalized:
+                normalized.append(entry)
+        return normalized
 
 
 class SystemTestNotificationOut(BaseModel):

@@ -717,13 +717,21 @@
 
           <div class="section-block">
             <h4>Testbenachrichtigung</h4>
-            <p class="muted">Sendet eine Live-Testbenachrichtigung an alle aktiven, registrierten Nutzer im Haushalt.</p>
+            <p class="muted">Sendet eine Live-Testbenachrichtigung an ausgewählte aktive Nutzer im Haushalt.</p>
             <div class="form-grid compact">
               <label>Titel<input id="system-test-title" type="text" value="Testbenachrichtigung" /></label>
               <label>Nachricht<input id="system-test-message" type="text" placeholder="Nachricht eingeben" /></label>
             </div>
+            <div id="system-test-recipient-picker" class="weekday-picker">
+              <span>Empfänger</span>
+              <div class="row-wrap">
+                <button id="system-test-select-all-btn" type="button">Alle auswählen</button>
+                <button id="system-test-clear-selection-btn" type="button">Auswahl leeren</button>
+              </div>
+              <div id="system-test-recipients" class="weekday-options"></div>
+            </div>
             <div class="row-wrap">
-              <button id="system-test-send-btn">An alle senden</button>
+              <button id="system-test-send-btn">Senden</button>
             </div>
             <p id="system-test-result" class="muted"></p>
           </div>
@@ -733,6 +741,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260303b"></script>
+    <script src="/static/app.js?v=20260303c"></script>
   </body>
 </html>

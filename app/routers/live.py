@@ -78,11 +78,20 @@ async def stream_family_updates(
             if events:
                 for event in events:
                     cursor = event.id
+                    parsed_payload = parse_live_payload(event.payload_json)
+                    if event.event_type == "notification.test":
+                        recipient_user_ids = parsed_payload.get("recipient_user_ids")
+                        if isinstance(recipient_user_ids, list):
+                            normalized_recipient_ids = {
+                                int(entry) for entry in recipient_user_ids if isinstance(entry, int) or str(entry).isdigit()
+                            }
+                            if normalized_recipient_ids and current_user.id not in normalized_recipient_ids:
+                                continue
                     payload = {
                         "id": event.id,
                         "family_id": event.family_id,
                         "event_type": event.event_type,
-                        "payload": parse_live_payload(event.payload_json),
+                        "payload": parsed_payload,
                         "created_at": event.created_at.isoformat(),
                     }
                     yield (
