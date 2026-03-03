@@ -38,6 +38,7 @@ from ..schemas import (
 from ..services import emit_live_event
 
 router = APIRouter(tags=["tasks"])
+FULL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
 
 
 def _as_utc_naive(value: datetime | None) -> datetime | None:
@@ -127,6 +128,61 @@ def _interval_start(interval_type: SpecialTaskIntervalEnum) -> datetime:
     # ISO week starts Monday.
     monday = now - timedelta(days=now.weekday())
     return monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _normalize_special_weekdays(weekdays: list[int] | None) -> list[int]:
+    if not weekdays:
+        return FULL_WEEKDAYS.copy()
+    normalized = sorted(set(int(value) for value in weekdays if isinstance(value, int)))
+    valid = [value for value in normalized if 0 <= value <= 6]
+    return valid or FULL_WEEKDAYS.copy()
+
+
+def _parse_due_time_hhmm(value: str | None) -> tuple[int, int] | None:
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    parts = raw.split(":")
+    if len(parts) != 2:
+        return None
+    hour_raw, minute_raw = parts
+    if not hour_raw.isdigit() or not minute_raw.isdigit():
+        return None
+    hour = int(hour_raw)
+    minute = int(minute_raw)
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+    return hour, minute
+
+
+def _special_task_due_at_today(template: SpecialTaskTemplate, now: datetime | None = None) -> datetime | None:
+    now_value = now or datetime.utcnow()
+    parsed = _parse_due_time_hhmm(template.due_time_hhmm)
+    if not parsed:
+        return None
+    hour, minute = parsed
+    return now_value.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def _special_task_is_available_now(
+    template: SpecialTaskTemplate,
+    now: datetime | None = None,
+) -> tuple[bool, str | None]:
+    now_value = now or datetime.utcnow()
+    if template.interval_type != SpecialTaskIntervalEnum.daily:
+        return True, None
+
+    allowed_weekdays = _normalize_special_weekdays(template.active_weekdays)
+    if now_value.weekday() not in allowed_weekdays:
+        return False, "Sonderaufgabe ist heute nicht verfügbar"
+
+    due_at_today = _special_task_due_at_today(template, now_value)
+    if due_at_today and now_value > due_at_today:
+        return False, "Sonderaufgabe ist für heute nicht mehr verfügbar"
+
+    return True, None
 
 
 def _special_task_usage_count(
@@ -523,6 +579,8 @@ def create_special_task_template(
         points=payload.points,
         interval_type=payload.interval_type,
         max_claims_per_interval=payload.max_claims_per_interval,
+        active_weekdays=payload.active_weekdays if payload.interval_type == SpecialTaskIntervalEnum.daily else FULL_WEEKDAYS.copy(),
+        due_time_hhmm=payload.due_time_hhmm if payload.interval_type == SpecialTaskIntervalEnum.daily else None,
         is_active=payload.is_active,
         created_by_id=current_user.id,
     )
@@ -558,6 +616,8 @@ def update_special_task_template(
     template.points = payload.points
     template.interval_type = payload.interval_type
     template.max_claims_per_interval = payload.max_claims_per_interval
+    template.active_weekdays = payload.active_weekdays if payload.interval_type == SpecialTaskIntervalEnum.daily else FULL_WEEKDAYS.copy()
+    template.due_time_hhmm = payload.due_time_hhmm if payload.interval_type == SpecialTaskIntervalEnum.daily else None
     template.is_active = payload.is_active
 
     db.flush()
@@ -615,7 +675,11 @@ def list_available_special_tasks(
     )
 
     result: list[SpecialTaskAvailabilityOut] = []
+    now = datetime.utcnow()
     for template in templates:
+        available_now, _ = _special_task_is_available_now(template, now)
+        if not available_now:
+            continue
         used = _special_task_usage_count(db, template.id, current_user.id, template.interval_type)
         remaining = max(template.max_claims_per_interval - used, 0)
         result.append(
@@ -627,6 +691,8 @@ def list_available_special_tasks(
                 points=template.points,
                 interval_type=template.interval_type,
                 max_claims_per_interval=template.max_claims_per_interval,
+                active_weekdays=_normalize_special_weekdays(template.active_weekdays),
+                due_time_hhmm=template.due_time_hhmm,
                 is_active=template.is_active,
                 created_at=template.created_at,
                 updated_at=template.updated_at,
@@ -652,6 +718,10 @@ def claim_special_task(
     membership_context = get_membership_or_403(db, template.family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.child})
 
+    available_now, unavailability_reason = _special_task_is_available_now(template)
+    if not available_now:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unavailability_reason or "Sonderaufgabe ist aktuell nicht verfügbar")
+
     used = _special_task_usage_count(db, template.id, current_user.id, template.interval_type)
     if used >= template.max_claims_per_interval:
         if template.interval_type == SpecialTaskIntervalEnum.daily:
@@ -660,12 +730,16 @@ def claim_special_task(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Monatslimit für diese Sonderaufgabe erreicht")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wochenlimit für diese Sonderaufgabe erreicht")
 
+    due_at = None
+    if template.interval_type == SpecialTaskIntervalEnum.daily:
+        due_at = _special_task_due_at_today(template)
+
     task = Task(
         family_id=template.family_id,
         title=template.title,
         description=template.description,
         assignee_id=current_user.id,
-        due_at=None,
+        due_at=due_at,
         points=template.points,
         reminder_offsets_minutes=[],
         active_weekdays=[],

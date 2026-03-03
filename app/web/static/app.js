@@ -59,6 +59,7 @@ let liveShouldRun = false;
 let liveConnected = false;
 let liveFamilyId = null;
 let liveCursor = 0;
+let specialTaskRefreshTimer = null;
 
 function byId(id) {
   return document.getElementById(id);
@@ -299,6 +300,66 @@ function specialIntervalLabel(intervalType) {
     monthly: "monatlich",
   };
   return map[intervalType] || intervalType;
+}
+
+function parseTimeValueToParts(timeValue) {
+  if (!timeValue) return null;
+  const parts = String(timeValue).split(":");
+  if (parts.length !== 2) return null;
+  const hours = Number(parts[0]);
+  const minutes = Number(parts[1]);
+  if (!Number.isInteger(hours) || !Number.isInteger(minutes)) return null;
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return { hours, minutes };
+}
+
+function normalizeTimeValueOrNull(timeValue) {
+  const parsed = parseTimeValueToParts(timeValue);
+  if (!parsed) return null;
+  return `${String(parsed.hours).padStart(2, "0")}:${String(parsed.minutes).padStart(2, "0")}`;
+}
+
+function specialTaskScheduleMeta(entry) {
+  if (entry.interval_type !== "daily") {
+    return `Intervall: ${specialIntervalLabel(entry.interval_type)}`;
+  }
+  const weekdays = weekdaysText(entry.active_weekdays && entry.active_weekdays.length ? entry.active_weekdays : [0, 1, 2, 3, 4, 5, 6]);
+  const dueText = entry.due_time_hhmm ? `fällig bis ${entry.due_time_hhmm}` : "ohne feste Uhrzeit";
+  return `Intervall: täglich • Tage: ${weekdays} • ${dueText}`;
+}
+
+function isSpecialTaskAvailableNow(entry) {
+  if (entry.interval_type !== "daily") return true;
+  const weekdays = (entry.active_weekdays && entry.active_weekdays.length) ? entry.active_weekdays : [0, 1, 2, 3, 4, 5, 6];
+  const now = new Date();
+  const weekday = weekdayFromDate(now);
+  if (!weekdays.includes(weekday)) return false;
+  const dueParts = parseTimeValueToParts(entry.due_time_hhmm);
+  if (!dueParts) return true;
+  const dueAt = new Date(now);
+  dueAt.setSeconds(0, 0);
+  dueAt.setHours(dueParts.hours, dueParts.minutes, 0, 0);
+  return now <= dueAt;
+}
+
+function syncSpecialTaskCreateTimingUI() {
+  const daily = byId("special-task-interval").value === "daily";
+  toggleHidden("special-task-due-time-row", !daily);
+  toggleHidden("special-task-weekdays-row", !daily);
+  if (!daily) {
+    setInvalid(byId("special-task-due-time"), false);
+    setInvalid(byId("special-task-weekdays-row"), false);
+  }
+}
+
+function syncSpecialTaskEditorTimingUI() {
+  const daily = byId("special-task-editor-interval").value === "daily";
+  toggleHidden("special-task-editor-due-time-row", !daily);
+  toggleHidden("special-task-editor-weekdays-row", !daily);
+  if (!daily) {
+    setInvalid(byId("special-task-editor-due-time"), false);
+    setInvalid(byId("special-task-editor-weekdays-row"), false);
+  }
 }
 
 function pointsSourceLabel(sourceType) {
@@ -797,6 +858,20 @@ function stopLiveUpdates({ resetCursor = false } = {}) {
   }
 }
 
+function stopSpecialTaskRefreshTicker() {
+  if (!specialTaskRefreshTimer) return;
+  window.clearInterval(specialTaskRefreshTimer);
+  specialTaskRefreshTimer = null;
+}
+
+function startSpecialTaskRefreshTicker() {
+  stopSpecialTaskRefreshTicker();
+  specialTaskRefreshTimer = window.setInterval(() => {
+    if (!state.token || !isChildRole() || !getSelectedFamilyId()) return;
+    loadSpecialTasks().catch((error) => log("Sonderaufgaben Auto-Refresh Fehler", { error: error.message }));
+  }, 60000);
+}
+
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
@@ -1250,7 +1325,11 @@ function renderDashboardPendingRequests() {
           <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
           <div class="request-card-actions">
             <button data-dashboard-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
-            <button class="btn-secondary" data-dashboard-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>
+            ${
+              task.special_template_id
+                ? `<button class="btn-secondary" data-dashboard-task-review-action="rejected_delete" data-task-id="${task.id}">Ablehnen & löschen</button>`
+                : `<button class="btn-secondary" data-dashboard-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>`
+            }
           </div>
         </article>`;
       })
@@ -1477,7 +1556,11 @@ function renderManagerTaskReviewCards() {
           <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
           <div class="request-card-actions">
             <button data-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
-            <button class="btn-secondary" data-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>
+            ${
+              task.special_template_id
+                ? `<button class="btn-secondary" data-task-review-action="rejected_delete" data-task-id="${task.id}">Ablehnen & löschen</button>`
+                : `<button class="btn-secondary" data-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>`
+            }
           </div>
         </article>`;
       })
@@ -1494,8 +1577,14 @@ function fillSpecialTaskEditorForm() {
   byId("special-task-editor-description").value = template.description || "";
   byId("special-task-editor-points").value = String(template.points ?? 0);
   byId("special-task-editor-interval").value = template.interval_type || "weekly";
+  byId("special-task-editor-due-time").value = template.due_time_hhmm || "18:00";
+  setSelectedWeekdays(
+    "special-task-editor-weekdays",
+    (template.active_weekdays && template.active_weekdays.length) ? template.active_weekdays : [0, 1, 2, 3, 4, 5, 6]
+  );
   byId("special-task-editor-limit").value = String(template.max_claims_per_interval ?? 1);
   byId("special-task-editor-active").value = template.is_active ? "true" : "false";
+  syncSpecialTaskEditorTimingUI();
 }
 
 function openSpecialTaskEditor(templateId, triggerButton = null) {
@@ -1524,7 +1613,8 @@ function renderSpecialTaskTemplates() {
               <span class="entity-tag">${entry.is_active ? "aktiv" : "deaktiviert"}</span>
             </div>
             <p class="entity-card-meta">${entry.description || "Ohne Beschreibung"}</p>
-            <p class="entity-card-meta">Punkte: ${entry.points} • Intervall: ${specialIntervalLabel(entry.interval_type)}</p>
+            <p class="entity-card-meta">Punkte: ${entry.points}</p>
+            <p class="entity-card-meta">${specialTaskScheduleMeta(entry)}</p>
             <p class="entity-card-meta">Limit pro Intervall: ${entry.max_claims_per_interval}</p>
             <div class="request-card-actions">
               <button data-special-task-action="edit" data-special-task-id="${entry.id}">Bearbeiten</button>
@@ -1545,16 +1635,22 @@ function renderSpecialTaskTemplates() {
 
 function renderChildSpecialTaskCards() {
   if (!isChildRole()) return;
-  const list = state.availableSpecialTasks || [];
+  const list = (state.availableSpecialTasks || []).filter((entry) => isSpecialTaskAvailableNow(entry));
   byId("child-special-task-cards").innerHTML = list.length
     ? list
       .map((entry) => {
         const disabled = entry.remaining_count <= 0 ? "disabled" : "";
         const buttonText = entry.remaining_count <= 0 ? "Limit erreicht" : "Annehmen";
+        const dailyMeta = entry.interval_type === "daily"
+          ? ` • Tage: ${weekdaysText((entry.active_weekdays && entry.active_weekdays.length) ? entry.active_weekdays : [0, 1, 2, 3, 4, 5, 6])}`
+          : "";
+        const dueMeta = entry.interval_type === "daily" && entry.due_time_hhmm
+          ? ` • heute bis ${entry.due_time_hhmm}`
+          : "";
         return `<article class="request-card">
           <p class="request-card-title">${entry.title}</p>
           <p class="request-card-meta">${entry.description || "Ohne Beschreibung"} • ${entry.points} Punkte</p>
-          <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
+          <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
           <div class="request-card-actions">
             <button data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
           </div>
@@ -2017,6 +2113,7 @@ async function refreshFamilyData() {
 async function refreshSession() {
   if (!state.token) {
     stopLiveUpdates({ resetCursor: true });
+    stopSpecialTaskRefreshTicker();
     await initAuthPanel();
     return;
   }
@@ -2048,9 +2145,12 @@ async function refreshSession() {
 
     await refreshFamilyData();
     startLiveUpdates();
+    if (isChildRole()) startSpecialTaskRefreshTicker();
+    else stopSpecialTaskRefreshTicker();
   } catch (error) {
     log("Session Fehler", { error: error.message });
     stopLiveUpdates({ resetCursor: true });
+    stopSpecialTaskRefreshTicker();
     logout();
   }
 }
@@ -2130,6 +2230,7 @@ async function bootstrap() {
 function logout() {
   restoreAllInlineEditorSections();
   stopLiveUpdates({ resetCursor: true });
+  stopSpecialTaskRefreshTicker();
   state.token = null;
   state.me = null;
   state.families = [];
@@ -2259,14 +2360,19 @@ async function deleteMember(memberId) {
 async function createSpecialTaskTemplate() {
   if (!isManagerRole()) return;
 
-  clearInvalid(["special-task-title", "special-task-points", "special-task-limit"]);
+  clearInvalid(["special-task-title", "special-task-points", "special-task-limit", "special-task-due-time"]);
+  setInvalid(byId("special-task-weekdays-row"), false);
   const titleInput = byId("special-task-title");
   const pointsInput = byId("special-task-points");
   const limitInput = byId("special-task-limit");
+  const dueTimeInput = byId("special-task-due-time");
 
   const title = titleInput.value.trim();
   const points = Number(pointsInput.value || 0);
   const max_claims_per_interval = Number(limitInput.value || 0);
+  const interval_type = byId("special-task-interval").value;
+  const active_weekdays = interval_type === "daily" ? getSelectedWeekdays("special-task-weekdays") : [];
+  const due_time_hhmm = interval_type === "daily" ? normalizeTimeValueOrNull(dueTimeInput.value) : null;
 
   let invalid = false;
   if (!title) {
@@ -2279,6 +2385,14 @@ async function createSpecialTaskTemplate() {
   }
   if (Number.isNaN(max_claims_per_interval) || max_claims_per_interval < 1) {
     setInvalid(limitInput, true);
+    invalid = true;
+  }
+  if (interval_type === "daily" && !due_time_hhmm) {
+    setInvalid(dueTimeInput, true);
+    invalid = true;
+  }
+  if (interval_type === "daily" && active_weekdays.length === 0) {
+    setInvalid(byId("special-task-weekdays-row"), true);
     invalid = true;
   }
   if (invalid) {
@@ -2292,8 +2406,10 @@ async function createSpecialTaskTemplate() {
       title,
       description: byId("special-task-description").value.trim() || null,
       points,
-      interval_type: byId("special-task-interval").value,
+      interval_type,
       max_claims_per_interval,
+      active_weekdays,
+      due_time_hhmm,
       is_active: byId("special-task-active").value === "true",
     },
   });
@@ -2303,7 +2419,10 @@ async function createSpecialTaskTemplate() {
   pointsInput.value = "5";
   limitInput.value = "1";
   byId("special-task-interval").value = "daily";
+  byId("special-task-due-time").value = "18:00";
+  setSelectedWeekdays("special-task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
   byId("special-task-active").value = "true";
+  syncSpecialTaskCreateTimingUI();
   setSectionOpen("special-task-create-section", "toggle-special-task-create-btn", false, "Neue Sonderaufgabe", "Eingabe schließen");
   await refreshFamilyData();
 }
@@ -2316,14 +2435,19 @@ async function updateSpecialTaskTemplate() {
     return;
   }
 
-  clearInvalid(["special-task-editor-title", "special-task-editor-points", "special-task-editor-limit"]);
+  clearInvalid(["special-task-editor-title", "special-task-editor-points", "special-task-editor-limit", "special-task-editor-due-time"]);
+  setInvalid(byId("special-task-editor-weekdays-row"), false);
   const titleInput = byId("special-task-editor-title");
   const pointsInput = byId("special-task-editor-points");
   const limitInput = byId("special-task-editor-limit");
+  const dueTimeInput = byId("special-task-editor-due-time");
 
   const title = titleInput.value.trim();
   const points = Number(pointsInput.value || 0);
   const max_claims_per_interval = Number(limitInput.value || 0);
+  const interval_type = byId("special-task-editor-interval").value;
+  const active_weekdays = interval_type === "daily" ? getSelectedWeekdays("special-task-editor-weekdays") : [];
+  const due_time_hhmm = interval_type === "daily" ? normalizeTimeValueOrNull(dueTimeInput.value) : null;
 
   let invalid = false;
   if (!title) {
@@ -2338,6 +2462,14 @@ async function updateSpecialTaskTemplate() {
     setInvalid(limitInput, true);
     invalid = true;
   }
+  if (interval_type === "daily" && !due_time_hhmm) {
+    setInvalid(dueTimeInput, true);
+    invalid = true;
+  }
+  if (interval_type === "daily" && active_weekdays.length === 0) {
+    setInvalid(byId("special-task-editor-weekdays-row"), true);
+    invalid = true;
+  }
   if (invalid) {
     log("Sonderaufgabe bearbeiten: Bitte Felder korrekt ausfüllen");
     return;
@@ -2349,8 +2481,10 @@ async function updateSpecialTaskTemplate() {
       title,
       description: byId("special-task-editor-description").value.trim() || null,
       points,
-      interval_type: byId("special-task-editor-interval").value,
+      interval_type,
       max_claims_per_interval,
+      active_weekdays,
+      due_time_hhmm,
       is_active: byId("special-task-editor-active").value === "true",
     },
   });
@@ -2864,6 +2998,16 @@ async function reviewTaskRequest(taskId, decision) {
   await refreshFamilyData();
 }
 
+async function rejectAndDeleteSpecialTaskRequest(taskId) {
+  if (!isManagerRole()) return;
+  await api(`/tasks/${taskId}/review`, {
+    method: "POST",
+    body: { decision: "rejected", comment: null },
+  });
+  await api(`/tasks/${taskId}`, { method: "DELETE" });
+  await refreshFamilyData();
+}
+
 async function reviewMissedTaskRequest(taskId, action) {
   if (!isManagerRole()) return;
   await api(`/tasks/${taskId}/missed-review`, {
@@ -2948,9 +3092,11 @@ async function savePointsAdjust() {
 if (familySelect) {
   familySelect.addEventListener("change", async (event) => {
     stopLiveUpdates();
+    stopSpecialTaskRefreshTicker();
     state.familyId = Number(event.target.value);
     await refreshFamilyData();
     startLiveUpdates();
+    if (isChildRole()) startSpecialTaskRefreshTicker();
   });
 }
 
@@ -3088,7 +3234,11 @@ byId("dashboard-pending-section").addEventListener("click", async (event) => {
     const decision = taskReviewButton.dataset.dashboardTaskReviewAction;
     if (!taskId || !decision) return;
     try {
-      await reviewTaskRequest(taskId, decision);
+      if (decision === "rejected_delete") {
+        await rejectAndDeleteSpecialTaskRequest(taskId);
+      } else {
+        await reviewTaskRequest(taskId, decision);
+      }
     } catch (error) {
       log("Aufgabe prüfen Fehler", { error: error.message });
     }
@@ -3143,7 +3293,11 @@ byId("manager-task-review-cards").addEventListener("click", async (event) => {
   if (!taskId || !decision) return;
 
   try {
-    await reviewTaskRequest(taskId, decision);
+    if (decision === "rejected_delete") {
+      await rejectAndDeleteSpecialTaskRequest(taskId);
+    } else {
+      await reviewTaskRequest(taskId, decision);
+    }
   } catch (error) {
     log("Aufgabe prüfen Fehler", { error: error.message });
   }
@@ -3255,6 +3409,8 @@ byId("task-penalty-enabled").addEventListener("change", syncTaskCreateTimingUI);
 byId("task-editor-recurrence").addEventListener("change", syncTaskEditorTimingUI);
 byId("task-editor-due-mode").addEventListener("change", syncTaskEditorTimingUI);
 byId("task-editor-penalty-enabled").addEventListener("change", syncTaskEditorTimingUI);
+byId("special-task-interval").addEventListener("change", syncSpecialTaskCreateTimingUI);
+byId("special-task-editor-interval").addEventListener("change", syncSpecialTaskEditorTimingUI);
 byId("boot-password-visible").addEventListener("change", (event) =>
   setPasswordInputVisibility(["boot-password", "boot-password-confirm"], event.target.checked)
 );
@@ -3294,8 +3450,12 @@ byId("redeem-reward-btn").addEventListener("click", () =>
 initInlineEditorHomes();
 setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
 setSelectedWeekdays("task-editor-weekdays", [0, 1, 2, 3, 4, 5, 6]);
+setSelectedWeekdays("special-task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
+setSelectedWeekdays("special-task-editor-weekdays", [0, 1, 2, 3, 4, 5, 6]);
 byId("task-daily-time").value = byId("task-daily-time").value || "18:00";
 byId("task-editor-daily-time").value = byId("task-editor-daily-time").value || "18:00";
+byId("special-task-due-time").value = byId("special-task-due-time").value || "18:00";
+byId("special-task-editor-due-time").value = byId("special-task-editor-due-time").value || "18:00";
 byId("task-weekly-day").value = byId("task-weekly-day").value || "0";
 byId("task-weekly-time").value = byId("task-weekly-time").value || "09:00";
 byId("task-editor-weekly-day").value = byId("task-editor-weekly-day").value || "0";
@@ -3309,4 +3469,6 @@ byId("reward-editor-shareable").value = byId("reward-editor-shareable").value ||
 byId("redeem-points").value = byId("redeem-points").value || "10";
 syncTaskCreateTimingUI();
 syncTaskEditorTimingUI();
+syncSpecialTaskCreateTimingUI();
+syncSpecialTaskEditorTimingUI();
 refreshSession().catch((error) => log("Initialisierung fehlgeschlagen", { error: error.message }));
