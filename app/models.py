@@ -230,6 +230,8 @@ class SpecialTaskTemplate(Base):
     points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     interval_type: Mapped[SpecialTaskIntervalEnum] = mapped_column(SqlEnum(SpecialTaskIntervalEnum), nullable=False)
     max_claims_per_interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    active_weekdays: Mapped[list[int]] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6], nullable=False)
+    due_time_hhmm: Mapped[str | None] = mapped_column(String(5))
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

@@ -473,6 +473,21 @@
                     <option value="monthly">monatlich</option>
                   </select>
                 </label>
+                <label id="special-task-due-time-row">Fällig bis (Uhrzeit)
+                  <input id="special-task-due-time" type="time" value="18:00" />
+                </label>
+                <div id="special-task-weekdays-row" class="weekday-picker">
+                  <span>Aktive Tage (nur täglich)</span>
+                  <div id="special-task-weekdays" class="weekday-options">
+                    <label class="weekday-option"><input type="checkbox" value="0" checked />Mo</label>
+                    <label class="weekday-option"><input type="checkbox" value="1" checked />Di</label>
+                    <label class="weekday-option"><input type="checkbox" value="2" checked />Mi</label>
+                    <label class="weekday-option"><input type="checkbox" value="3" checked />Do</label>
+                    <label class="weekday-option"><input type="checkbox" value="4" checked />Fr</label>
+                    <label class="weekday-option"><input type="checkbox" value="5" checked />Sa</label>
+                    <label class="weekday-option"><input type="checkbox" value="6" checked />So</label>
+                  </div>
+                </div>
                 <label>Max. Annahmen pro Intervall
                   <input id="special-task-limit" type="number" min="1" value="1" />
                 </label>
@@ -501,6 +516,21 @@
                     <option value="monthly">monatlich</option>
                   </select>
                 </label>
+                <label id="special-task-editor-due-time-row">Fällig bis (Uhrzeit)
+                  <input id="special-task-editor-due-time" type="time" value="18:00" />
+                </label>
+                <div id="special-task-editor-weekdays-row" class="weekday-picker">
+                  <span>Aktive Tage (nur täglich)</span>
+                  <div id="special-task-editor-weekdays" class="weekday-options">
+                    <label class="weekday-option"><input type="checkbox" value="0" checked />Mo</label>
+                    <label class="weekday-option"><input type="checkbox" value="1" checked />Di</label>
+                    <label class="weekday-option"><input type="checkbox" value="2" checked />Mi</label>
+                    <label class="weekday-option"><input type="checkbox" value="3" checked />Do</label>
+                    <label class="weekday-option"><input type="checkbox" value="4" checked />Fr</label>
+                    <label class="weekday-option"><input type="checkbox" value="5" checked />Sa</label>
+                    <label class="weekday-option"><input type="checkbox" value="6" checked />So</label>
+                  </div>
+                </div>
                 <label>Max. Annahmen pro Intervall
                   <input id="special-task-editor-limit" type="number" min="1" />
                 </label>
@@ -689,6 +719,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260302a"></script>
+    <script src="/static/app.js?v=20260303a"></script>
   </body>
 </html>

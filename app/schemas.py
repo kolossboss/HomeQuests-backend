@@ -93,6 +93,7 @@ class MemberUpdate(BaseModel):
 ALLOWED_TASK_REMINDER_MINUTES = {15, 30, 60, 120, 1440, 2880}
 ALLOWED_DAILY_REMINDER_MINUTES = {15, 30, 60, 120}
 ALLOWED_WEEKDAYS = {0, 1, 2, 3, 4, 5, 6}
+FULL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
 
 
 def _normalize_task_reminders(value: list[int]) -> list[int]:
@@ -110,6 +111,25 @@ def _normalize_weekdays(value: list[int]) -> list[int]:
     if invalid:
         raise ValueError("Ungültige Wochentage. Erlaubt sind 0=Mo bis 6=So")
     return unique_sorted
+
+
+def _normalize_due_time_hhmm(value: str | None) -> str | None:
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    parts = raw.split(":")
+    if len(parts) != 2:
+        raise ValueError("Uhrzeit muss im Format HH:MM angegeben werden")
+    hour, minute = parts
+    if not hour.isdigit() or not minute.isdigit():
+        raise ValueError("Uhrzeit muss im Format HH:MM angegeben werden")
+    hour_value = int(hour)
+    minute_value = int(minute)
+    if hour_value < 0 or hour_value > 23 or minute_value < 0 or minute_value > 59:
+        raise ValueError("Uhrzeit muss zwischen 00:00 und 23:59 liegen")
+    return f"{hour_value:02d}:{minute_value:02d}"
 
 
 class TaskCreate(BaseModel):
@@ -411,7 +431,31 @@ class SpecialTaskTemplateCreate(BaseModel):
     points: int = Field(default=0, ge=0)
     interval_type: SpecialTaskIntervalEnum
     max_claims_per_interval: int = Field(default=1, ge=1, le=50)
+    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy())
+    due_time_hhmm: str | None = Field(default=None, min_length=5, max_length=5)
     is_active: bool = True
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @field_validator("due_time_hhmm")
+    @classmethod
+    def validate_due_time_hhmm(cls, value: str | None) -> str | None:
+        return _normalize_due_time_hhmm(value)
+
+    @model_validator(mode="after")
+    def validate_daily_special_task_fields(self):
+        if self.interval_type == SpecialTaskIntervalEnum.daily:
+            if not self.active_weekdays:
+                raise ValueError("Bei täglichen Sonderaufgaben muss mindestens ein Wochentag gewählt sein")
+            if not self.due_time_hhmm:
+                raise ValueError("Bei täglichen Sonderaufgaben ist eine Fälligkeitsuhrzeit erforderlich")
+        else:
+            self.active_weekdays = FULL_WEEKDAYS.copy()
+            self.due_time_hhmm = None
+        return self
 
 
 class SpecialTaskTemplateUpdate(BaseModel):
@@ -420,7 +464,31 @@ class SpecialTaskTemplateUpdate(BaseModel):
     points: int = Field(default=0, ge=0)
     interval_type: SpecialTaskIntervalEnum
     max_claims_per_interval: int = Field(default=1, ge=1, le=50)
+    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy())
+    due_time_hhmm: str | None = Field(default=None, min_length=5, max_length=5)
     is_active: bool = True
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @field_validator("due_time_hhmm")
+    @classmethod
+    def validate_due_time_hhmm(cls, value: str | None) -> str | None:
+        return _normalize_due_time_hhmm(value)
+
+    @model_validator(mode="after")
+    def validate_daily_special_task_fields(self):
+        if self.interval_type == SpecialTaskIntervalEnum.daily:
+            if not self.active_weekdays:
+                raise ValueError("Bei täglichen Sonderaufgaben muss mindestens ein Wochentag gewählt sein")
+            if not self.due_time_hhmm:
+                raise ValueError("Bei täglichen Sonderaufgaben ist eine Fälligkeitsuhrzeit erforderlich")
+        else:
+            self.active_weekdays = FULL_WEEKDAYS.copy()
+            self.due_time_hhmm = None
+        return self
 
 
 class SpecialTaskTemplateOut(BaseModel):
@@ -431,6 +499,8 @@ class SpecialTaskTemplateOut(BaseModel):
     points: int
     interval_type: SpecialTaskIntervalEnum
     max_claims_per_interval: int
+    active_weekdays: list[int]
+    due_time_hhmm: str | None
     is_active: bool
     created_at: datetime
     updated_at: datetime

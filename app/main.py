@@ -77,6 +77,18 @@ try:
         )
         conn.execute(
             text(
+                "ALTER TABLE special_task_templates "
+                "ADD COLUMN IF NOT EXISTS active_weekdays JSON NOT NULL DEFAULT '[0,1,2,3,4,5,6]'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE special_task_templates "
+                "ADD COLUMN IF NOT EXISTS due_time_hhmm VARCHAR(5) NULL"
+            )
+        )
+        conn.execute(
+            text(
                 "ALTER TABLE rewards "
                 "ADD COLUMN IF NOT EXISTS is_shareable BOOLEAN NOT NULL DEFAULT FALSE"
             )

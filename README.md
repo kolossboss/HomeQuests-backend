@@ -2,17 +2,6 @@
 
 Dieses Verzeichnis ist als eigenstaendiges Repo nutzbar (API + Webapp unter `/`).
 
-## Offizielle iOS App
-
-<p align="left">
-  <a href="https://apps.apple.com/de/app/homequests/id6759489304" target="_blank" rel="noopener noreferrer">
-    <img src="app/web/static/favicon-homequests.png" alt="HomeQuests App Icon" width="96" height="96" />
-  </a>
-</p>
-
-**HomeQuests im App Store (Deutschland):**  
-https://apps.apple.com/de/app/homequests/id6759489304
-
 ## 1) Nur Backend/Webapp in ein eigenes GitHub-Repo pushen
 
 Diese Variante behaelt die Historie des `backend`-Ordners:
