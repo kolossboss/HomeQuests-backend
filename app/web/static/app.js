@@ -914,6 +914,42 @@ function fillSelect(id, options, includeEmpty = false, emptyLabel = "-") {
   }
 }
 
+function getSystemTestRecipientIds() {
+  const container = byId("system-test-recipients");
+  if (!container) return [];
+  return Array.from(container.querySelectorAll("input[type=\"checkbox\"]:checked"))
+    .map((checkbox) => Number(checkbox.value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function setAllSystemTestRecipients(selected) {
+  const container = byId("system-test-recipients");
+  if (!container) return;
+  Array.from(container.querySelectorAll("input[type=\"checkbox\"]")).forEach((checkbox) => {
+    checkbox.checked = Boolean(selected);
+  });
+  setInvalid(byId("system-test-recipient-picker"), false);
+}
+
+function renderSystemTestRecipients() {
+  const container = byId("system-test-recipients");
+  if (!container) return;
+
+  const previousSelection = new Set(getSystemTestRecipientIds());
+  const hadSelection = previousSelection.size > 0;
+  const recipients = state.members
+    .filter((member) => member.is_active)
+    .sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""), "de"));
+
+  container.innerHTML = recipients
+    .map((member) => {
+      const checked = hadSelection ? previousSelection.has(member.user_id) : true;
+      const role = roleLabel(member.role);
+      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${member.display_name} (${role})</label>`;
+    })
+    .join("");
+}
+
 function applyMobileLabelsToTableBody(tbodyId) {
   const tbody = byId(tbodyId);
   if (!tbody) return;
@@ -1260,6 +1296,7 @@ function renderMembers() {
   fillSelect("task-assignee", memberOptions);
   fillSelect("task-editor-assignee", memberOptions);
   fillSelect("event-responsible", memberOptions, true, "keiner");
+  renderSystemTestRecipients();
 
   byId("stat-members").textContent = String(state.members.length);
 }
@@ -3097,10 +3134,11 @@ async function savePointsAdjust() {
 
 async function sendSystemTestNotification() {
   if (!isManagerRole()) return;
-  clearInvalid(["system-test-title", "system-test-message"]);
+  clearInvalid(["system-test-title", "system-test-message", "system-test-recipient-picker"]);
   const titleInput = byId("system-test-title");
   const messageInput = byId("system-test-message");
   const resultTarget = byId("system-test-result");
+  const recipientUserIds = getSystemTestRecipientIds();
 
   const title = titleInput.value.trim();
   const message = messageInput.value.trim();
@@ -3114,14 +3152,18 @@ async function sendSystemTestNotification() {
     setInvalid(messageInput, true);
     invalid = true;
   }
+  if (recipientUserIds.length === 0) {
+    setInvalid(byId("system-test-recipient-picker"), true);
+    invalid = true;
+  }
   if (invalid) {
-    if (resultTarget) resultTarget.textContent = "Bitte Titel und Nachricht ausfüllen.";
+    if (resultTarget) resultTarget.textContent = "Bitte Titel, Nachricht und mindestens einen Empfänger auswählen.";
     return;
   }
 
   const response = await api(`/families/${getSelectedFamilyId()}/system/test-notification`, {
     method: "POST",
-    body: { title, message },
+    body: { title, message, recipient_user_ids: recipientUserIds },
   });
 
   if (resultTarget) {
@@ -3483,6 +3525,8 @@ byId("points-adjust-cancel-btn").addEventListener("click", closePointsAdjust);
 byId("system-test-send-btn").addEventListener("click", () =>
   sendSystemTestNotification().catch((error) => log("Testbenachrichtigung Fehler", { error: error.message }))
 );
+byId("system-test-select-all-btn").addEventListener("click", () => setAllSystemTestRecipients(true));
+byId("system-test-clear-selection-btn").addEventListener("click", () => setAllSystemTestRecipients(false));
 byId("redeem-reward-btn").addEventListener("click", () =>
   redeemReward().catch((error) => {
     window.alert(error.message);

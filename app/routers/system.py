@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -33,9 +33,26 @@ def send_system_test_notification(
         .order_by(User.display_name.asc())
         .all()
     )
+    if not recipients:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Keine aktiven Nutzer gefunden")
 
-    recipient_user_ids = [entry.id for entry in recipients]
-    recipient_display_names = [entry.display_name for entry in recipients]
+    recipients_by_id = {entry.id: entry for entry in recipients}
+    if payload.recipient_user_ids is None:
+        selected_recipients = recipients
+    else:
+        missing_user_ids = [entry for entry in payload.recipient_user_ids if entry not in recipients_by_id]
+        if missing_user_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Ungültige Empfänger-ID(s): {missing_user_ids}",
+            )
+        selected_recipients = [recipients_by_id[entry] for entry in payload.recipient_user_ids]
+
+    if not selected_recipients:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mindestens ein Empfänger muss ausgewählt sein")
+
+    recipient_user_ids = [entry.id for entry in selected_recipients]
+    recipient_display_names = [entry.display_name for entry in selected_recipients]
     sent_at = datetime.utcnow().isoformat()
 
     emit_live_event(
