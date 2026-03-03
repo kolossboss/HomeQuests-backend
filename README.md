@@ -1,118 +1,169 @@
-# HomeQuests Backend + Webapp
+# HomeQuests Backend + WebUI
 
-Dieses Verzeichnis ist als eigenstaendiges Repo nutzbar (API + Webapp unter `/`).
+<p align="left">
+  <a href="https://apps.apple.com/de/app/homequests/id6759489304" target="_blank" rel="noopener noreferrer">
+    <img src="app/web/static/favicon-homequests.png" alt="HomeQuests iOS App Icon" width="96" height="96" />
+  </a>
+</p>
 
-## 1) Nur Backend/Webapp in ein eigenes GitHub-Repo pushen
+**HomeQuests iOS App:** [HomeQuests im App Store](https://apps.apple.com/de/app/homequests/id6759489304)
 
-Diese Variante behaelt die Historie des `backend`-Ordners:
+## Was ist HomeQuests?
+
+HomeQuests ist ein Belohnungssystem fuer Familien:
+
+- Eltern erstellen Aufgaben (z. B. Zimmer aufraeumen, Hausaufgaben, Muell rausbringen)
+- Kinder erledigen Aufgaben und sammeln Punkte
+- Punkte koennen gegen Belohnungen eingeloest werden
+- Rollen und Familienstrukturen sind im Backend abgebildet
+- Eine WebUI und die iOS-App greifen auf dieselbe API zu
+
+## Komponenten
+
+- **Backend API**: Auth, Familien, Aufgaben, Punkte, Belohnungen
+- **WebUI**: Browser-Oberflaeche fuer Verwaltung und Nutzung
+- **iOS App**: Mobile Nutzung fuer Eltern und Kinder
+
+## Schnellstart mit Docker Compose
+
+### Voraussetzungen
+
+- Docker + Docker Compose
+- Freier Port `8010` (oder eigener Port)
+
+### 1) Projekt holen
 
 ```bash
-cd /Users/macminiserver/Documents/Xcode/HomeQuests
-git subtree split --prefix=backend -b codex/backend-only
-git remote add backend-origin git@github.com:DEIN_USER/homequests-backend.git
-git push backend-origin codex/backend-only:main
+git clone https://github.com/kolossboss/HomeQuests-backend.git
+cd HomeQuests-backend
 ```
 
-Optional Branch lokal entfernen:
+### 2) Sicheren Secret Key erzeugen
 
 ```bash
-git branch -D codex/backend-only
+openssl rand -base64 48
 ```
 
-## 2) Lokal mit Docker starten (im Backend-Repo)
+Den erzeugten Wert aufheben (wird gleich in `.env` verwendet).
+
+### 3) `.env` Datei erstellen
 
 ```bash
-cd backend
-docker volume create homequests_postgres_data
-docker compose up --build
+cat > .env <<'ENV'
+POSTGRES_PASSWORD=CHANGE_DB_PASSWORD
+SECRET_KEY=CHANGE_THIS_WITH_OPENSSL_OUTPUT
+API_PORT=8010
+ENV
 ```
 
-Danach:
+### 4) `docker-compose.yml` erstellen (oder vorhandene Datei nutzen)
 
-- Webapp: `http://localhost:8010/`
-- API-Doku: `http://localhost:8010/docs`
-- Health: `http://localhost:8010/health`
+```yaml
+name: homequests
 
-Optional anderer Port:
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: homequests
+      POSTGRES_USER: homequests
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - homequests_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U homequests -d homequests"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
-```bash
-cd backend
-API_PORT=8025 docker compose up --build
+  api:
+    image: ghcr.io/kolossboss/homequests-api:latest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://homequests:${POSTGRES_PASSWORD}@db:5432/homequests
+      SECRET_KEY: ${SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: 525600
+    ports:
+      - "${API_PORT:-8010}:8000"
+
+volumes:
+  homequests_postgres_data:
 ```
 
-## Fehlerbehebung
-
-- Wichtig: Für persistenten Betrieb niemals `docker compose down -v` verwenden.
-  `-v` löscht Volumes absichtlich.
-- Das Postgres-Volume ist als externes Volume konfiguriert (`homequests_postgres_data`).
-
-- `Conflict. The container name "/homequests-db" is already in use`
-  - Alte Container entfernen und neu starten:
-    ```bash
-    docker volume create homequests_postgres_data
-    docker compose down --remove-orphans
-    docker compose up --build -d
-    ```
-  - Hinweis: In `docker-compose.yml` sind feste `container_name` entfernt.
-
-- `could not translate host name "db" to address`
-  - API findet den DB-Host nicht.
-  - Wenn du den Stack nutzt, muss der Service `db` mitlaufen.
-  - Bei externer Datenbank `DB_HOST`/`DB_PORT` oder `DATABASE_URL` setzen, z. B.:
-    ```bash
-    DATABASE_URL=postgresql+psycopg2://user:pass@dein-db-host:5432/homequests
-    ```
-
-## Sicherer Update-Flow ohne DB-Verlust
+### 5) Starten
 
 ```bash
-docker volume create homequests_postgres_data
+docker compose up -d
+```
+
+## Erreichbarkeit
+
+Wenn `API_PORT=8010` gesetzt ist:
+
+- WebUI: `http://SERVER-IP:8010/`
+- API-Doku (Swagger): `http://SERVER-IP:8010/docs`
+- Healthcheck: `http://SERVER-IP:8010/health`
+
+## Portainer Anleitung (Stack)
+
+1. In Portainer: **Stacks** -> **Add stack**
+2. Stack-Name: `homequests`
+3. Obige Compose-Datei einfuergen
+4. Unter **Environment variables** setzen:
+   - `POSTGRES_PASSWORD`
+   - `SECRET_KEY`
+   - optional `API_PORT` (Standard `8010`)
+5. **Deploy the stack** klicken
+6. Danach WebUI/API ueber `http://SERVER-IP:PORT` aufrufen
+
+## Nur mit `docker run` starten
+
+### 1) Postgres starten
+
+```bash
+docker network create homequests_net
+
+docker run -d \
+  --name homequests-db \
+  --network homequests_net \
+  -e POSTGRES_DB=homequests \
+  -e POSTGRES_USER=homequests \
+  -e POSTGRES_PASSWORD=CHANGE_DB_PASSWORD \
+  -v homequests_postgres_data:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+### 2) API + WebUI starten
+
+```bash
+docker run -d \
+  --name homequests-api \
+  --network homequests_net \
+  -p 8010:8000 \
+  -e DATABASE_URL='postgresql+psycopg2://homequests:CHANGE_DB_PASSWORD@homequests-db:5432/homequests' \
+  -e SECRET_KEY='CHANGE_THIS_WITH_OPENSSL_OUTPUT' \
+  -e ACCESS_TOKEN_EXPIRE_MINUTES='525600' \
+  ghcr.io/kolossboss/homequests-api:latest
+```
+
+## Update auf neue Version
+
+### Docker Compose
+
+```bash
 docker compose pull api
 docker compose up -d --no-deps api
 ```
 
-Wenn alte Daten noch im früheren Volume `familienplaner_postgres_data` liegen:
+### Portainer
 
-```bash
-POSTGRES_VOLUME_NAME=familienplaner_postgres_data docker compose up -d
-```
+- Stack oeffnen -> **Pull and redeploy**
 
-## 3) Docker-Image bauen und direkt nutzen
+## Wichtiger Hinweis zu Daten
 
-Image bauen:
-
-```bash
-cd backend
-docker build -t ghcr.io/DEIN_USER/homequests-backend:latest .
-```
-
-Bei GHCR anmelden und pushen:
-
-```bash
-echo "$GITHUB_TOKEN" | docker login ghcr.io -u DEIN_USER --password-stdin
-docker push ghcr.io/DEIN_USER/homequests-backend:latest
-```
-
-Image direkt starten:
-
-```bash
-docker run --rm -p 8010:8000 \
-  -e DATABASE_URL='postgresql+psycopg2://homequests:homequests@HOST:5432/homequests' \
-  -e SECRET_KEY='CHANGE_THIS_SECRET' \
-  ghcr.io/DEIN_USER/homequests-backend:latest
-```
-
-Hinweis: Fuer den produktiven Betrieb ist ein separater PostgreSQL-Container oder Managed-Postgres noetig.
-
-## 4) Codex mit Repo nutzen
-
-Ja, das geht direkt:
-
-1. Repo lokal klonen oder im bestehenden Ordner lassen.
-2. Ordner in Codex oeffnen.
-3. In Codex Aufgaben geben wie:
-   - "Implementiere Feature X im Backend"
-   - "Schreibe Tests"
-   - "Erstelle Commit und Push auf Branch `codex/feature-x`"
-
-Wenn `origin` gesetzt ist und du eingeloggt bist, kann Codex die Git-Schritte lokal ausfuehren.
+- Die Daten liegen in der Postgres-Datenbank (Volume `homequests_postgres_data`)
+- Nicht `docker compose down -v` verwenden, wenn Daten erhalten bleiben sollen
