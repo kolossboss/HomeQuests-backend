@@ -11,7 +11,7 @@ from starlette.requests import Request
 
 from .config import settings
 from .database import Base, engine
-from .routers import auth, events, families, live, points, rewards, tasks
+from .routers import auth, events, families, live, points, rewards, system, tasks
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
@@ -177,6 +177,7 @@ app.include_router(events.router)
 app.include_router(rewards.router)
 app.include_router(points.router)
 app.include_router(live.router)
+app.include_router(system.router)
 
 
 @app.get("/health")

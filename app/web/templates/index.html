@@ -714,11 +714,25 @@
         <section id="tab-system" class="tab-panel">
           <h3>System</h3>
           <p class="muted">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></p>
+
+          <div class="section-block">
+            <h4>Testbenachrichtigung</h4>
+            <p class="muted">Sendet eine Live-Testbenachrichtigung an alle aktiven, registrierten Nutzer im Haushalt.</p>
+            <div class="form-grid compact">
+              <label>Titel<input id="system-test-title" type="text" value="Testbenachrichtigung" /></label>
+              <label>Nachricht<input id="system-test-message" type="text" placeholder="Nachricht eingeben" /></label>
+            </div>
+            <div class="row-wrap">
+              <button id="system-test-send-btn">An alle senden</button>
+            </div>
+            <p id="system-test-result" class="muted"></p>
+          </div>
+
           <pre id="log-output"></pre>
         </section>
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260303a"></script>
+    <script src="/static/app.js?v=20260303b"></script>
   </body>
 </html>

@@ -808,6 +808,12 @@ function connectLiveUpdates(familyId) {
         liveCursor = eventId;
         saveLiveCursor(familyId, liveCursor);
       }
+      if (payload.event_type === "notification.test") {
+        const info = payload.payload || {};
+        const title = info.title || "Testbenachrichtigung";
+        const message = info.message || "";
+        log(`Live-Benachrichtigung: ${title}`, { message, recipients: info.recipient_user_ids || [] });
+      }
       queueLiveRefresh(payload.event_type || "family_update");
     } catch (error) {
       log("Live-Event Parse Fehler", { error: error.message });
@@ -3089,6 +3095,40 @@ async function savePointsAdjust() {
   await refreshFamilyData();
 }
 
+async function sendSystemTestNotification() {
+  if (!isManagerRole()) return;
+  clearInvalid(["system-test-title", "system-test-message"]);
+  const titleInput = byId("system-test-title");
+  const messageInput = byId("system-test-message");
+  const resultTarget = byId("system-test-result");
+
+  const title = titleInput.value.trim();
+  const message = messageInput.value.trim();
+
+  let invalid = false;
+  if (!title) {
+    setInvalid(titleInput, true);
+    invalid = true;
+  }
+  if (!message) {
+    setInvalid(messageInput, true);
+    invalid = true;
+  }
+  if (invalid) {
+    if (resultTarget) resultTarget.textContent = "Bitte Titel und Nachricht ausfüllen.";
+    return;
+  }
+
+  const response = await api(`/families/${getSelectedFamilyId()}/system/test-notification`, {
+    method: "POST",
+    body: { title, message },
+  });
+
+  if (resultTarget) {
+    resultTarget.textContent = `Gesendet an ${response.recipient_count} Nutzer: ${response.recipient_display_names.join(", ") || "-"}`;
+  }
+}
+
 if (familySelect) {
   familySelect.addEventListener("change", async (event) => {
     stopLiveUpdates();
@@ -3440,6 +3480,9 @@ byId("redeem-reward-select").addEventListener("change", () =>
 );
 byId("points-adjust-save-btn").addEventListener("click", () => savePointsAdjust().catch((error) => log("Punkte bearbeiten Fehler", { error: error.message })));
 byId("points-adjust-cancel-btn").addEventListener("click", closePointsAdjust);
+byId("system-test-send-btn").addEventListener("click", () =>
+  sendSystemTestNotification().catch((error) => log("Testbenachrichtigung Fehler", { error: error.message }))
+);
 byId("redeem-reward-btn").addEventListener("click", () =>
   redeemReward().catch((error) => {
     window.alert(error.message);

@@ -511,3 +511,21 @@ class SpecialTaskTemplateOut(BaseModel):
 class SpecialTaskAvailabilityOut(SpecialTaskTemplateOut):
     used_count: int
     remaining_count: int
+
+
+class SystemTestNotificationRequest(BaseModel):
+    title: str = Field(min_length=2, max_length=120)
+    message: str = Field(min_length=2, max_length=500)
+
+
+class SystemTestNotificationOut(BaseModel):
+    sent: bool
+    family_id: int
+    title: str
+    message: str
+    recipient_count: int
+    recipient_user_ids: list[int]
+    recipient_display_names: list[str]
+    delivery_mode: Literal["live_event"]
+    event_type: str
+    sent_at: str
