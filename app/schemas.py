@@ -544,3 +544,34 @@ class SystemTestNotificationOut(BaseModel):
     delivery_mode: Literal["live_event"]
     event_type: str
     sent_at: str
+
+
+class SystemPracticalTestRequest(BaseModel):
+    scenario: Literal["task_submitted"] = "task_submitted"
+    recipient_user_ids: list[int] | None = None
+    dry_run: bool = False
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def validate_recipient_user_ids(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+
+        normalized: list[int] = []
+        for entry in value:
+            if entry < 1:
+                raise ValueError("Empfänger-IDs müssen größer als 0 sein")
+            if entry not in normalized:
+                normalized.append(entry)
+        return normalized
+
+
+class SystemPracticalTestOut(BaseModel):
+    sent: bool
+    dry_run: bool
+    family_id: int
+    scenario: Literal["task_submitted"]
+    recipient_user_ids: list[int]
+    recipient_display_names: list[str]
+    affected_entities: dict[str, object]
+    delivery_expectation: Literal["polling_based_local_notification"]
