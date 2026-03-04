@@ -547,7 +547,7 @@ class SystemTestNotificationOut(BaseModel):
 
 
 class SystemPracticalTestRequest(BaseModel):
-    scenario: Literal["task_submitted"] = "task_submitted"
+    scenario: Literal["task_submitted", "task_created", "task_due_reminder"] = "task_created"
     recipient_user_ids: list[int] | None = None
     dry_run: bool = False
 
@@ -570,8 +570,8 @@ class SystemPracticalTestOut(BaseModel):
     sent: bool
     dry_run: bool
     family_id: int
-    scenario: Literal["task_submitted"]
+    scenario: Literal["task_submitted", "task_created", "task_due_reminder"]
     recipient_user_ids: list[int]
     recipient_display_names: list[str]
     affected_entities: dict[str, object]
-    delivery_expectation: Literal["polling_based_local_notification"]
+    delivery_expectation: Literal["polling_based_local_notification", "reminder_scheduler_based_local_notification"]
