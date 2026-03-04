@@ -958,6 +958,10 @@ function renderSystemTestRecipients() {
       return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${member.display_name} (${role})</label>`;
     })
     .join("");
+
+  if (recipients.length > 0 && getSystemPracticalRecipientIds().length === 0) {
+    setAllSystemPracticalRecipients(true);
+  }
 }
 
 function getSystemPracticalRecipientIds() {
@@ -966,6 +970,17 @@ function getSystemPracticalRecipientIds() {
   return Array.from(container.querySelectorAll("input[type=\"checkbox\"]:checked"))
     .map((checkbox) => Number(checkbox.value))
     .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function getSystemPracticalScenario() {
+  const select = byId("system-practical-scenario");
+  return select ? select.value : "task_created";
+}
+
+function getSystemPracticalAllowedRoles() {
+  const scenario = getSystemPracticalScenario();
+  if (scenario === "task_submitted") return new Set(["admin", "parent"]);
+  return new Set(["child"]);
 }
 
 function setAllSystemPracticalRecipients(selected) {
@@ -980,12 +995,20 @@ function setAllSystemPracticalRecipients(selected) {
 function renderSystemPracticalRecipients() {
   const container = byId("system-practical-recipients");
   if (!container) return;
+  const labelTarget = byId("system-practical-recipient-label");
 
   const previousSelection = new Set(getSystemPracticalRecipientIds());
   const hadSelection = previousSelection.size > 0;
+  const allowedRoles = getSystemPracticalAllowedRoles();
+  const scenario = getSystemPracticalScenario();
   const recipients = state.members
-    .filter((member) => member.is_active && (member.role === "admin" || member.role === "parent"))
+    .filter((member) => member.is_active && allowedRoles.has(member.role))
     .sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""), "de"));
+
+  if (labelTarget) {
+    if (scenario === "task_submitted") labelTarget.textContent = "Ziel-Empfänger (Eltern/Admin)";
+    else labelTarget.textContent = "Ziel-Empfänger (Kinder)";
+  }
 
   container.innerHTML = recipients
     .map((member) => {
@@ -3250,8 +3273,11 @@ async function sendSystemPracticalTestNotification() {
   if (resultTarget) {
     const entities = response.affected_entities || {};
     const dryRunLabel = response.dry_run ? " (dry-run)" : "";
-    const taskId = entities.task_id ?? "-";
-    resultTarget.textContent = `Praxis-Test${dryRunLabel} ausgeführt: ${response.scenario}. Empfänger: ${response.recipient_display_names.join(", ") || "-"}, Task-ID: ${taskId}`;
+    const taskCount = Array.isArray(entities.task_ids) ? entities.task_ids.length : entities.task_id ? 1 : 0;
+    const notifyAt = entities.reminder_notify_at || "-";
+    const taskInfo = `${taskCount} Test-Aufgabe(n) erzeugt`;
+    const reminderInfo = response.scenario === "task_due_reminder" ? `, Reminder: ${notifyAt}` : "";
+    resultTarget.textContent = `Praxis-Test${dryRunLabel} ausgeführt: ${response.scenario}. Empfänger: ${response.recipient_display_names.join(", ") || "-"}, ${taskInfo}${reminderInfo}`;
   }
 }
 
@@ -3577,6 +3603,7 @@ byId("task-editor-due-mode").addEventListener("change", syncTaskEditorTimingUI);
 byId("task-editor-penalty-enabled").addEventListener("change", syncTaskEditorTimingUI);
 byId("special-task-interval").addEventListener("change", syncSpecialTaskCreateTimingUI);
 byId("special-task-editor-interval").addEventListener("change", syncSpecialTaskEditorTimingUI);
+byId("system-practical-scenario").addEventListener("change", renderSystemPracticalRecipients);
 byId("boot-password-visible").addEventListener("change", (event) =>
   setPasswordInputVisibility(["boot-password", "boot-password-confirm"], event.target.checked)
 );

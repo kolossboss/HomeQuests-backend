@@ -738,17 +738,19 @@
 
           <div class="section-block">
             <h4>Praxis-Test</h4>
-            <p class="muted">Produktivfluss-Test: Erzeugt ein echtes Domänenereignis (`task_submitted`) für den normalen App-Refresh/Polling-Weg.</p>
+            <p class="muted">Produktivfluss-Test: Erzeugt echte Domänenereignisse (`task_submitted`, `task_created`, `task_due_reminder`) für den normalen App-Refresh-/Reminder-Weg.</p>
             <div class="form-grid compact">
               <label>Szenario
                 <select id="system-practical-scenario">
-                  <option value="task_submitted">Task eingereicht</option>
+                  <option value="task_created">Neue Aufgabe für Kinder</option>
+                  <option value="task_due_reminder">Fälligkeits-Erinnerung (in 1 Minute)</option>
+                  <option value="task_submitted">Task eingereicht (Eltern/Admin)</option>
                 </select>
               </label>
               <label class="checkbox-line"><input id="system-practical-dry-run" type="checkbox" /> Nur prüfen (dry-run)</label>
             </div>
             <div id="system-practical-recipient-picker" class="weekday-picker">
-              <span>Ziel-Empfänger (Eltern/Admin)</span>
+              <span id="system-practical-recipient-label">Ziel-Empfänger</span>
               <div class="row-wrap">
                 <button id="system-practical-select-all-btn" type="button">Alle auswählen</button>
                 <button id="system-practical-clear-selection-btn" type="button">Auswahl leeren</button>
@@ -766,6 +768,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260304a"></script>
+    <script src="/static/app.js?v=20260304d"></script>
   </body>
 </html>
