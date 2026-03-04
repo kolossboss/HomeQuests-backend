@@ -99,6 +99,22 @@ async def stream_family_updates(
                         "event: family_update\n"
                         f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     )
+                    if event.event_type == "notification.test":
+                        direct_payload = {
+                            "id": event.id,
+                            "family_id": event.family_id,
+                            "event_type": event.event_type,
+                            "created_at": event.created_at.isoformat(),
+                            "payload": parsed_payload,
+                            "title": parsed_payload.get("title"),
+                            "message": parsed_payload.get("message"),
+                            "recipient_user_ids": parsed_payload.get("recipient_user_ids", []),
+                        }
+                        yield (
+                            f"id: {event.id}\n"
+                            "event: notification.test\n"
+                            f"data: {json.dumps(direct_payload, ensure_ascii=False)}\n\n"
+                        )
             else:
                 yield ": keep-alive\n\n"
 
