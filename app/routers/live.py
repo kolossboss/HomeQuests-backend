@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -24,14 +24,23 @@ def _parse_last_event_id(last_event_id: str | None) -> int:
     return max(value, 0)
 
 
-def _extract_bearer_token(authorization: str | None, access_token: str | None) -> tuple[str, str, bool]:
+def _extract_bearer_token(
+    authorization: str | None,
+    access_token: str | None,
+    cookie_token: str | None,
+) -> tuple[str, str, bool]:
     query_token = (access_token or "").strip()
+    cookie_value = (cookie_token or "").strip()
     raw_authorization = (authorization or "").strip()
     if raw_authorization.lower().startswith("bearer "):
         header_token = raw_authorization[7:].strip()
         if header_token:
             token_conflict = bool(query_token and query_token != header_token)
             return header_token, "authorization_header", token_conflict
+
+    if cookie_value:
+        token_conflict = bool(query_token and query_token != cookie_value)
+        return cookie_value, "auth_cookie", token_conflict
 
     if query_token:
         return query_token, "access_token_query", False
@@ -49,11 +58,12 @@ async def stream_family_updates(
     request: Request,
     since_id: int = Query(default=0, ge=0),
     access_token: str | None = Query(default=None),
+    fp_token: str | None = Cookie(default=None),
     authorization: str | None = Header(default=None, alias="Authorization"),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     db: Session = Depends(get_db),
 ):
-    token, token_source, token_conflict = _extract_bearer_token(authorization, access_token)
+    token, token_source, token_conflict = _extract_bearer_token(authorization, access_token, fp_token)
     current_user: User = get_current_user_from_token_value(token, db)
     get_membership_or_403(db, family_id, current_user.id)
     cursor = max(since_id, _parse_last_event_id(last_event_id))

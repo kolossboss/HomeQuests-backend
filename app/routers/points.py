@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -78,7 +79,7 @@ def list_balances(
     db: Session = Depends(get_db),
 ):
     context = get_membership_or_403(db, family_id, current_user.id)
-    memberships = (
+    memberships_and_users = (
         db.query(FamilyMembership, User)
         .join(User, User.id == FamilyMembership.user_id)
         .filter(FamilyMembership.family_id == family_id)
@@ -87,7 +88,24 @@ def list_balances(
     )
 
     if context.role == RoleEnum.child:
-        memberships = [item for item in memberships if item[1].id == current_user.id]
+        memberships_and_users = [item for item in memberships_and_users if item[1].id == current_user.id]
+
+    user_ids = [user.id for _, user in memberships_and_users]
+    balances_by_user: dict[int, int] = {}
+    if user_ids:
+        rows = (
+            db.query(
+                PointsLedger.user_id,
+                func.coalesce(func.sum(PointsLedger.points_delta), 0),
+            )
+            .filter(
+                PointsLedger.family_id == family_id,
+                PointsLedger.user_id.in_(user_ids),
+            )
+            .group_by(PointsLedger.user_id)
+            .all()
+        )
+        balances_by_user = {int(user_id): int(balance or 0) for user_id, balance in rows}
 
     return [
         BalanceItemOut(
@@ -95,9 +113,9 @@ def list_balances(
             user_id=user.id,
             display_name=user.display_name,
             role=membership.role,
-            balance=get_points_balance(db, family_id, user.id),
+            balance=balances_by_user.get(user.id, 0),
         )
-        for membership, user in memberships
+        for membership, user in memberships_and_users
     ]
 
 

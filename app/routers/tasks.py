@@ -328,15 +328,11 @@ def list_tasks(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    get_membership_or_403(db, family_id, current_user.id)
-    if _apply_penalties_for_family(db, family_id):
-        db.commit()
-    return (
-        db.query(Task)
-        .filter(Task.family_id == family_id)
-        .order_by(Task.created_at.desc())
-        .all()
-    )
+    context = get_membership_or_403(db, family_id, current_user.id)
+    query = db.query(Task).filter(Task.family_id == family_id)
+    if context.role == RoleEnum.child:
+        query = query.filter(Task.assignee_id == current_user.id)
+    return query.order_by(Task.created_at.desc()).all()
 
 
 @router.get("/families/{family_id}/tasks/reminders/upcoming", response_model=list[TaskReminderOut])
@@ -348,8 +344,6 @@ def list_upcoming_task_reminders(
     db: Session = Depends(get_db),
 ):
     context = get_membership_or_403(db, family_id, current_user.id)
-    if _apply_penalties_for_family(db, family_id):
-        db.commit()
     if context.role == RoleEnum.child:
         target_assignee_id = current_user.id
     else:
@@ -457,6 +451,12 @@ def update_task(
     membership_context = get_membership_or_403(db, task.family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
 
+    if task.status == TaskStatusEnum.approved:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bereits bestätigte Aufgaben können nicht mehr bearbeitet werden",
+        )
+
     _ensure_assignee_in_family(db, task.family_id, payload.assignee_id)
 
     old_status = task.status
@@ -478,13 +478,6 @@ def update_task(
         task.penalty_last_applied_at = None
     task.is_active = payload.is_active
     task.status = payload.status
-
-    # Keep workflow tables and points consistent when admin/parents adjust status manually.
-    if old_status == TaskStatusEnum.approved and task.status != TaskStatusEnum.approved:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bereits bestätigte Aufgaben können nicht auf einen anderen Status zurückgesetzt werden",
-        )
 
     if old_status != TaskStatusEnum.submitted and task.status == TaskStatusEnum.submitted:
         db.add(
@@ -803,10 +796,6 @@ def submit_task(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
     get_membership_or_403(db, task.family_id, current_user.id)
-
-    if _apply_penalty_for_task(db, task):
-        db.commit()
-        db.refresh(task)
 
     if task.assignee_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur zugewiesenes Familienmitglied darf einreichen")

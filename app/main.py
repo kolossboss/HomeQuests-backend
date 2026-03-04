@@ -15,10 +15,11 @@ from .routers import auth, events, families, live, points, rewards, system, task
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
+cors_allow_origins = settings.cors_allow_origins or []
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_allow_origins,
+    allow_credentials="*" not in cors_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
