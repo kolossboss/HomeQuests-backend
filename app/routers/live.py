@@ -24,16 +24,17 @@ def _parse_last_event_id(last_event_id: str | None) -> int:
     return max(value, 0)
 
 
-def _extract_bearer_token(authorization: str | None, access_token: str | None) -> str:
-    token = (access_token or "").strip()
-    if token:
-        return token
-
+def _extract_bearer_token(authorization: str | None, access_token: str | None) -> tuple[str, str, bool]:
+    query_token = (access_token or "").strip()
     raw_authorization = (authorization or "").strip()
     if raw_authorization.lower().startswith("bearer "):
-        bearer_token = raw_authorization[7:].strip()
-        if bearer_token:
-            return bearer_token
+        header_token = raw_authorization[7:].strip()
+        if header_token:
+            token_conflict = bool(query_token and query_token != header_token)
+            return header_token, "authorization_header", token_conflict
+
+    if query_token:
+        return query_token, "access_token_query", False
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -52,14 +53,20 @@ async def stream_family_updates(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
     db: Session = Depends(get_db),
 ):
-    token = _extract_bearer_token(authorization, access_token)
+    token, token_source, token_conflict = _extract_bearer_token(authorization, access_token)
     current_user: User = get_current_user_from_token_value(token, db)
     get_membership_or_403(db, family_id, current_user.id)
     cursor = max(since_id, _parse_last_event_id(last_event_id))
 
     async def event_generator():
         nonlocal cursor
-        connected_payload = {"family_id": family_id, "since_id": cursor}
+        connected_payload = {
+            "family_id": family_id,
+            "since_id": cursor,
+            "user_id": current_user.id,
+            "auth_source": token_source,
+            "token_conflict": token_conflict,
+        }
         yield f"event: connected\ndata: {json.dumps(connected_payload, ensure_ascii=False)}\n\n"
 
         while True:
