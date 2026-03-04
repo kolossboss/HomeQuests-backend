@@ -55,7 +55,21 @@ def _reserved_points_for_redemption(db: Session, family_id: int, user_id: int, r
 
 
 def _pending_redemption_for_reward(db: Session, family_id: int, reward_id: int) -> RewardRedemption | None:
-    return (
+    return _pending_redemption_for_reward_with_lock(
+        db,
+        family_id=family_id,
+        reward_id=reward_id,
+        with_lock=False,
+    )
+
+
+def _pending_redemption_for_reward_with_lock(
+    db: Session,
+    family_id: int,
+    reward_id: int,
+    with_lock: bool,
+) -> RewardRedemption | None:
+    query = (
         db.query(RewardRedemption)
         .join(Reward, Reward.id == RewardRedemption.reward_id)
         .filter(
@@ -64,7 +78,27 @@ def _pending_redemption_for_reward(db: Session, family_id: int, reward_id: int) 
             RewardRedemption.status == RedemptionStatusEnum.pending,
         )
         .order_by(RewardRedemption.requested_at.desc())
-        .first()
+    )
+    if with_lock:
+        query = query.with_for_update()
+    return query.first()
+
+
+def _load_active_contributions_for_reward_with_lock(
+    db: Session,
+    family_id: int,
+    reward_id: int,
+) -> list[RewardContribution]:
+    return (
+        db.query(RewardContribution)
+        .filter(
+            RewardContribution.family_id == family_id,
+            RewardContribution.reward_id == reward_id,
+            RewardContribution.status.in_(list(ACTIVE_CONTRIBUTION_STATUSES)),
+        )
+        .order_by(RewardContribution.created_at.asc())
+        .with_for_update()
+        .all()
     )
 
 
@@ -227,7 +261,7 @@ def contribute_reward(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    reward = db.query(Reward).filter(Reward.id == reward_id).first()
+    reward = db.query(Reward).filter(Reward.id == reward_id).with_for_update().first()
     if not reward:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Belohnung nicht gefunden")
 
@@ -239,19 +273,28 @@ def contribute_reward(
     if not reward.is_shareable:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Diese Belohnung ist nicht aufteilbar")
 
-    pending_redemption = _pending_redemption_for_reward(db, reward.family_id, reward.id)
+    pending_redemption = _pending_redemption_for_reward_with_lock(
+        db,
+        family_id=reward.family_id,
+        reward_id=reward.id,
+        with_lock=True,
+    )
     if pending_redemption:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Für diese Belohnung läuft bereits eine Anfrage")
 
-    progress_before = _build_contribution_progress(db, reward)
-    if progress_before.remaining_points <= 0:
+    # Serialisiert Beitrags-/Einlöse-Anfragen pro Belohnung.
+    active_contributions = _load_active_contributions_for_reward_with_lock(db, reward.family_id, reward.id)
+    total_reserved_before = sum(int(entry.points_reserved) for entry in active_contributions)
+    remaining_before = max(reward.cost_points - total_reserved_before, 0)
+    if remaining_before <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Für diese Belohnung sind bereits genug Punkte reserviert")
-    if payload.points > progress_before.remaining_points:
+    if payload.points > remaining_before:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Zu viele Punkte für diesen Beitrag. Maximal möglich: {progress_before.remaining_points}",
+            detail=f"Zu viele Punkte für diesen Beitrag. Maximal möglich: {remaining_before}",
         )
 
+    db.query(User).filter(User.id == current_user.id).with_for_update().first()
     balance = get_points_balance(db, reward.family_id, current_user.id)
     if balance < payload.points:
         raise HTTPException(
@@ -282,7 +325,7 @@ def contribute_reward(
         )
     )
 
-    total_reserved = progress_before.total_reserved + payload.points
+    total_reserved = total_reserved_before + payload.points
     if total_reserved >= reward.cost_points:
         redemption = RewardRedemption(
             reward_id=reward.id,
@@ -302,6 +345,7 @@ def contribute_reward(
                 RewardContribution.redemption_id.is_(None),
             )
             .order_by(RewardContribution.created_at.asc())
+            .with_for_update()
             .all()
         )
         for entry in open_contributions:
@@ -332,7 +376,7 @@ def redeem_reward(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    reward = db.query(Reward).filter(Reward.id == reward_id).first()
+    reward = db.query(Reward).filter(Reward.id == reward_id).with_for_update().first()
     if not reward:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Belohnung nicht gefunden")
 
@@ -344,24 +388,17 @@ def redeem_reward(
     if reward.is_shareable:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Diese Belohnung ist aufteilbar. Bitte Beiträge nutzen")
 
-    if _pending_redemption_for_reward(db, reward.family_id, reward.id):
+    if _pending_redemption_for_reward_with_lock(db, reward.family_id, reward.id, with_lock=True):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Für diese Belohnung läuft bereits eine Anfrage")
 
-    active_contribution_count = (
-        db.query(func.count(RewardContribution.id))
-        .filter(
-            RewardContribution.family_id == reward.family_id,
-            RewardContribution.reward_id == reward.id,
-            RewardContribution.status.in_(list(ACTIVE_CONTRIBUTION_STATUSES)),
-        )
-        .scalar()
-    )
-    if int(active_contribution_count or 0) > 0:
+    active_contributions = _load_active_contributions_for_reward_with_lock(db, reward.family_id, reward.id)
+    if len(active_contributions) > 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Für diese Belohnung laufen bereits Sammelbeiträge",
         )
 
+    db.query(User).filter(User.id == current_user.id).with_for_update().first()
     balance = get_points_balance(db, reward.family_id, current_user.id)
     if balance < reward.cost_points:
         raise HTTPException(
@@ -455,11 +492,11 @@ def review_redemption(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    redemption = db.query(RewardRedemption).filter(RewardRedemption.id == redemption_id).first()
+    redemption = db.query(RewardRedemption).filter(RewardRedemption.id == redemption_id).with_for_update().first()
     if not redemption:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Einlösung nicht gefunden")
 
-    reward = db.query(Reward).filter(Reward.id == redemption.reward_id).first()
+    reward = db.query(Reward).filter(Reward.id == redemption.reward_id).with_for_update().first()
     if not reward:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Belohnung nicht gefunden")
 
@@ -479,6 +516,7 @@ def review_redemption(
             RewardContribution.status.in_([RewardContributionStatusEnum.submitted, RewardContributionStatusEnum.reserved]),
         )
         .order_by(RewardContribution.created_at.asc())
+        .with_for_update()
         .all()
     )
     reserved_points = _reserved_points_for_redemption(

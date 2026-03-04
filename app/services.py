@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 
 from .models import LiveUpdateEvent, PointsLedger
 
+MAX_LIVE_EVENTS_PER_FAMILY = 5000
+LIVE_EVENT_TRIM_BATCH_SIZE = 500
+
 
 def get_points_balance(db: Session, family_id: int, user_id: int) -> int:
     result = (
@@ -28,6 +31,23 @@ def emit_live_event(
             payload_json=json.dumps(payload, ensure_ascii=False) if payload is not None else None,
         )
     )
+    _trim_live_events(db, family_id)
+
+
+def _trim_live_events(db: Session, family_id: int) -> None:
+    stale_rows = (
+        db.query(LiveUpdateEvent.id)
+        .filter(LiveUpdateEvent.family_id == family_id)
+        .order_by(LiveUpdateEvent.id.desc())
+        .offset(MAX_LIVE_EVENTS_PER_FAMILY)
+        .limit(LIVE_EVENT_TRIM_BATCH_SIZE)
+        .all()
+    )
+    if not stale_rows:
+        return
+
+    stale_ids = [int(row[0]) for row in stale_rows]
+    db.query(LiveUpdateEvent).filter(LiveUpdateEvent.id.in_(stale_ids)).delete(synchronize_session=False)
 
 
 def parse_live_payload(payload_json: str | None) -> dict:

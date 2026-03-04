@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,20 @@ from ..schemas import BootstrapRequest, BootstrapStatusOut, LoginRequest, TokenR
 from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+COOKIE_NAME = "fp_token"
+COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+
+
+def _set_auth_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=COOKIE_NAME,
+        value=token,
+        max_age=COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        path="/",
+    )
 
 
 @router.get("/bootstrap-status", response_model=BootstrapStatusOut)
@@ -18,7 +32,7 @@ def bootstrap_status(db: Session = Depends(get_db)):
 
 
 @router.post("/bootstrap", response_model=TokenResponse)
-def bootstrap(payload: BootstrapRequest, db: Session = Depends(get_db)):
+def bootstrap(payload: BootstrapRequest, response: Response, db: Session = Depends(get_db)):
     existing = db.query(User).count()
     if existing > 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
@@ -40,11 +54,12 @@ def bootstrap(payload: BootstrapRequest, db: Session = Depends(get_db)):
     db.commit()
 
     token = create_access_token(str(user.id))
+    _set_auth_cookie(response, token)
     return TokenResponse(access_token=token)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
     identifier = (payload.login or (payload.email or "")).strip()
     if not identifier:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Login fehlt")
@@ -68,7 +83,14 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falsche Zugangsdaten")
 
     token = create_access_token(str(user.id))
+    _set_auth_cookie(response, token)
     return TokenResponse(access_token=token)
+
+
+@router.post("/logout")
+def logout(response: Response):
+    response.delete_cookie(key=COOKIE_NAME, path="/")
+    return {"logged_out": True}
 
 
 @router.get("/me", response_model=UserOut)

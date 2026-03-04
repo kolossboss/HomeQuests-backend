@@ -1,5 +1,5 @@
 const state = {
-  token: localStorage.getItem("fp_token") || null,
+  token: sessionStorage.getItem("fp_token") || null,
   me: null,
   families: [],
   familyId: null,
@@ -63,6 +63,21 @@ let specialTaskRefreshTimer = null;
 
 function byId(id) {
   return document.getElementById(id);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeHtmlText(value, fallback = "-") {
+  const text = String(value ?? "").trim();
+  if (!text) return escapeHtml(fallback);
+  return escapeHtml(text);
 }
 
 function log(message, data = null) {
@@ -616,6 +631,10 @@ function memberName(userId) {
   return member ? member.display_name : "Unbekannt";
 }
 
+function memberNameHtml(userId) {
+  return safeHtmlText(memberName(userId), "Unbekannt");
+}
+
 function getSelfMember() {
   if (!state.me) return null;
   return state.members.find((m) => m.user_id === state.me.id) || null;
@@ -666,6 +685,7 @@ async function api(path, { method = "GET", body = null } = {}) {
     method,
     headers,
     body: body ? JSON.stringify(body) : null,
+    credentials: "same-origin",
   });
 
   const raw = await response.text();
@@ -725,7 +745,6 @@ function closeLiveSource() {
 function buildLiveStreamUrl(familyId) {
   const params = new URLSearchParams();
   if (liveCursor > 0) params.set("since_id", String(liveCursor));
-  params.set("access_token", state.token);
   return `/families/${familyId}/live/stream?${params.toString()}`;
 }
 
@@ -955,7 +974,7 @@ function renderSystemTestRecipients() {
     .map((member) => {
       const checked = hadSelection ? previousSelection.has(member.user_id) : true;
       const role = roleLabel(member.role);
-      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${member.display_name} (${role})</label>`;
+      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${safeHtmlText(member.display_name)} (${safeHtmlText(role)})</label>`;
     })
     .join("");
 
@@ -1014,7 +1033,7 @@ function renderSystemPracticalRecipients() {
     .map((member) => {
       const checked = hadSelection ? previousSelection.has(member.user_id) : true;
       const role = roleLabel(member.role);
-      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${member.display_name} (${role})</label>`;
+      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${safeHtmlText(member.display_name)} (${safeHtmlText(role)})</label>`;
     })
     .join("");
 }
@@ -1333,8 +1352,8 @@ function renderMembers() {
         ? `<button data-member-action="edit" data-member-id="${member.user_id}">Bearbeiten</button> <button data-member-action="delete" data-member-id="${member.user_id}">Löschen</button>`
         : "-";
       return `<tr>
-        <td>${member.display_name}</td>
-        <td>${member.email || "-"}</td>
+        <td>${safeHtmlText(member.display_name)}</td>
+        <td>${safeHtmlText(member.email)}</td>
         <td>${roleLabel(member.role)}</td>
         <td>${member.is_active ? "ja" : "nein"}</td>
         <td>${actions}</td>
@@ -1345,8 +1364,8 @@ function renderMembers() {
   const dashboardRows = state.members
     .map(
       (member) => `<tr>
-        <td>${member.display_name}</td>
-        <td>${member.email || "-"}</td>
+        <td>${safeHtmlText(member.display_name)}</td>
+        <td>${safeHtmlText(member.email)}</td>
         <td>${roleLabel(member.role)}</td>
         <td>${member.is_active ? "ja" : "nein"}</td>
       </tr>`
@@ -1399,7 +1418,7 @@ function renderDashboardPoints() {
   byId("dashboard-points-body").innerHTML = state.pointsBalances
     .map(
       (entry) => `<tr>
-        <td>${entry.display_name}</td>
+        <td>${safeHtmlText(entry.display_name)}</td>
         <td>${roleLabel(entry.role)}</td>
         <td>${entry.balance}</td>
       </tr>`
@@ -1425,7 +1444,7 @@ function renderDashboardPendingRequests() {
       .map((task) => {
         if (task.status === "missed_submitted") {
           return `<article class="request-card">
-          <p class="request-card-title">${memberName(task.assignee_id)} hat \"${task.title}\" als nicht erledigt gemeldet</p>
+          <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als nicht erledigt gemeldet</p>
           <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
           <div class="request-card-actions">
             <button data-dashboard-missed-task-action="delete" data-task-id="${task.id}">Löschen</button>
@@ -1434,7 +1453,7 @@ function renderDashboardPendingRequests() {
         </article>`;
         }
         return `<article class="request-card">
-          <p class="request-card-title">${memberName(task.assignee_id)} hat \"${task.title}\" als erledigt gemeldet</p>
+          <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als erledigt gemeldet</p>
           <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
           <div class="request-card-actions">
             <button data-dashboard-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
@@ -1454,7 +1473,7 @@ function renderDashboardPendingRequests() {
       .map((entry) => {
         const reward = state.rewards.find((r) => r.id === entry.reward_id);
         return `<article class="request-card">
-          <p class="request-card-title">${memberName(entry.requested_by_id)} hat \"${reward ? reward.title : "Belohnung"}\" angefragt</p>
+          <p class="request-card-title">${memberNameHtml(entry.requested_by_id)} hat "${safeHtmlText(reward ? reward.title : "Belohnung")}" angefragt</p>
           <p class="request-card-meta">Angefragt am ${fmtDate(entry.requested_at)}</p>
           <div class="request-card-actions">
             <button data-dashboard-reward-review-action="approved" data-redemption-id="${entry.id}">Bestätigen</button>
@@ -1474,8 +1493,8 @@ function renderTasks() {
   byId("dashboard-tasks-body").innerHTML = visibleTasks
     .map(
       (task) => `<tr>
-        <td>${task.title}</td>
-        <td>${memberName(task.assignee_id)}</td>
+        <td>${safeHtmlText(task.title)}</td>
+        <td>${memberNameHtml(task.assignee_id)}</td>
         <td>${statusLabel(task.status)}</td>
         <td>${task.points}</td>
         <td>${taskDueText(task)}</td>
@@ -1495,11 +1514,11 @@ function renderTasks() {
         .map(
           (task) => `<article class="entity-card">
             <div class="entity-card-head">
-              <p class="entity-card-title">${task.title}</p>
+              <p class="entity-card-title">${safeHtmlText(task.title)}</p>
               <span class="entity-tag">${task.is_active === false ? "deaktiviert" : statusLabel(task.status)}</span>
             </div>
-            <p class="entity-card-meta">${task.description || "Ohne Beschreibung"}</p>
-            <p class="entity-card-meta">Zuständig: ${memberName(task.assignee_id)} • ${task.points} Punkte</p>
+            <p class="entity-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
+            <p class="entity-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${task.points} Punkte</p>
             <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
             <p class="entity-card-meta">${taskPenaltyText(task)}</p>
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
@@ -1519,11 +1538,11 @@ function renderTasks() {
         .map(
           (task) => `<article class="entity-card">
             <div class="entity-card-head">
-              <p class="entity-card-title">${task.title}</p>
+              <p class="entity-card-title">${safeHtmlText(task.title)}</p>
               <span class="entity-tag">bestätigt</span>
             </div>
-            <p class="entity-card-meta">${task.description || "Ohne Beschreibung"}</p>
-            <p class="entity-card-meta">Zuständig: ${memberName(task.assignee_id)} • ${task.points} Punkte</p>
+            <p class="entity-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
+            <p class="entity-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${task.points} Punkte</p>
             <p class="entity-card-meta">Abgeschlossen am: ${fmtDate(task.updated_at || task.created_at)}</p>
             <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
             <p class="entity-card-meta">${taskPenaltyText(task)}</p>
@@ -1595,13 +1614,13 @@ function renderChildTaskLists() {
       .map((task) => {
         if (!actionable) {
           return `<article class="request-card ${overdue ? "overdue" : ""}">
-          <span class="task-card-title">${task.title}</span>
+          <span class="task-card-title">${safeHtmlText(task.title)}</span>
           <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
         </article>`;
         }
         if (overdue) {
           return `<article class="request-card overdue">
-          <span class="task-card-title">${task.title}</span>
+          <span class="task-card-title">${safeHtmlText(task.title)}</span>
           <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
           <div class="request-card-actions">
             <button data-task-id="${task.id}" data-task-action="submit_done">Als erledigt melden</button>
@@ -1610,7 +1629,7 @@ function renderChildTaskLists() {
         </article>`;
         }
         return `<button class="task-card-btn ${overdue ? "overdue" : ""}" data-task-id="${task.id}">
-          <span class="task-card-title">${task.title}</span>
+          <span class="task-card-title">${safeHtmlText(task.title)}</span>
           <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
         </button>`;
       })
@@ -1626,7 +1645,7 @@ function renderChildTaskLists() {
     ? waitingTasks
       .map(
         (task) => `<article class="request-card">
-          <p class="request-card-title">${task.title}</p>
+          <p class="request-card-title">${safeHtmlText(task.title)}</p>
           <p class="request-card-meta">${
             task.status === "missed_submitted" ? "Als nicht erledigt gemeldet" : "Eingereicht"
           }: ${fmtDate(task.updated_at || task.created_at)} • ${childTaskDueText(task)}</p>
@@ -1639,7 +1658,7 @@ function renderChildTaskLists() {
     ? completedTasks
       .map(
         (task) => `<article class="request-card">
-          <p class="request-card-title">${task.title}</p>
+          <p class="request-card-title">${safeHtmlText(task.title)}</p>
           <p class="request-card-meta">Bestätigt • ${childTaskDueText(task)}</p>
         </article>`
       )
@@ -1656,7 +1675,7 @@ function renderManagerTaskReviewCards() {
       .map((task) => {
         if (task.status === "missed_submitted") {
           return `<article class="request-card">
-          <p class="request-card-title">${memberName(task.assignee_id)}: ${task.title}</p>
+          <p class="request-card-title">${memberNameHtml(task.assignee_id)}: ${safeHtmlText(task.title)}</p>
           <p class="request-card-meta">Als nicht erledigt gemeldet • ${taskDueText(task)}</p>
           <div class="request-card-actions">
             <button data-task-missed-review-action="delete" data-task-id="${task.id}">Löschen</button>
@@ -1665,7 +1684,7 @@ function renderManagerTaskReviewCards() {
         </article>`;
         }
         return `<article class="request-card">
-          <p class="request-card-title">${memberName(task.assignee_id)}: ${task.title}</p>
+          <p class="request-card-title">${memberNameHtml(task.assignee_id)}: ${safeHtmlText(task.title)}</p>
           <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
           <div class="request-card-actions">
             <button data-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
@@ -1722,10 +1741,10 @@ function renderSpecialTaskTemplates() {
         .map(
           (entry) => `<article class="entity-card">
             <div class="entity-card-head">
-              <p class="entity-card-title">${entry.title}</p>
+              <p class="entity-card-title">${safeHtmlText(entry.title)}</p>
               <span class="entity-tag">${entry.is_active ? "aktiv" : "deaktiviert"}</span>
             </div>
-            <p class="entity-card-meta">${entry.description || "Ohne Beschreibung"}</p>
+            <p class="entity-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")}</p>
             <p class="entity-card-meta">Punkte: ${entry.points}</p>
             <p class="entity-card-meta">${specialTaskScheduleMeta(entry)}</p>
             <p class="entity-card-meta">Limit pro Intervall: ${entry.max_claims_per_interval}</p>
@@ -1761,8 +1780,8 @@ function renderChildSpecialTaskCards() {
           ? ` • heute bis ${entry.due_time_hhmm}`
           : "";
         return `<article class="request-card">
-          <p class="request-card-title">${entry.title}</p>
-          <p class="request-card-meta">${entry.description || "Ohne Beschreibung"} • ${entry.points} Punkte</p>
+          <p class="request-card-title">${safeHtmlText(entry.title)}</p>
+          <p class="request-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")} • ${entry.points} Punkte</p>
           <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
           <div class="request-card-actions">
             <button data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
@@ -1823,8 +1842,8 @@ function renderEvents() {
   byId("events-body").innerHTML = state.events
     .map(
       (event) => `<tr>
-        <td>${event.title}</td>
-        <td>${event.responsible_user_id ? memberName(event.responsible_user_id) : "-"}</td>
+        <td>${safeHtmlText(event.title)}</td>
+        <td>${event.responsible_user_id ? memberNameHtml(event.responsible_user_id) : "-"}</td>
         <td>${fmtDate(event.start_at)}</td>
         <td>${fmtDate(event.end_at)}</td>
       </tr>`
@@ -1841,8 +1860,8 @@ function renderRewards() {
         ? `<button data-reward-action="edit" data-reward-id="${reward.id}">Bearbeiten</button> <button data-reward-action="delete" data-reward-id="${reward.id}">Löschen</button>`
         : "-";
       return `<tr>
-        <td>${reward.title}</td>
-        <td>${reward.description || "-"}</td>
+        <td>${safeHtmlText(reward.title)}</td>
+        <td>${safeHtmlText(reward.description)}</td>
         <td>${reward.cost_points}</td>
         <td>${reward.is_shareable ? "ja" : "nein"}</td>
         <td>${reward.is_active ? "aktiv" : "deaktiviert"}</td>
@@ -1962,7 +1981,7 @@ function renderSelectedRewardContribution() {
     ? progress.contributions
       .map(
         (entry) => `<article class="request-card">
-          <p class="request-card-title">${entry.user_name}: ${entry.points_reserved} Punkte</p>
+          <p class="request-card-title">${safeHtmlText(entry.user_name)}: ${entry.points_reserved} Punkte</p>
           <p class="request-card-meta">Status: ${contributionStatusLabel(entry.status)} • ${fmtDate(entry.created_at)}</p>
         </article>`
       )
@@ -2023,8 +2042,8 @@ function renderRedemptions() {
     .map((entry) => {
       const reward = state.rewards.find((r) => r.id === entry.reward_id);
       return `<tr>
-        <td>${reward ? reward.title : "Unbekannte Belohnung"}</td>
-        <td>${memberName(entry.requested_by_id)}</td>
+        <td>${safeHtmlText(reward ? reward.title : "Unbekannte Belohnung")}</td>
+        <td>${memberNameHtml(entry.requested_by_id)}</td>
         <td>${statusLabel(entry.status)}</td>
         <td>${fmtDate(entry.requested_at)}</td>
       </tr>`;
@@ -2044,7 +2063,7 @@ function renderManagerRewardReviewCards() {
       .map((entry) => {
         const reward = state.rewards.find((r) => r.id === entry.reward_id);
         return `<article class="request-card">
-          <p class="request-card-title">${memberName(entry.requested_by_id)}: ${reward ? reward.title : "Belohnung"}</p>
+          <p class="request-card-title">${memberNameHtml(entry.requested_by_id)}: ${safeHtmlText(reward ? reward.title : "Belohnung")}</p>
           <p class="request-card-meta">Angefragt: ${fmtDate(entry.requested_at)}</p>
           <div class="request-card-actions">
             <button data-reward-review-action="approved" data-redemption-id="${entry.id}">Bestätigen</button>
@@ -2069,7 +2088,7 @@ function renderPointsUsers() {
         ? `<button data-points-action="history" data-user-id="${entry.user_id}">Historie</button> <button data-points-action="edit" data-user-id="${entry.user_id}">Bearbeiten</button>`
         : "-";
       return `<tr>
-        <td>${entry.display_name}</td>
+        <td>${safeHtmlText(entry.display_name)}</td>
         <td>${roleLabel(entry.role)}</td>
         <td>${entry.balance}</td>
         <td>${actions}</td>
@@ -2086,7 +2105,7 @@ function renderPointsHistory() {
         <td>${fmtDate(entry.created_at)}</td>
         <td>${pointsDeltaLabel(entry.points_delta)}</td>
         <td>${pointsSourceLabel(entry.source_type)}</td>
-        <td>${entry.description}</td>
+        <td>${safeHtmlText(entry.description)}</td>
       </tr>`
     )
     .join("");
@@ -2224,13 +2243,6 @@ async function refreshFamilyData() {
 }
 
 async function refreshSession() {
-  if (!state.token) {
-    stopLiveUpdates({ resetCursor: true });
-    stopSpecialTaskRefreshTicker();
-    await initAuthPanel();
-    return;
-  }
-
   try {
     state.me = await api("/auth/me");
     state.families = await api("/families/my");
@@ -2264,7 +2276,7 @@ async function refreshSession() {
     log("Session Fehler", { error: error.message });
     stopLiveUpdates({ resetCursor: true });
     stopSpecialTaskRefreshTicker();
-    logout();
+    await logout();
   }
 }
 
@@ -2292,7 +2304,7 @@ async function login() {
 
   const data = await api("/auth/login", { method: "POST", body: { login: loginValue, password } });
   state.token = data.access_token;
-  localStorage.setItem("fp_token", state.token);
+  sessionStorage.setItem("fp_token", state.token);
   await refreshSession();
 }
 
@@ -2336,11 +2348,16 @@ async function bootstrap() {
   });
 
   state.token = data.access_token;
-  localStorage.setItem("fp_token", state.token);
+  sessionStorage.setItem("fp_token", state.token);
   await refreshSession();
 }
 
-function logout() {
+async function logout() {
+  try {
+    await api("/auth/logout", { method: "POST" });
+  } catch (_) {
+    // Local cleanup still runs below.
+  }
   restoreAllInlineEditorSections();
   stopLiveUpdates({ resetCursor: true });
   stopSpecialTaskRefreshTicker();
@@ -2358,7 +2375,7 @@ function logout() {
   state.specialTaskTemplates = [];
   state.availableSpecialTasks = [];
   state.pointsHistory = [];
-  localStorage.removeItem("fp_token");
+  sessionStorage.removeItem("fp_token");
   initAuthPanel().catch((error) => log("Auth-Ansicht Fehler", { error: error.message }));
 }
 
