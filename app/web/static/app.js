@@ -814,6 +814,16 @@ function connectLiveUpdates(familyId) {
         const message = info.message || "";
         log(`Live-Benachrichtigung: ${title}`, { message, recipients: info.recipient_user_ids || [] });
       }
+      if (payload.event_type === "task.submitted") {
+        const info = payload.payload || {};
+        if (info.source === "system_practical_test") {
+          log("Praxis-Test Event eingegangen", {
+            event_type: payload.event_type,
+            task_id: info.task_id,
+            assignee_id: info.assignee_id,
+          });
+        }
+      }
       queueLiveRefresh(payload.event_type || "family_update");
     } catch (error) {
       log("Live-Event Parse Fehler", { error: error.message });
@@ -939,6 +949,42 @@ function renderSystemTestRecipients() {
   const hadSelection = previousSelection.size > 0;
   const recipients = state.members
     .filter((member) => member.is_active)
+    .sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""), "de"));
+
+  container.innerHTML = recipients
+    .map((member) => {
+      const checked = hadSelection ? previousSelection.has(member.user_id) : true;
+      const role = roleLabel(member.role);
+      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${member.display_name} (${role})</label>`;
+    })
+    .join("");
+}
+
+function getSystemPracticalRecipientIds() {
+  const container = byId("system-practical-recipients");
+  if (!container) return [];
+  return Array.from(container.querySelectorAll("input[type=\"checkbox\"]:checked"))
+    .map((checkbox) => Number(checkbox.value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function setAllSystemPracticalRecipients(selected) {
+  const container = byId("system-practical-recipients");
+  if (!container) return;
+  Array.from(container.querySelectorAll("input[type=\"checkbox\"]")).forEach((checkbox) => {
+    checkbox.checked = Boolean(selected);
+  });
+  setInvalid(byId("system-practical-recipient-picker"), false);
+}
+
+function renderSystemPracticalRecipients() {
+  const container = byId("system-practical-recipients");
+  if (!container) return;
+
+  const previousSelection = new Set(getSystemPracticalRecipientIds());
+  const hadSelection = previousSelection.size > 0;
+  const recipients = state.members
+    .filter((member) => member.is_active && (member.role === "admin" || member.role === "parent"))
     .sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""), "de"));
 
   container.innerHTML = recipients
@@ -1297,6 +1343,7 @@ function renderMembers() {
   fillSelect("task-editor-assignee", memberOptions);
   fillSelect("event-responsible", memberOptions, true, "keiner");
   renderSystemTestRecipients();
+  renderSystemPracticalRecipients();
 
   byId("stat-members").textContent = String(state.members.length);
 }
@@ -3171,6 +3218,43 @@ async function sendSystemTestNotification() {
   }
 }
 
+async function sendSystemPracticalTestNotification() {
+  if (!isManagerRole()) return;
+  clearInvalid(["system-practical-recipient-picker"]);
+  const scenarioInput = byId("system-practical-scenario");
+  const dryRunInput = byId("system-practical-dry-run");
+  const resultTarget = byId("system-practical-result");
+  const recipientUserIds = getSystemPracticalRecipientIds();
+
+  if (!scenarioInput) return;
+
+  let invalid = false;
+  if (recipientUserIds.length === 0) {
+    setInvalid(byId("system-practical-recipient-picker"), true);
+    invalid = true;
+  }
+  if (invalid) {
+    if (resultTarget) resultTarget.textContent = "Bitte mindestens einen Empfänger auswählen.";
+    return;
+  }
+
+  const response = await api(`/families/${getSelectedFamilyId()}/system/test-notification/practical`, {
+    method: "POST",
+    body: {
+      scenario: scenarioInput.value,
+      dry_run: dryRunInput ? Boolean(dryRunInput.checked) : false,
+      recipient_user_ids: recipientUserIds,
+    },
+  });
+
+  if (resultTarget) {
+    const entities = response.affected_entities || {};
+    const dryRunLabel = response.dry_run ? " (dry-run)" : "";
+    const taskId = entities.task_id ?? "-";
+    resultTarget.textContent = `Praxis-Test${dryRunLabel} ausgeführt: ${response.scenario}. Empfänger: ${response.recipient_display_names.join(", ") || "-"}, Task-ID: ${taskId}`;
+  }
+}
+
 if (familySelect) {
   familySelect.addEventListener("change", async (event) => {
     stopLiveUpdates();
@@ -3527,6 +3611,11 @@ byId("system-test-send-btn").addEventListener("click", () =>
 );
 byId("system-test-select-all-btn").addEventListener("click", () => setAllSystemTestRecipients(true));
 byId("system-test-clear-selection-btn").addEventListener("click", () => setAllSystemTestRecipients(false));
+byId("system-practical-send-btn").addEventListener("click", () =>
+  sendSystemPracticalTestNotification().catch((error) => log("Praxis-Test Fehler", { error: error.message }))
+);
+byId("system-practical-select-all-btn").addEventListener("click", () => setAllSystemPracticalRecipients(true));
+byId("system-practical-clear-selection-btn").addEventListener("click", () => setAllSystemPracticalRecipients(false));
 byId("redeem-reward-btn").addEventListener("click", () =>
   redeemReward().catch((error) => {
     window.alert(error.message);
