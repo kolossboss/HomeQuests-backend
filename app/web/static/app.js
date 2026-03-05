@@ -473,7 +473,13 @@ function recurringTaskKey(task) {
   ].join("|");
 }
 
-function newestRecurringEntries(tasks) {
+function dueTimestamp(task) {
+  const due = parseDateSafe(task.due_at);
+  if (!due) return Number.POSITIVE_INFINITY;
+  return due.getTime();
+}
+
+function newestRecurringEntries(tasks, strategy = "latest_activity") {
   const fixed = [];
   const latestByKey = new Map();
   tasks.forEach((task) => {
@@ -485,7 +491,21 @@ function newestRecurringEntries(tasks) {
     const existing = latestByKey.get(key);
     const currentTime = getTaskActivityDate(task)?.getTime() || 0;
     const existingTime = existing ? (getTaskActivityDate(existing)?.getTime() || 0) : -1;
-    if (!existing || currentTime >= existingTime) {
+    if (!existing) {
+      latestByKey.set(key, task);
+      return;
+    }
+
+    if (strategy === "earliest_due") {
+      const currentDue = dueTimestamp(task);
+      const existingDue = dueTimestamp(existing);
+      if (currentDue < existingDue || (currentDue === existingDue && currentTime >= existingTime)) {
+        latestByKey.set(key, task);
+      }
+      return;
+    }
+
+    if (currentTime >= existingTime) {
       latestByKey.set(key, task);
     }
   });
@@ -1575,7 +1595,7 @@ function renderChildTaskLists() {
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
   const actionableTasks = newestRecurringEntries(ownVisibleTasks
     .filter((task) => task.status === "open" || task.status === "rejected")
-    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)));
+    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)), "earliest_due");
 
   const overdueTasks = actionableTasks.filter((task) => task.due_at && new Date(task.due_at) < now);
   const weekTasks = actionableTasks.filter(
