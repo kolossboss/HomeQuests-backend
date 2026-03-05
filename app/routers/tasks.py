@@ -289,8 +289,85 @@ def _apply_penalties_for_family(db: Session, family_id: int) -> bool:
     return changed
 
 
+def _recurring_task_identity_key(task: Task) -> tuple | None:
+    if task.recurrence_type == RecurrenceTypeEnum.none.value:
+        return None
+    weekdays = tuple(sorted(int(value) for value in (task.active_weekdays or []) if isinstance(value, int)))
+    return (
+        task.assignee_id,
+        task.title.strip().lower(),
+        (task.description or "").strip().lower(),
+        task.recurrence_type,
+        weekdays,
+        int(task.special_template_id or 0),
+    )
+
+
+def _task_due_sort_value(task: Task) -> datetime:
+    due = _as_utc_naive(task.due_at)
+    if due is None:
+        return datetime.max
+    return due
+
+
+def _dedupe_recurring_tasks_for_reminders(tasks: list[Task]) -> list[Task]:
+    fixed: list[Task] = []
+    by_key: dict[tuple, Task] = {}
+
+    for task in tasks:
+        key = _recurring_task_identity_key(task)
+        if key is None:
+            fixed.append(task)
+            continue
+
+        existing = by_key.get(key)
+        if not existing or _task_due_sort_value(task) < _task_due_sort_value(existing):
+            by_key[key] = task
+
+    merged = fixed + list(by_key.values())
+    merged.sort(key=lambda entry: _task_due_sort_value(entry))
+    return merged
+
+
+def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task | None:
+    key = _recurring_task_identity_key(source_task)
+    if key is None:
+        return None
+
+    query = (
+        db.query(Task)
+        .filter(
+            Task.id != source_task.id,
+            Task.family_id == source_task.family_id,
+            Task.assignee_id == source_task.assignee_id,
+            Task.recurrence_type == source_task.recurrence_type,
+            Task.title == source_task.title,
+            Task.description == source_task.description,
+            Task.active_weekdays == source_task.active_weekdays,
+            Task.is_active == True,  # noqa: E712
+            Task.status.in_(
+                [
+                    TaskStatusEnum.open,
+                    TaskStatusEnum.rejected,
+                    TaskStatusEnum.submitted,
+                    TaskStatusEnum.missed_submitted,
+                ]
+            ),
+        )
+        .order_by(Task.created_at.desc())
+    )
+    if source_task.special_template_id is None:
+        query = query.filter(Task.special_template_id.is_(None))
+    else:
+        query = query.filter(Task.special_template_id == source_task.special_template_id)
+
+    return query.first()
+
+
 def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int) -> Task | None:
     if source_task.recurrence_type == RecurrenceTypeEnum.none.value:
+        return None
+    if _existing_open_recurring_successor(db, source_task):
         return None
     next_due = _next_due(source_task.due_at, source_task.recurrence_type, source_task.active_weekdays)
     next_task = Task(
@@ -367,7 +444,8 @@ def list_upcoming_task_reminders(
     now = datetime.utcnow()
     window_end = now + timedelta(minutes=window_minutes)
     reminders: list[TaskReminderOut] = []
-    for task in query.all():
+    reminder_tasks = _dedupe_recurring_tasks_for_reminders(query.all())
+    for task in reminder_tasks:
         if not task.due_at:
             continue
         allowed_offsets = sorted(set(task.reminder_offsets_minutes or []))
