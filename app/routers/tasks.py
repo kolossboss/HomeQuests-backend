@@ -343,7 +343,6 @@ def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task |
             Task.recurrence_type == source_task.recurrence_type,
             Task.title == source_task.title,
             Task.description == source_task.description,
-            Task.active_weekdays == source_task.active_weekdays,
             Task.is_active == True,  # noqa: E712
             Task.status.in_(
                 [
@@ -361,7 +360,12 @@ def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task |
     else:
         query = query.filter(Task.special_template_id == source_task.special_template_id)
 
-    return query.first()
+    # active_weekdays liegt als JSON vor; serverseitiger JSON-Vergleich ist je nach DB-Typ
+    # nicht überall stabil. Daher finale Identitätsprüfung in Python.
+    for candidate in query.limit(200).all():
+        if _recurring_task_identity_key(candidate) == key:
+            return candidate
+    return None
 
 
 def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int) -> Task | None:
