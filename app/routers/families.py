@@ -13,6 +13,30 @@ from ..services import emit_live_event
 router = APIRouter(prefix="/families", tags=["families"])
 
 
+def _serialize_family_member(
+    membership: FamilyMembership,
+    user: User,
+    viewer_role: RoleEnum,
+    viewer_user_id: int,
+) -> FamilyMemberOut:
+    email = user.email
+    role = membership.role
+    if viewer_role == RoleEnum.child and user.id != viewer_user_id:
+        email = None
+        role = RoleEnum.child
+
+    return FamilyMemberOut(
+        membership_id=membership.id,
+        family_id=membership.family_id,
+        user_id=user.id,
+        display_name=user.display_name,
+        email=email,
+        is_active=user.is_active,
+        role=role,
+        created_at=membership.created_at,
+    )
+
+
 @router.get("/my", response_model=list[FamilyOut])
 def my_families(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     family_ids = (
@@ -32,7 +56,7 @@ def list_members(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    get_membership_or_403(db, family_id, current_user.id)
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
     rows = (
         db.query(FamilyMembership, User)
         .join(User, User.id == FamilyMembership.user_id)
@@ -41,16 +65,7 @@ def list_members(
         .all()
     )
     return [
-        FamilyMemberOut(
-            membership_id=membership.id,
-            family_id=membership.family_id,
-            user_id=user.id,
-            display_name=user.display_name,
-            email=user.email,
-            is_active=user.is_active,
-            role=membership.role,
-            created_at=membership.created_at,
-        )
+        _serialize_family_member(membership, user, membership_context.role, current_user.id)
         for membership, user in rows
     ]
 
@@ -127,16 +142,7 @@ def create_member(
     db.refresh(new_membership)
     db.refresh(user)
 
-    return FamilyMemberOut(
-        membership_id=new_membership.id,
-        family_id=new_membership.family_id,
-        user_id=user.id,
-        display_name=user.display_name,
-        email=user.email,
-        is_active=user.is_active,
-        role=new_membership.role,
-        created_at=new_membership.created_at,
-    )
+    return _serialize_family_member(new_membership, user, membership_context.role, current_user.id)
 
 
 @router.put("/{family_id}/members/{user_id}", response_model=FamilyMemberOut)
@@ -201,16 +207,7 @@ def update_member(
     db.refresh(membership)
     db.refresh(user)
 
-    return FamilyMemberOut(
-        membership_id=membership.id,
-        family_id=membership.family_id,
-        user_id=user.id,
-        display_name=user.display_name,
-        email=user.email,
-        is_active=user.is_active,
-        role=membership.role,
-        created_at=membership.created_at,
-    )
+    return _serialize_family_member(membership, user, membership_context.role, current_user.id)
 
 
 @router.delete("/{family_id}/members/{user_id}")

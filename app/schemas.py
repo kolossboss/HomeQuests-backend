@@ -51,6 +51,49 @@ class UserOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PushDeviceRegisterRequest(BaseModel):
+    device_token: str = Field(min_length=32, max_length=255)
+    bundle_id: str = Field(min_length=3, max_length=255)
+    push_environment: Literal["development", "production"] = "production"
+    notifications_enabled: bool = True
+    child_new_task: bool = True
+    manager_task_submitted: bool = True
+    manager_reward_requested: bool = True
+    task_due_reminder: bool = True
+
+    @field_validator("device_token", "bundle_id")
+    @classmethod
+    def normalize_push_strings(cls, value: str) -> str:
+        return value.strip()
+
+
+class PushDeviceUnregisterRequest(BaseModel):
+    device_token: str = Field(min_length=32, max_length=255)
+
+    @field_validator("device_token")
+    @classmethod
+    def normalize_device_token(cls, value: str) -> str:
+        return value.strip()
+
+
+class PushDeviceOut(BaseModel):
+    id: int
+    family_id: int
+    user_id: int
+    device_token: str
+    platform: str
+    bundle_id: str
+    push_environment: str
+    notifications_enabled: bool
+    child_new_task: bool
+    manager_task_submitted: bool
+    manager_reward_requested: bool
+    task_due_reminder: bool
+    last_seen_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class FamilyOut(BaseModel):
     id: int
     name: str

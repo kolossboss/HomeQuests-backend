@@ -1,12 +1,15 @@
 import json
+import logging
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .live_bus import live_event_bus
 from .models import LiveUpdateEvent, PointsLedger
 
 MAX_LIVE_EVENTS_PER_FAMILY = 5000
 LIVE_EVENT_TRIM_BATCH_SIZE = 500
+logger = logging.getLogger(__name__)
 
 
 def get_points_balance(db: Session, family_id: int, user_id: int) -> int:
@@ -24,13 +27,25 @@ def emit_live_event(
     event_type: str,
     payload: dict | None = None,
 ) -> None:
-    db.add(
-        LiveUpdateEvent(
-            family_id=family_id,
-            event_type=event_type,
-            payload_json=json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-        )
+    event = LiveUpdateEvent(
+        family_id=family_id,
+        event_type=event_type,
+        payload_json=json.dumps(payload, ensure_ascii=False) if payload is not None else None,
     )
+    db.add(event)
+    db.flush()
+    try:
+        from .push_notifications import dispatch_remote_pushes_for_event
+
+        dispatch_remote_pushes_for_event(
+            db,
+            family_id=family_id,
+            event=event,
+            payload=payload,
+        )
+    except Exception:
+        logger.exception("Remote-Push-Versand fehlgeschlagen")
+    live_event_bus.publish(family_id)
     _trim_live_events(db, family_id)
 
 

@@ -437,7 +437,7 @@ def list_upcoming_task_reminders(
         .filter(
             Task.family_id == family_id,
             Task.is_active == True,  # noqa: E712
-            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.submitted]),
+            Task.status == TaskStatusEnum.open,
             Task.due_at.is_not(None),
         )
         .order_by(Task.due_at.asc())

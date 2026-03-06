@@ -1,12 +1,12 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 
-from ..database import SessionLocal, get_db
+from ..database import SessionLocal
 from ..deps import get_current_user_from_token_value
+from ..live_bus import live_event_bus
 from ..models import LiveUpdateEvent, User
 from ..rbac import get_membership_or_403
 from ..services import parse_live_payload
@@ -61,15 +61,16 @@ async def stream_family_updates(
     fp_token: str | None = Cookie(default=None),
     authorization: str | None = Header(default=None, alias="Authorization"),
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
-    db: Session = Depends(get_db),
 ):
     token, token_source, token_conflict = _extract_bearer_token(authorization, access_token, fp_token)
-    current_user: User = get_current_user_from_token_value(token, db)
-    get_membership_or_403(db, family_id, current_user.id)
+    with SessionLocal() as auth_db:
+        current_user: User = get_current_user_from_token_value(token, auth_db)
+        get_membership_or_403(auth_db, family_id, current_user.id)
     cursor = max(since_id, _parse_last_event_id(last_event_id))
 
     async def event_generator():
         nonlocal cursor
+        signal_version = live_event_bus.current_version(family_id)
         connected_payload = {
             "family_id": family_id,
             "since_id": cursor,
@@ -135,7 +136,12 @@ async def stream_family_updates(
             else:
                 yield ": keep-alive\n\n"
 
-            await asyncio.sleep(1.0)
+            signal_version = await asyncio.to_thread(
+                live_event_bus.wait_for_update,
+                family_id,
+                signal_version,
+                15.0,
+            )
 
     return StreamingResponse(
         event_generator(),

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Family, FamilyMembership, RoleEnum, User
@@ -20,7 +21,7 @@ def _set_auth_cookie(response: Response, token: str) -> None:
         max_age=COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=settings.auth_cookie_secure,
         path="/",
     )
 
