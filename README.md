@@ -24,21 +24,56 @@ HomeQuests ist ein Belohnungssystem fuer Familien:
 - **WebUI**: Browser-Oberflaeche fuer Verwaltung und Nutzung
 - **iOS App**: Mobile Nutzung fuer Eltern und Kinder
 
-## Schnellstart mit Docker Compose
+## Inhaltsverzeichnis
 
-### Voraussetzungen
+Installation:
+1. [Portainer (Empfohlen)](#portainer-empfohlen)
+2. [Docker Compose](#docker-compose)
+3. [Docker Run](#docker-run)
+
+Weitere Punkte:
+1. [Erreichbarkeit](#erreichbarkeit)
+2. [Update auf neue Version](#update-auf-neue-version)
+3. [Wichtiger Hinweis zu Daten](#wichtiger-hinweis-zu-daten)
+4. [APNs Remote Push (optional)](#optional-apns-remote-push-aktivieren)
+
+## Installation
+
+### Portainer (Empfohlen)
+
+1. In Portainer: **Stacks** -> **Add stack**
+2. Stack-Name: `homequests`
+3. Compose-Datei einfuegen (siehe Abschnitt [Docker Compose](#docker-compose))
+4. Unter **Environment variables** setzen:
+   - `POSTGRES_PASSWORD`
+   - `SECRET_KEY`
+   - optional `API_PORT` (Standard `8010`)
+   - optional fuer APNs:
+     - `APNS_ENABLED=true`
+     - `APNS_TEAM_ID`
+     - `APNS_KEY_ID`
+     - `APNS_BUNDLE_ID=swapps.HomeQuests`
+     - `APNS_PRIVATE_KEY_PATH`
+     - `PUSH_WORKER_ENABLED=true`
+   - Details: [APNs Remote Push Setup](docs/apns-remote-push.md)
+5. **Deploy the stack** klicken
+6. Danach WebUI/API ueber `http://SERVER-IP:PORT` aufrufen
+
+### Docker Compose
+
+#### Voraussetzungen
 
 - Docker + Docker Compose
 - Freier Port `8010` (oder eigener Port)
 
-### 1) Projekt holen
+#### 1) Projekt holen
 
 ```bash
 git clone https://github.com/kolossboss/HomeQuests-backend.git
 cd HomeQuests-backend
 ```
 
-### 2) Sicheren Secret Key erzeugen
+#### 2) Sicheren Secret Key erzeugen
 
 ```bash
 openssl rand -base64 48
@@ -46,7 +81,7 @@ openssl rand -base64 48
 
 Den erzeugten Wert aufheben (wird gleich in `.env` verwendet).
 
-### 3) `.env` Datei erstellen
+#### 3) `.env` Datei erstellen
 
 Im Projektordner ausfuehren:
 
@@ -59,7 +94,7 @@ APNS_ENABLED=false
 ENV
 ```
 
-### Optional: APNs Remote Push aktivieren
+#### Optional: APNs Remote Push aktivieren
 
 APNs ist optional. HomeQuests laeuft auch ohne Apple Developer Account.
 
@@ -70,7 +105,7 @@ Die vollstaendige Schritt-fuer-Schritt-Anleitung ist hier:
 
 - [APNs Remote Push Setup](docs/apns-remote-push.md)
 
-### 4) `docker-compose.yml` erstellen (oder vorhandene Datei nutzen)
+#### 4) `docker-compose.yml` erstellen (oder vorhandene Datei nutzen)
 
 Im Projektordner ausfuehren:
 
@@ -120,7 +155,7 @@ volumes:
 YAML
 ```
 
-### 5) Starten
+#### 5) Starten
 
 ```bash
 docker compose up -d
@@ -134,27 +169,7 @@ Wenn `API_PORT=8010` gesetzt ist:
 - API-Doku (Swagger): `http://SERVER-IP:8010/docs`
 - Healthcheck: `http://SERVER-IP:8010/health`
 
-## Portainer Anleitung (Stack)
-
-1. In Portainer: **Stacks** -> **Add stack**
-2. Stack-Name: `homequests`
-3. Obige Compose-Datei einfuergen
-4. Unter **Environment variables** setzen:
-   - `POSTGRES_PASSWORD`
-   - `SECRET_KEY`
-   - optional `API_PORT` (Standard `8010`)
-   - optional fuer APNs:
-     - `APNS_ENABLED=true`
-     - `APNS_TEAM_ID`
-     - `APNS_KEY_ID`
-     - `APNS_BUNDLE_ID=swapps.HomeQuests`
-     - `APNS_PRIVATE_KEY_PATH`
-     - `PUSH_WORKER_ENABLED=true`
-   - Details: [APNs Remote Push Setup](docs/apns-remote-push.md)
-5. **Deploy the stack** klicken
-6. Danach WebUI/API ueber `http://SERVER-IP:PORT` aufrufen
-
-## Nur mit `docker run` starten
+## Docker Run
 
 ### 1) Postgres starten
 
