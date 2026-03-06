@@ -48,6 +48,8 @@ Den erzeugten Wert aufheben (wird gleich in `.env` verwendet).
 
 ### 3) `.env` Datei erstellen
 
+Im Projektordner ausfuehren:
+
 ```bash
 cat > .env <<'ENV'
 POSTGRES_PASSWORD=CHANGE_DB_PASSWORD
@@ -70,7 +72,10 @@ Die vollstaendige Schritt-fuer-Schritt-Anleitung ist hier:
 
 ### 4) `docker-compose.yml` erstellen (oder vorhandene Datei nutzen)
 
-```yaml
+Im Projektordner ausfuehren:
+
+```bash
+cat > docker-compose.yml <<'YAML'
 name: homequests
 
 services:
@@ -112,6 +117,7 @@ services:
 
 volumes:
   homequests_postgres_data:
+YAML
 ```
 
 ### 5) Starten
