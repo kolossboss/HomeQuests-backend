@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
@@ -246,3 +247,40 @@ class LiveUpdateEvent(Base):
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     payload_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class PushDevice(Base):
+    __tablename__ = "push_devices"
+    __table_args__ = (UniqueConstraint("device_token", name="uq_push_device_token"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    device_token: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    platform: Mapped[str] = mapped_column(String(16), default="ios", nullable=False)
+    bundle_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    push_environment: Mapped[str] = mapped_column(String(16), default="production", nullable=False)
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    child_new_task: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    manager_task_submitted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    manager_reward_requested: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    task_due_reminder: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PushDeliveryLog(Base):
+    __tablename__ = "push_delivery_logs"
+    __table_args__ = (UniqueConstraint("device_id", "dedupe_key", name="uq_push_device_dedupe"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    device_id: Mapped[int] = mapped_column(ForeignKey("push_devices.id", ondelete="CASCADE"), index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    apns_id: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(32), default="sent", nullable=False)
+    error_reason: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)

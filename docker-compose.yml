@@ -23,7 +23,21 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-homequests}:${POSTGRES_PASSWORD:-homequests}@${DB_HOST:-db}:${DB_PORT:-5432}/${POSTGRES_DB:-homequests}}
       SECRET_KEY: ${SECRET_KEY:-CHANGE_THIS_SECRET}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-525600}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      PENALTY_WORKER_ENABLED: ${PENALTY_WORKER_ENABLED:-true}
+      PENALTY_WORKER_INTERVAL_SECONDS: ${PENALTY_WORKER_INTERVAL_SECONDS:-60}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      # Optional APNs Remote Push fuer iOS. Standard bleibt aus.
+      # Einrichtung und benoetigte Apple-Keys: siehe README.md in diesem Ordner.
+      APNS_ENABLED: ${APNS_ENABLED:-false}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-swapps.HomeQuests}
+      APNS_PRIVATE_KEY: ${APNS_PRIVATE_KEY:-}
+      APNS_PRIVATE_KEY_PATH: ${APNS_PRIVATE_KEY_PATH:-}
+      PUSH_WORKER_ENABLED: ${PUSH_WORKER_ENABLED:-false}
+      PUSH_WORKER_INTERVAL_SECONDS: ${PUSH_WORKER_INTERVAL_SECONDS:-60}
     depends_on:
       db:
         condition: service_healthy

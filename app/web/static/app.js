@@ -1,5 +1,4 @@
 const state = {
-  token: sessionStorage.getItem("fp_token") || null,
   me: null,
   families: [],
   familyId: null,
@@ -699,7 +698,6 @@ function getOwnBalance() {
 
 async function api(path, { method = "GET", body = null } = {}) {
   const headers = { "Content-Type": "application/json" };
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
 
   const response = await fetch(path, {
     method,
@@ -769,7 +767,7 @@ function buildLiveStreamUrl(familyId) {
 }
 
 function queueLiveRefresh(reason = "live_update") {
-  if (!liveShouldRun || !state.token || !getSelectedFamilyId()) return;
+  if (!liveShouldRun || !state.me || !getSelectedFamilyId()) return;
   if (liveRefreshTimer) return;
   liveRefreshTimer = window.setTimeout(async () => {
     liveRefreshTimer = null;
@@ -794,7 +792,7 @@ function queueLiveRefresh(reason = "live_update") {
 }
 
 function scheduleLiveReconnect(familyId) {
-  if (!liveShouldRun || !state.token || !familyId) return;
+  if (!liveShouldRun || !state.me || !familyId) return;
   clearLiveReconnectTimer();
   const delay = liveReconnectDelayMs;
   liveReconnectTimer = window.setTimeout(() => {
@@ -804,7 +802,7 @@ function scheduleLiveReconnect(familyId) {
 }
 
 function connectLiveUpdates(familyId) {
-  if (!liveShouldRun || !state.token || !familyId) return;
+  if (!liveShouldRun || !state.me || !familyId) return;
   closeLiveSource();
 
   const streamUrl = buildLiveStreamUrl(familyId);
@@ -881,7 +879,7 @@ function connectLiveUpdates(familyId) {
 
 function startLiveUpdates() {
   const familyId = getSelectedFamilyId();
-  if (!state.token || !familyId) return;
+  if (!state.me || !familyId) return;
   if (typeof EventSource === "undefined") {
     log("Live-Updates nicht verfügbar", { reason: "EventSource wird vom Browser nicht unterstützt" });
     return;
@@ -922,7 +920,7 @@ function stopSpecialTaskRefreshTicker() {
 function startSpecialTaskRefreshTicker() {
   stopSpecialTaskRefreshTicker();
   specialTaskRefreshTimer = window.setInterval(() => {
-    if (!state.token || !isChildRole() || !getSelectedFamilyId()) return;
+    if (!state.me || !isChildRole() || !getSelectedFamilyId()) return;
     loadSpecialTasks().catch((error) => log("Sonderaufgaben Auto-Refresh Fehler", { error: error.message }));
   }, 60000);
 }
@@ -2322,9 +2320,7 @@ async function login() {
     return;
   }
 
-  const data = await api("/auth/login", { method: "POST", body: { login: loginValue, password } });
-  state.token = data.access_token;
-  sessionStorage.setItem("fp_token", state.token);
+  await api("/auth/login", { method: "POST", body: { login: loginValue, password } });
   await refreshSession();
 }
 
@@ -2362,13 +2358,11 @@ async function bootstrap() {
     return;
   }
 
-  const data = await api("/auth/bootstrap", {
+  await api("/auth/bootstrap", {
     method: "POST",
     body: { display_name, email: email || null, password, password_confirm },
   });
 
-  state.token = data.access_token;
-  sessionStorage.setItem("fp_token", state.token);
   await refreshSession();
 }
 
@@ -2381,7 +2375,6 @@ async function logout() {
   restoreAllInlineEditorSections();
   stopLiveUpdates({ resetCursor: true });
   stopSpecialTaskRefreshTicker();
-  state.token = null;
   state.me = null;
   state.families = [];
   state.familyId = null;
@@ -2395,7 +2388,6 @@ async function logout() {
   state.specialTaskTemplates = [];
   state.availableSpecialTasks = [];
   state.pointsHistory = [];
-  sessionStorage.removeItem("fp_token");
   initAuthPanel().catch((error) => log("Auth-Ansicht Fehler", { error: error.message }));
 }
 

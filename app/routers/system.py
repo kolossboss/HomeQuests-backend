@@ -285,8 +285,8 @@ def send_system_practical_test_notification(
         reminder_offsets: list[int] = []
         delivery_expectation = "polling_based_local_notification"
         if payload.scenario == "task_due_reminder":
-            due_at = now + timedelta(minutes=1)
-            reminder_offsets = [0]
+            due_at = now + timedelta(minutes=16)
+            reminder_offsets = [15]
             delivery_expectation = "reminder_scheduler_based_local_notification"
 
         if payload.dry_run:
@@ -314,7 +314,7 @@ def send_system_practical_test_notification(
                 title = "[Systemtest] Erinnerung zur Fälligkeit"
                 description = (
                     "Praxis-Test für Erinnerungen zum Fälligkeitszeitpunkt. "
-                    "Die Aufgabe ist in 1 Minute fällig."
+                    "Die Aufgabe ist in 16 Minuten fällig, mit 15 Minuten Vorwarnung."
                 )
             task = create_test_task_for_user(
                 assignee_user_id=recipient_user.id,
