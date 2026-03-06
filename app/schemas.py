@@ -584,7 +584,7 @@ class SystemTestNotificationOut(BaseModel):
     recipient_count: int
     recipient_user_ids: list[int]
     recipient_display_names: list[str]
-    delivery_mode: Literal["live_event"]
+    delivery_mode: str
     event_type: str
     sent_at: str
 
@@ -617,4 +617,4 @@ class SystemPracticalTestOut(BaseModel):
     recipient_user_ids: list[int]
     recipient_display_names: list[str]
     affected_entities: dict[str, object]
-    delivery_expectation: Literal["polling_based_local_notification", "reminder_scheduler_based_local_notification"]
+    delivery_expectation: str

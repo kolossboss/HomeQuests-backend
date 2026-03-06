@@ -154,6 +154,11 @@ def dispatch_remote_pushes_for_event(
 ) -> None:
     plan = _build_push_plan(db, family_id=family_id, event_type=event.event_type, payload=payload or {})
     if plan is None or not plan.recipient_user_ids:
+        logger.info(
+            "APNs: kein Push-Plan fuer Event %s in Familie %s erzeugt",
+            event.event_type,
+            family_id,
+        )
         return
 
     devices = _eligible_devices(
@@ -162,9 +167,23 @@ def dispatch_remote_pushes_for_event(
         user_ids=plan.recipient_user_ids,
         preference_key=plan.preference_key,
     )
+    if not devices:
+        logger.warning(
+            "APNs: keine passenden Geraete fuer Event %s in Familie %s gefunden (recipients=%s, preference=%s)",
+            event.event_type,
+            family_id,
+            plan.recipient_user_ids,
+            plan.preference_key,
+        )
     for device in devices:
         dedupe_key = f"live:{event.id}"
         if _delivery_exists(db, device.id, dedupe_key):
+            logger.info(
+                "APNs: Event %s fuer device_id=%s bereits versendet (dedupe=%s)",
+                event.event_type,
+                device.id,
+                dedupe_key,
+            )
             continue
         sent, apns_id, reason = _apns_client.send_alert(
             device=device,
@@ -184,12 +203,29 @@ def dispatch_remote_pushes_for_event(
             apns_id=apns_id,
             reason=reason,
         )
+        if sent:
+            logger.info(
+                "APNs: Push fuer Event %s an user_id=%s device_id=%s erfolgreich gesendet (apns_id=%s)",
+                event.event_type,
+                device.user_id,
+                device.id,
+                apns_id,
+            )
+        else:
+            logger.warning(
+                "APNs: Push fuer Event %s an user_id=%s device_id=%s fehlgeschlagen (%s)",
+                event.event_type,
+                device.user_id,
+                device.id,
+                reason,
+            )
         if reason in {"Unregistered", "BadDeviceToken", "DeviceTokenNotForTopic"}:
             db.delete(device)
 
 
 def run_push_reminder_sweep_once() -> bool:
     if not settings.apns_enabled:
+        logger.info("APNs: Reminder-Worker uebersprungen, APNS_ENABLED=false")
         return False
 
     now = datetime.utcnow()
@@ -239,6 +275,22 @@ def run_push_reminder_sweep_once() -> bool:
                     apns_id=apns_id,
                     reason=reason,
                 )
+                if sent:
+                    logger.info(
+                        "APNs: Reminder fuer task_id=%s an user_id=%s device_id=%s erfolgreich gesendet (apns_id=%s)",
+                        task.id,
+                        device.user_id,
+                        device.id,
+                        apns_id,
+                    )
+                else:
+                    logger.warning(
+                        "APNs: Reminder fuer task_id=%s an user_id=%s device_id=%s fehlgeschlagen (%s)",
+                        task.id,
+                        device.user_id,
+                        device.id,
+                        reason,
+                    )
                 if reason in {"Unregistered", "BadDeviceToken", "DeviceTokenNotForTopic"}:
                     db.delete(device)
                 changed = True
