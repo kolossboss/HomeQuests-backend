@@ -3266,7 +3266,10 @@ async function sendSystemTestNotification() {
   });
 
   if (resultTarget) {
-    resultTarget.textContent = `Gesendet an ${response.recipient_count} Nutzer: ${response.recipient_display_names.join(", ") || "-"}`;
+    const delivery = response.delivery_mode === "live_event_optional_apns"
+      ? "APNs falls konfiguriert, sonst nur Live-Kanal"
+      : response.delivery_mode;
+    resultTarget.textContent = `Gesendet an ${response.recipient_count} Nutzer: ${response.recipient_display_names.join(", ") || "-"} (${delivery})`;
   }
 }
 
@@ -3306,7 +3309,7 @@ async function sendSystemPracticalTestNotification() {
     const notifyAt = entities.reminder_notify_at || "-";
     const taskInfo = `${taskCount} Test-Aufgabe(n) erzeugt`;
     const reminderInfo = response.scenario === "task_due_reminder" ? `, Reminder: ${notifyAt}` : "";
-    resultTarget.textContent = `Praxis-Test${dryRunLabel} ausgeführt: ${response.scenario}. Empfänger: ${response.recipient_display_names.join(", ") || "-"}, ${taskInfo}${reminderInfo}`;
+    resultTarget.textContent = `Praxis-Test${dryRunLabel} ausgeführt: ${response.scenario}. Empfänger: ${response.recipient_display_names.join(", ") || "-"}, ${taskInfo}${reminderInfo}, Zustellung: ${response.delivery_expectation}`;
   }
 }
 

@@ -82,7 +82,7 @@ def send_system_test_notification(
         recipient_count=len(recipient_user_ids),
         recipient_user_ids=recipient_user_ids,
         recipient_display_names=recipient_display_names,
-        delivery_mode="live_event",
+        delivery_mode="live_event_optional_apns",
         event_type="notification.test",
         sent_at=sent_at,
     )
@@ -214,7 +214,7 @@ def send_system_practical_test_notification(
                     "actor_display_name": actor_user.display_name,
                     "created_at": now.isoformat(),
                 },
-                delivery_expectation="polling_based_local_notification",
+                delivery_expectation="remote_push_or_live_refresh",
             )
 
         task = create_test_task_for_user(
@@ -263,7 +263,7 @@ def send_system_practical_test_notification(
                 "actor_display_name": actor_user.display_name,
                 "created_at": now.isoformat(),
             },
-            delivery_expectation="polling_based_local_notification",
+            delivery_expectation="remote_push_or_live_refresh",
         )
 
     if payload.scenario in {"task_created", "task_due_reminder"}:
@@ -283,11 +283,11 @@ def send_system_practical_test_notification(
 
         due_at = None
         reminder_offsets: list[int] = []
-        delivery_expectation = "polling_based_local_notification"
+        delivery_expectation = "remote_push_or_live_refresh"
         if payload.scenario == "task_due_reminder":
             due_at = now + timedelta(minutes=16)
             reminder_offsets = [15]
-            delivery_expectation = "reminder_scheduler_based_local_notification"
+            delivery_expectation = "remote_push_or_reminder_worker"
 
         if payload.dry_run:
             return SystemPracticalTestOut(

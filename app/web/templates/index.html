@@ -717,7 +717,7 @@
 
           <div class="section-block">
             <h4>Testbenachrichtigung</h4>
-            <p class="muted">Live-Kanal-Test (SSE): Prüft, ob `notification.test` als Live-Event beim Empfänger ankommt.</p>
+            <p class="muted">Prüft den allgemeinen Benachrichtigungspfad. Mit APNs-Konfiguration kommt die Nachricht als echter Apple-Push an, sonst nur im verbundenen Live-Kanal.</p>
             <div class="form-grid compact">
               <label>Titel<input id="system-test-title" type="text" value="Testbenachrichtigung" /></label>
               <label>Nachricht<input id="system-test-message" type="text" placeholder="Nachricht eingeben" /></label>
@@ -731,19 +731,19 @@
               <div id="system-test-recipients" class="weekday-options"></div>
             </div>
             <div class="row-wrap">
-              <button id="system-test-send-btn">Live-Test (SSE)</button>
+              <button id="system-test-send-btn">Testbenachrichtigung senden</button>
             </div>
             <p id="system-test-result" class="muted"></p>
           </div>
 
           <div class="section-block">
             <h4>Praxis-Test</h4>
-            <p class="muted">Produktivfluss-Test: Erzeugt echte Domänenereignisse (`task_submitted`, `task_created`, `task_due_reminder`) für den normalen App-Refresh-/Reminder-Weg.</p>
+            <p class="muted">Produktivfluss-Test: Erzeugt echte Domänenereignisse (`task_submitted`, `task_created`, `task_due_reminder`) und nutzt damit denselben Benachrichtigungspfad wie im Alltag.</p>
             <div class="form-grid compact">
               <label>Szenario
                 <select id="system-practical-scenario">
                   <option value="task_created">Neue Aufgabe für Kinder</option>
-                  <option value="task_due_reminder">Fälligkeits-Erinnerung (in 1 Minute)</option>
+                  <option value="task_due_reminder">Fälligkeits-Erinnerung (in ca. 1 Minute)</option>
                   <option value="task_submitted">Task eingereicht (Eltern/Admin)</option>
                 </select>
               </label>
