@@ -15,6 +15,7 @@ from .config import settings
 from .database import Base, engine
 from .maintenance import penalty_worker, push_worker
 from .migrations import run_migrations
+from .notification_dispatcher import start_remote_dispatcher, stop_remote_dispatcher
 from .routers import auth, events, families, live, points, push, rewards, system, tasks
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,7 @@ def initialize_database() -> None:
 async def lifespan(_: FastAPI):
     initialize_database()
     _warn_about_insecure_defaults()
+    start_remote_dispatcher()
     penalty_task = None
     push_task = None
     if settings.penalty_worker_enabled:
@@ -54,6 +56,7 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
+        stop_remote_dispatcher()
         if penalty_task is not None:
             penalty_task.cancel()
             with suppress(asyncio.CancelledError):

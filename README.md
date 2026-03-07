@@ -90,8 +90,10 @@ Im Projektordner ausfuehren:
 cat > .env <<'ENV'
 POSTGRES_PASSWORD=CHANGE_DB_PASSWORD
 SECRET_KEY=CHANGE_THIS_WITH_OPENSSL_OUTPUT
+SECRET_ENCRYPTION_KEY=
 API_PORT=8010
 APNS_ENABLED=false
+SSE_ALLOW_QUERY_TOKEN=false
 ENV
 ```
 
@@ -249,6 +251,8 @@ HomeQuests kann Benachrichtigungen alternativ auch ueber Home Assistant senden.
 
 Hinweise:
 - Der Token wird im Backend verschluesselt gespeichert.
+- Fuer getrennte Schluessel kannst du `SECRET_ENCRYPTION_KEY` setzen (falls leer, wird `SECRET_KEY` verwendet).
+- `SSE_ALLOW_QUERY_TOKEN=false` ist empfohlen. Dann akzeptiert der Live-Stream keine `?access_token=` URLs, sondern nur Authorization Header/Cookie.
 - Wenn beim Test `401 Unauthorized` kommt, sind URL oder Token in der Regel falsch.
 - In HomeQuests ist immer nur ein Benachrichtigungskanal gleichzeitig aktiv (`SSE`, `APNs` oder `Home Assistant`).
 

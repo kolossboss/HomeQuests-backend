@@ -312,3 +312,18 @@ class PushDeliveryLog(Base):
     status: Mapped[str] = mapped_column(String(32), default="sent", nullable=False)
     error_reason: Mapped[str | None] = mapped_column(Text)
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class HomeAssistantDeliveryLog(Base):
+    __tablename__ = "home_assistant_delivery_logs"
+    __table_args__ = (UniqueConstraint("family_id", "user_id", "notify_service", "dedupe_key", name="uq_ha_delivery_dedupe"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    notify_service: Mapped[str] = mapped_column(String(255), nullable=False)
+    dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="sent", nullable=False)
+    error_reason: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)

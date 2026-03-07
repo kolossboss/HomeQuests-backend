@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -14,14 +14,21 @@ COOKIE_NAME = "fp_token"
 COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 
 
-def _set_auth_cookie(response: Response, token: str) -> None:
+def _request_uses_https(request: Request) -> bool:
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    return request.url.scheme == "https" or forwarded_proto == "https"
+
+
+def _set_auth_cookie(response: Response, token: str, request: Request) -> None:
+    # In HTTPS contexts immer secure setzen; per Setting kann dies global erzwungen werden.
+    cookie_secure = bool(settings.auth_cookie_secure or _request_uses_https(request))
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         max_age=COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=settings.auth_cookie_secure,
+        secure=cookie_secure,
         path="/",
     )
 
@@ -33,7 +40,7 @@ def bootstrap_status(db: Session = Depends(get_db)):
 
 
 @router.post("/bootstrap", response_model=TokenResponse)
-def bootstrap(payload: BootstrapRequest, response: Response, db: Session = Depends(get_db)):
+def bootstrap(payload: BootstrapRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     existing = db.query(User).count()
     if existing > 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
@@ -55,12 +62,12 @@ def bootstrap(payload: BootstrapRequest, response: Response, db: Session = Depen
     db.commit()
 
     token = create_access_token(str(user.id))
-    _set_auth_cookie(response, token)
+    _set_auth_cookie(response, token, request)
     return TokenResponse(access_token=token)
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     identifier = (payload.login or (payload.email or "")).strip()
     if not identifier:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Login fehlt")
@@ -84,7 +91,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falsche Zugangsdaten")
 
     token = create_access_token(str(user.id))
-    _set_auth_cookie(response, token)
+    _set_auth_cookie(response, token, request)
     return TokenResponse(access_token=token)
 
 
