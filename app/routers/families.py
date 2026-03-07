@@ -20,9 +20,21 @@ def _serialize_family_member(
     viewer_user_id: int,
 ) -> FamilyMemberOut:
     email = user.email
+    ha_notify_service = user.ha_notify_service
+    ha_notifications_enabled = bool(user.ha_notifications_enabled)
+    ha_child_new_task = bool(user.ha_child_new_task)
+    ha_manager_task_submitted = bool(user.ha_manager_task_submitted)
+    ha_manager_reward_requested = bool(user.ha_manager_reward_requested)
+    ha_task_due_reminder = bool(user.ha_task_due_reminder)
     role = membership.role
     if viewer_role == RoleEnum.child and user.id != viewer_user_id:
         email = None
+        ha_notify_service = None
+        ha_notifications_enabled = False
+        ha_child_new_task = True
+        ha_manager_task_submitted = True
+        ha_manager_reward_requested = True
+        ha_task_due_reminder = True
         role = RoleEnum.child
 
     return FamilyMemberOut(
@@ -31,6 +43,12 @@ def _serialize_family_member(
         user_id=user.id,
         display_name=user.display_name,
         email=email,
+        ha_notify_service=ha_notify_service,
+        ha_notifications_enabled=ha_notifications_enabled,
+        ha_child_new_task=ha_child_new_task,
+        ha_manager_task_submitted=ha_manager_task_submitted,
+        ha_manager_reward_requested=ha_manager_reward_requested,
+        ha_task_due_reminder=ha_task_due_reminder,
         is_active=user.is_active,
         role=role,
         created_at=membership.created_at,
@@ -105,6 +123,12 @@ def create_member(
         if already_member:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Benutzer ist bereits Mitglied")
         user = existing_user
+        user.ha_notify_service = payload.ha_notify_service
+        user.ha_notifications_enabled = payload.ha_notifications_enabled
+        user.ha_child_new_task = payload.ha_child_new_task
+        user.ha_manager_task_submitted = payload.ha_manager_task_submitted
+        user.ha_manager_reward_requested = payload.ha_manager_reward_requested
+        user.ha_task_due_reminder = payload.ha_task_due_reminder
     else:
         display_name_taken = (
             db.query(User)
@@ -124,6 +148,12 @@ def create_member(
         user = User(
             email=normalized_email,
             display_name=payload.display_name,
+            ha_notify_service=payload.ha_notify_service,
+            ha_notifications_enabled=payload.ha_notifications_enabled,
+            ha_child_new_task=payload.ha_child_new_task,
+            ha_manager_task_submitted=payload.ha_manager_task_submitted,
+            ha_manager_reward_requested=payload.ha_manager_reward_requested,
+            ha_task_due_reminder=payload.ha_task_due_reminder,
             password_hash=hash_password(payload.password),
         )
         db.add(user)
@@ -191,6 +221,17 @@ def update_member(
         )
 
     user.display_name = payload.display_name
+    user.ha_notify_service = payload.ha_notify_service
+    if payload.ha_notifications_enabled is not None:
+        user.ha_notifications_enabled = payload.ha_notifications_enabled
+    if payload.ha_child_new_task is not None:
+        user.ha_child_new_task = payload.ha_child_new_task
+    if payload.ha_manager_task_submitted is not None:
+        user.ha_manager_task_submitted = payload.ha_manager_task_submitted
+    if payload.ha_manager_reward_requested is not None:
+        user.ha_manager_reward_requested = payload.ha_manager_reward_requested
+    if payload.ha_task_due_reminder is not None:
+        user.ha_task_due_reminder = payload.ha_task_due_reminder
     user.is_active = payload.is_active
     if payload.password:
         user.password_hash = hash_password(payload.password)

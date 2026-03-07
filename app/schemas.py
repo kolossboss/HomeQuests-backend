@@ -5,6 +5,7 @@ from pydantic import BaseModel, EmailStr, Field, field_validator, model_validato
 
 from .models import (
     ApprovalDecisionEnum,
+    NotificationChannelEnum,
     RecurrenceTypeEnum,
     RewardContributionStatusEnum,
     RedemptionStatusEnum,
@@ -107,6 +108,12 @@ class FamilyMemberOut(BaseModel):
     user_id: int
     display_name: str
     email: EmailStr | None
+    ha_notify_service: str | None = None
+    ha_notifications_enabled: bool = False
+    ha_child_new_task: bool = True
+    ha_manager_task_submitted: bool = True
+    ha_manager_reward_requested: bool = True
+    ha_task_due_reminder: bool = True
     is_active: bool
     role: RoleEnum
     created_at: datetime
@@ -115,9 +122,23 @@ class FamilyMemberOut(BaseModel):
 class MemberCreate(BaseModel):
     email: EmailStr | None = None
     display_name: str = Field(min_length=2, max_length=120)
+    ha_notify_service: str | None = Field(default=None, max_length=255)
+    ha_notifications_enabled: bool = False
+    ha_child_new_task: bool = True
+    ha_manager_task_submitted: bool = True
+    ha_manager_reward_requested: bool = True
+    ha_task_due_reminder: bool = True
     password: str | None = Field(default=None, min_length=8, max_length=128)
     password_confirm: str | None = Field(default=None, min_length=8, max_length=128)
     role: RoleEnum
+
+    @field_validator("ha_notify_service", mode="before")
+    @classmethod
+    def normalize_ha_notify_service(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
     @model_validator(mode="after")
     def validate_passwords(self):
@@ -128,9 +149,23 @@ class MemberCreate(BaseModel):
 
 class MemberUpdate(BaseModel):
     display_name: str = Field(min_length=2, max_length=120)
+    ha_notify_service: str | None = Field(default=None, max_length=255)
+    ha_notifications_enabled: bool | None = None
+    ha_child_new_task: bool | None = None
+    ha_manager_task_submitted: bool | None = None
+    ha_manager_reward_requested: bool | None = None
+    ha_task_due_reminder: bool | None = None
     role: RoleEnum
     is_active: bool = True
     password: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @field_validator("ha_notify_service", mode="before")
+    @classmethod
+    def normalize_ha_notify_service(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
 
 
 ALLOWED_TASK_REMINDER_MINUTES = {15, 30, 60, 120, 1440, 2880}
@@ -184,6 +219,7 @@ class TaskCreate(BaseModel):
     reminder_offsets_minutes: list[int] = Field(default_factory=list)
     active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
+    always_submittable: bool = False
     penalty_enabled: bool = False
     penalty_points: int = Field(default=0, ge=0, le=9999)
 
@@ -233,6 +269,7 @@ class TaskUpdate(BaseModel):
     reminder_offsets_minutes: list[int] = Field(default_factory=list)
     active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
+    always_submittable: bool = False
     penalty_enabled: bool = False
     penalty_points: int = Field(default=0, ge=0, le=9999)
     is_active: bool = True
@@ -286,6 +323,7 @@ class TaskOut(BaseModel):
     reminder_offsets_minutes: list[int]
     active_weekdays: list[int]
     recurrence_type: RecurrenceTypeEnum
+    always_submittable: bool
     penalty_enabled: bool
     penalty_points: int
     penalty_last_applied_at: datetime | None
@@ -560,6 +598,8 @@ class SystemTestNotificationRequest(BaseModel):
     title: str = Field(min_length=2, max_length=120)
     message: str = Field(min_length=2, max_length=500)
     recipient_user_ids: list[int] | None = None
+    test_channel: Literal["active", "sse", "apns", "home_assistant"] = "active"
+    send_via_home_assistant: bool = False
 
     @field_validator("recipient_user_ids")
     @classmethod
@@ -584,9 +624,71 @@ class SystemTestNotificationOut(BaseModel):
     recipient_count: int
     recipient_user_ids: list[int]
     recipient_display_names: list[str]
+    test_channel: Literal["active", "sse", "apns", "home_assistant"]
     delivery_mode: str
     event_type: str
     sent_at: str
+    home_assistant_delivery: dict[str, object] | None = None
+
+
+class HomeAssistantSettingsUpdateRequest(BaseModel):
+    ha_enabled: bool = False
+    notification_channel: NotificationChannelEnum = NotificationChannelEnum.sse
+    ha_base_url: str | None = Field(default=None, max_length=255)
+    ha_token: str | None = Field(default=None, max_length=4096)
+    verify_ssl: bool = True
+    keep_existing_token: bool = True
+
+    @field_validator("ha_base_url", "ha_token", mode="before")
+    @classmethod
+    def normalize_home_assistant_strings(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class HomeAssistantSettingsOut(BaseModel):
+    ha_enabled: bool
+    notification_channel: NotificationChannelEnum
+    ha_base_url: str | None
+    verify_ssl: bool
+    has_token: bool
+
+
+class HomeAssistantUserConfigUpdateRequest(BaseModel):
+    ha_notify_service: str | None = Field(default=None, max_length=255)
+    ha_notifications_enabled: bool = False
+    ha_child_new_task: bool = True
+    ha_manager_task_submitted: bool = True
+    ha_manager_reward_requested: bool = True
+    ha_task_due_reminder: bool = True
+
+    @field_validator("ha_notify_service", mode="before")
+    @classmethod
+    def normalize_ha_user_notify_service(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class HomeAssistantUserConfigOut(BaseModel):
+    user_id: int
+    display_name: str
+    role: RoleEnum
+    is_active: bool
+    ha_notify_service: str | None
+    ha_notifications_enabled: bool
+    ha_child_new_task: bool
+    ha_manager_task_submitted: bool
+    ha_manager_reward_requested: bool
+    ha_task_due_reminder: bool
+
+
+class HomeAssistantUserTestRequest(BaseModel):
+    title: str = Field(min_length=2, max_length=120, default="Home Assistant Test")
+    message: str = Field(min_length=2, max_length=500, default="Dies ist eine Testnachricht aus HomeQuests.")
 
 
 class SystemPracticalTestRequest(BaseModel):

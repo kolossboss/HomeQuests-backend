@@ -26,7 +26,9 @@ def emit_live_event(
     family_id: int,
     event_type: str,
     payload: dict | None = None,
-) -> None:
+    *,
+    dispatch_notifications: bool = True,
+) -> LiveUpdateEvent:
     event = LiveUpdateEvent(
         family_id=family_id,
         event_type=event_type,
@@ -34,19 +36,21 @@ def emit_live_event(
     )
     db.add(event)
     db.flush()
-    try:
-        from .push_notifications import dispatch_remote_pushes_for_event
+    if dispatch_notifications:
+        try:
+            from .push_notifications import dispatch_remote_pushes_for_event
 
-        dispatch_remote_pushes_for_event(
-            db,
-            family_id=family_id,
-            event=event,
-            payload=payload,
-        )
-    except Exception:
-        logger.exception("Remote-Push-Versand fehlgeschlagen")
+            dispatch_remote_pushes_for_event(
+                db,
+                family_id=family_id,
+                event=event,
+                payload=payload,
+            )
+        except Exception:
+            logger.exception("Remote-Push-Versand fehlgeschlagen")
     live_event_bus.publish(family_id)
     _trim_live_events(db, family_id)
+    return event
 
 
 def _trim_live_events(db: Session, family_id: int) -> None:
