@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 from ..config import settings as app_settings
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import FamilyMembership, HomeAssistantSettings, NotificationChannelEnum, RecurrenceTypeEnum, RoleEnum, Task, TaskStatusEnum, TaskSubmission, User
+from ..models import FamilyMembership, HomeAssistantSettings, NotificationChannelEnum, PushDevice, RecurrenceTypeEnum, RoleEnum, Task, TaskStatusEnum, TaskSubmission, User
 from ..push_notifications import dispatch_home_assistant_notification, dispatch_remote_pushes_for_event
 from ..rbac import get_membership_or_403, require_roles
 from ..schemas import (
@@ -15,6 +16,7 @@ from ..schemas import (
     HomeAssistantSettingsOut,
     HomeAssistantSettingsUpdateRequest,
     HomeAssistantUserTestRequest,
+    NotificationChannelUpdateRequest,
     SystemPracticalTestOut,
     SystemPracticalTestRequest,
     SystemTestNotificationOut,
@@ -62,6 +64,18 @@ def _serialize_home_assistant_user(member: FamilyMembership, user: User) -> Home
         ha_manager_reward_requested=bool(user.ha_manager_reward_requested),
         ha_task_due_reminder=bool(user.ha_task_due_reminder),
     )
+
+
+def _apns_configured() -> bool:
+    if not app_settings.apns_enabled:
+        return False
+    if not app_settings.apns_team_id or not app_settings.apns_key_id:
+        return False
+    if app_settings.apns_private_key and app_settings.apns_private_key.strip():
+        return True
+    if app_settings.apns_private_key_path and Path(app_settings.apns_private_key_path).exists():
+        return True
+    return False
 
 
 @router.get("/families/{family_id}/system/home-assistant-settings", response_model=HomeAssistantSettingsOut)
@@ -144,6 +158,125 @@ def update_home_assistant_settings(
         verify_ssl=bool(settings.verify_ssl),
         has_token=bool(settings.ha_token),
     )
+
+
+@router.get("/families/{family_id}/system/notification-channels-status")
+def get_notification_channels_status(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    settings = (
+        db.query(HomeAssistantSettings)
+        .filter(HomeAssistantSettings.family_id == family_id)
+        .first()
+    )
+    active_channel = NotificationChannelEnum.sse
+    if settings and settings.notification_channel:
+        try:
+            active_channel = NotificationChannelEnum(settings.notification_channel)
+        except ValueError:
+            active_channel = NotificationChannelEnum.sse
+
+    apns_is_configured = _apns_configured()
+    apns_device_count = (
+        db.query(PushDevice.id)
+        .filter(PushDevice.family_id == family_id, PushDevice.notifications_enabled == True)  # noqa: E712
+        .count()
+    )
+    ha_user_count = (
+        db.query(User.id)
+        .join(FamilyMembership, FamilyMembership.user_id == User.id)
+        .filter(
+            FamilyMembership.family_id == family_id,
+            User.is_active == True,  # noqa: E712
+            User.ha_notifications_enabled == True,  # noqa: E712
+            User.ha_notify_service.is_not(None),
+        )
+        .count()
+    )
+    ha_has_url = bool(settings and settings.ha_base_url)
+    ha_has_token = bool(settings and settings.ha_token)
+    ha_enabled = bool(settings and settings.ha_enabled)
+    ha_is_configured = ha_enabled and ha_has_url and ha_has_token and ha_user_count > 0
+
+    return {
+        "active_channel": active_channel.value,
+        "channels": {
+            "apns": {
+                "active": active_channel == NotificationChannelEnum.apns,
+                "configured": apns_is_configured,
+                "device_count": apns_device_count,
+                "status": (
+                    f"APNs konfiguriert, {apns_device_count} Gerät(e) registriert"
+                    if apns_is_configured
+                    else "APNs nicht vollständig konfiguriert (ENV/Keys prüfen)"
+                ),
+            },
+            "home_assistant": {
+                "active": active_channel == NotificationChannelEnum.home_assistant,
+                "configured": ha_is_configured,
+                "ha_enabled": ha_enabled,
+                "has_url": ha_has_url,
+                "has_token": ha_has_token,
+                "configured_user_count": ha_user_count,
+                "status": (
+                    f"HA bereit, {ha_user_count} Nutzer konfiguriert"
+                    if ha_is_configured
+                    else "HA nicht vollständig konfiguriert (URL/Token/Nutzer prüfen)"
+                ),
+            },
+            "sse": {
+                "active": active_channel == NotificationChannelEnum.sse,
+                "configured": True,
+                "status": "SSE-Live-Stream verfügbar",
+            },
+        },
+    }
+
+
+@router.put("/families/{family_id}/system/notification-channel")
+def update_notification_channel(
+    family_id: int,
+    payload: NotificationChannelUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    settings = _get_or_create_home_assistant_settings(db, family_id)
+    if payload.channel == NotificationChannelEnum.apns:
+        if not _apns_configured():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="APNs ist nicht vollständig konfiguriert (APNS_* Einstellungen prüfen)",
+            )
+    elif payload.channel == NotificationChannelEnum.home_assistant:
+        ha_user_count = (
+            db.query(User.id)
+            .join(FamilyMembership, FamilyMembership.user_id == User.id)
+            .filter(
+                FamilyMembership.family_id == family_id,
+                User.is_active == True,  # noqa: E712
+                User.ha_notifications_enabled == True,  # noqa: E712
+                User.ha_notify_service.is_not(None),
+            )
+            .count()
+        )
+        if not settings.ha_enabled or not settings.ha_base_url or not settings.ha_token or ha_user_count <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Home Assistant ist nicht vollständig konfiguriert (URL/Token/Nutzer prüfen)",
+            )
+
+    settings.notification_channel = payload.channel.value
+    settings.updated_by_id = current_user.id
+    db.commit()
+    return {"updated": True, "active_channel": payload.channel.value}
 
 
 @router.get("/families/{family_id}/system/home-assistant-users", response_model=list[HomeAssistantUserConfigOut])

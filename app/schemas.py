@@ -656,6 +656,10 @@ class HomeAssistantSettingsOut(BaseModel):
     has_token: bool
 
 
+class NotificationChannelUpdateRequest(BaseModel):
+    channel: NotificationChannelEnum
+
+
 class HomeAssistantUserConfigUpdateRequest(BaseModel):
     ha_notify_service: str | None = Field(default=None, max_length=255)
     ha_notifications_enabled: bool = False

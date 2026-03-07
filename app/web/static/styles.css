@@ -586,6 +586,52 @@ tr:last-child td {
   margin-bottom: 10px;
 }
 
+.channel-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  background: linear-gradient(160deg, rgba(30, 41, 61, 0.9) 0%, rgba(21, 29, 45, 0.95) 100%);
+}
+
+.channel-row .row-wrap {
+  margin-bottom: 0;
+}
+
+.channel-row-active {
+  border-color: rgba(91, 227, 164, 0.65);
+  box-shadow: 0 0 0 1px rgba(91, 227, 164, 0.25) inset;
+}
+
+[id^="channel-panel-"] {
+  margin-top: -2px;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 12, 20, 0.72);
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+
+.modal-card {
+  width: min(760px, 96vw);
+  max-height: 86vh;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 14px;
+  background: linear-gradient(165deg, rgba(37, 47, 67, 0.98) 0%, rgba(27, 34, 51, 0.98) 100%);
+  box-shadow: 0 24px 48px rgba(4, 8, 14, 0.55);
+}
+
 .task-button-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -798,7 +844,12 @@ pre {
   border: 1px solid rgba(255, 255, 255, 0.12);
   padding: 12px;
   white-space: pre-wrap;
-  min-height: 180px;
+  min-height: 520px;
+  max-height: 76vh;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.42;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .hidden {
@@ -946,6 +997,22 @@ pre {
 
   .row-wrap > button {
     width: 100%;
+  }
+
+  .channel-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .channel-row .row-wrap {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .modal-card {
+    width: min(100%, 100vw);
+    max-height: 90vh;
+    padding: 12px;
   }
 
   .request-card-actions button {
