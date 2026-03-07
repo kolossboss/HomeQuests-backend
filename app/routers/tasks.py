@@ -384,6 +384,7 @@ def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: i
         reminder_offsets_minutes=source_task.reminder_offsets_minutes,
         active_weekdays=source_task.active_weekdays,
         recurrence_type=source_task.recurrence_type,
+        always_submittable=source_task.always_submittable,
         penalty_enabled=source_task.penalty_enabled,
         penalty_points=source_task.penalty_points,
         penalty_last_applied_at=None,
@@ -499,6 +500,7 @@ def create_task(
         reminder_offsets_minutes=payload.reminder_offsets_minutes,
         active_weekdays=payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else [],
         recurrence_type=payload.recurrence_type.value,
+        always_submittable=payload.always_submittable,
         penalty_enabled=payload.penalty_enabled,
         penalty_points=payload.penalty_points if payload.penalty_enabled else 0,
         penalty_last_applied_at=None,
@@ -554,6 +556,7 @@ def update_task(
     task.reminder_offsets_minutes = payload.reminder_offsets_minutes
     task.active_weekdays = payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else []
     task.recurrence_type = payload.recurrence_type.value
+    task.always_submittable = payload.always_submittable
     task.penalty_enabled = payload.penalty_enabled
     task.penalty_points = payload.penalty_points if payload.penalty_enabled else 0
     if not payload.penalty_enabled:
@@ -885,12 +888,12 @@ def submit_task(
     if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe kann aktuell nicht eingereicht werden")
 
-    if task.recurrence_type == RecurrenceTypeEnum.daily.value:
+    if task.recurrence_type == RecurrenceTypeEnum.daily.value and not task.always_submittable:
         allowed_weekdays = set(task.active_weekdays or [])
         if allowed_weekdays and datetime.utcnow().weekday() not in allowed_weekdays:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist heute nicht aktiv")
 
-    if task.due_at:
+    if task.due_at and not task.always_submittable:
         now_utc = datetime.utcnow()
         # Heute fällige Aufgaben dürfen als erledigt gemeldet werden.
         if task.due_at > now_utc and task.due_at.date() != now_utc.date():

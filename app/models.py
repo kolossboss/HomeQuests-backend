@@ -70,6 +70,12 @@ class RewardContributionStatusEnum(str, Enum):
     consumed = "consumed"
 
 
+class NotificationChannelEnum(str, Enum):
+    sse = "sse"
+    apns = "apns"
+    home_assistant = "home_assistant"
+
+
 class Family(Base):
     __tablename__ = "families"
 
@@ -84,6 +90,12 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    ha_notify_service: Mapped[str | None] = mapped_column(String(255))
+    ha_notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ha_child_new_task: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ha_manager_task_submitted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ha_manager_reward_requested: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    ha_task_due_reminder: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
@@ -113,6 +125,7 @@ class Task(Base):
     reminder_offsets_minutes: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
     active_weekdays: Mapped[list[int]] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6], nullable=False)
     recurrence_type: Mapped[str] = mapped_column(String(16), default=RecurrenceTypeEnum.none.value, nullable=False)
+    always_submittable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     penalty_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     penalty_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     penalty_last_applied_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -247,6 +260,21 @@ class LiveUpdateEvent(Base):
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     payload_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class HomeAssistantSettings(Base):
+    __tablename__ = "home_assistant_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True, unique=True)
+    ha_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    notification_channel: Mapped[str] = mapped_column(String(32), default=NotificationChannelEnum.sse.value, nullable=False)
+    ha_base_url: Mapped[str | None] = mapped_column(String(255))
+    ha_token: Mapped[str | None] = mapped_column(Text)
+    verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class PushDevice(Base):

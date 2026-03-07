@@ -180,6 +180,7 @@
             <div class="form-grid">
               <label>Name<input id="member-name" type="text" /></label>
               <label>E-Mail (optional)<input id="member-email" type="email" /></label>
+              <label>HA Notify Service (optional)<input id="member-ha-notify-service" type="text" placeholder="z. B. mobile_app_kira_iphone" /></label>
               <label>Passwort (neu)<input id="member-password" type="password" /></label>
               <label>Passwort wiederholen<input id="member-password-confirm" type="password" /></label>
               <label>Rolle
@@ -198,7 +199,7 @@
             <h4>Mitgliederliste</h4>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>Name</th><th>E-Mail</th><th>Rolle</th><th>Aktiv</th><th id="member-actions-header">Aktionen</th></tr></thead>
+                <thead><tr><th>Name</th><th>E-Mail</th><th>HA Service</th><th>Rolle</th><th>Aktiv</th><th id="member-actions-header">Aktionen</th></tr></thead>
                 <tbody id="members-body"></tbody>
               </table>
             </div>
@@ -221,6 +222,7 @@
                   <option value="false">nein</option>
                 </select>
               </label>
+              <label>HA Notify Service (optional)<input id="member-editor-ha-notify-service" type="text" placeholder="z. B. mobile_app_kira_iphone" /></label>
               <label>Neues Passwort (optional)<input id="member-editor-password" type="password" /></label>
             </div>
             <div class="row-wrap">
@@ -286,6 +288,12 @@
               <label id="task-weekly-time-row" class="hidden">Wöchentliche Uhrzeit<input id="task-weekly-time" type="time" value="09:00" /></label>
               <label id="task-due-row">Fälligkeit<input id="task-due" type="datetime-local" /></label>
               <label>Punkte<input id="task-points" type="number" min="0" value="10" /></label>
+              <label>Immer erledigbar
+                <select id="task-always-submittable">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </label>
               <label id="task-penalty-enabled-row">Minuspunkte bei verpasst
                 <select id="task-penalty-enabled">
                   <option value="false">nein</option>
@@ -421,6 +429,12 @@
                 <select id="task-editor-active">
                   <option value="true">ja</option>
                   <option value="false">nein</option>
+                </select>
+              </label>
+              <label>Immer erledigbar
+                <select id="task-editor-always-submittable">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
                 </select>
               </label>
               <label id="task-editor-penalty-enabled-row">Minuspunkte bei verpasst
@@ -716,11 +730,91 @@
           <p class="muted">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></p>
 
           <div class="section-block">
+            <h4>Home Assistant Integration</h4>
+            <p class="muted">Wähle genau einen aktiven Benachrichtigungskanal pro Haushalt: SSE, APNs oder Home Assistant.</p>
+            <div class="form-grid compact">
+              <label>Aktiver Kanal
+                <select id="notification-channel">
+                  <option value="sse">SSE Stream</option>
+                  <option value="apns">APNs (Apple)</option>
+                  <option value="home_assistant">Home Assistant</option>
+                </select>
+              </label>
+              <label>Aktiv
+                <select id="ha-enabled">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </label>
+              <label>Base URL<input id="ha-base-url" type="text" placeholder="https://homeassistant.local:8123" /></label>
+              <label>Token<input id="ha-token" type="password" placeholder="Long-Lived Access Token (leer = unverändert)" /></label>
+              <label>SSL prüfen
+                <select id="ha-verify-ssl">
+                  <option value="true">ja</option>
+                  <option value="false">nein</option>
+                </select>
+              </label>
+            </div>
+            <div class="row-wrap">
+              <button id="ha-load-btn" type="button">HA Einstellungen laden</button>
+              <button id="ha-save-btn" type="button">HA Einstellungen speichern</button>
+            </div>
+            <p id="ha-settings-result" class="muted"></p>
+          </div>
+
+          <div class="section-block">
+            <h4>Home Assistant Nutzer-Konfiguration</h4>
+            <p class="muted">Pro Nutzer Gerät/Service und erlaubte Ereignisse konfigurieren. Token wird serverseitig verschlüsselt gespeichert.</p>
+            <div class="form-grid compact">
+              <label>Nutzer
+                <select id="ha-user-select"></select>
+              </label>
+              <label>Gerät/Service
+                <input id="ha-user-service" type="text" placeholder="z. B. mobile_app_iphone_von_simon" />
+              </label>
+              <label>Aktiv
+                <select id="ha-user-enabled">
+                  <option value="true">ja</option>
+                  <option value="false">nein</option>
+                </select>
+              </label>
+            </div>
+            <div class="weekday-picker">
+              <span>Erlaubte Ereignisse</span>
+              <div class="weekday-options">
+                <label class="weekday-option"><input id="ha-user-child-new-task" type="checkbox" checked /> Kind: neue Aufgabe</label>
+                <label class="weekday-option"><input id="ha-user-manager-task-submitted" type="checkbox" checked /> Eltern: Aufgabe eingereicht</label>
+                <label class="weekday-option"><input id="ha-user-manager-reward-requested" type="checkbox" checked /> Eltern: Belohnung angefragt</label>
+                <label class="weekday-option"><input id="ha-user-task-due-reminder" type="checkbox" checked /> Erinnerung vor Fälligkeit</label>
+              </div>
+            </div>
+            <div class="row-wrap">
+              <button id="ha-user-save-btn" type="button">Nutzer speichern</button>
+              <button id="ha-user-test-btn" type="button">Test an Nutzer senden</button>
+            </div>
+            <p id="ha-user-config-result" class="muted"></p>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Name</th><th>Rolle</th><th>Service</th><th>Aktiv</th><th>Ereignisse</th><th>Aktionen</th></tr></thead>
+                <tbody id="ha-user-config-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="section-block">
             <h4>Testbenachrichtigung</h4>
-            <p class="muted">Prüft den allgemeinen Benachrichtigungspfad. Mit APNs-Konfiguration kommt die Nachricht als echter Apple-Push an, sonst nur im verbundenen Live-Kanal.</p>
+            <p class="muted">Getrennte Testumgebung für SSE, APNs und Home Assistant.</p>
             <div class="form-grid compact">
               <label>Titel<input id="system-test-title" type="text" value="Testbenachrichtigung" /></label>
               <label>Nachricht<input id="system-test-message" type="text" placeholder="Nachricht eingeben" /></label>
+              <label>Kanal
+                <select id="system-test-channel">
+                  <option value="active">Aktiver Kanal</option>
+                  <option value="sse">SSE Stream</option>
+                  <option value="apns">APNs</option>
+                  <option value="home_assistant">Home Assistant</option>
+                </select>
+              </label>
             </div>
             <div id="system-test-recipient-picker" class="weekday-picker">
               <span>Empfänger</span>
@@ -768,6 +862,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260304d"></script>
+    <script src="/static/app.js?v=20260307c"></script>
   </body>
 </html>

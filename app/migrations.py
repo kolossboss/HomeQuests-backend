@@ -136,8 +136,112 @@ def _run_legacy_schema_bootstrap(engine: Engine) -> None:
             )
 
 
+def _add_task_always_submittable_column(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS always_submittable BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+
+
+def _add_user_ha_notify_service_column(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS ha_notify_service VARCHAR(255) NULL"
+            )
+        )
+
+
+def _create_home_assistant_settings_table(engine: Engine) -> None:
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS home_assistant_settings ("
+                    "id SERIAL PRIMARY KEY, "
+                    "family_id INTEGER NOT NULL UNIQUE REFERENCES families(id) ON DELETE CASCADE, "
+                    "ha_enabled BOOLEAN NOT NULL DEFAULT FALSE, "
+                    "ha_base_url VARCHAR(255) NULL, "
+                    "ha_token TEXT NULL, "
+                    "verify_ssl BOOLEAN NOT NULL DEFAULT TRUE, "
+                    "updated_by_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL, "
+                    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+        else:
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS home_assistant_settings ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "family_id INTEGER NOT NULL UNIQUE, "
+                    "ha_enabled BOOLEAN NOT NULL DEFAULT 0, "
+                    "ha_base_url VARCHAR(255) NULL, "
+                    "ha_token TEXT NULL, "
+                    "verify_ssl BOOLEAN NOT NULL DEFAULT 1, "
+                    "updated_by_id INTEGER NULL, "
+                    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+
+
+def _add_home_assistant_channel_and_user_prefs(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE home_assistant_settings "
+                "ADD COLUMN IF NOT EXISTS notification_channel VARCHAR(32) NOT NULL DEFAULT 'sse'"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS ha_notifications_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS ha_child_new_task BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS ha_manager_task_submitted BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS ha_manager_reward_requested BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE users "
+                "ADD COLUMN IF NOT EXISTS ha_task_due_reminder BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE users SET ha_notifications_enabled = TRUE "
+                "WHERE ha_notify_service IS NOT NULL AND TRIM(ha_notify_service) <> ''"
+            )
+        )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
+    ("20260306_task_always_submittable", _add_task_always_submittable_column),
+    ("20260307_user_ha_notify_service", _add_user_ha_notify_service_column),
+    ("20260307_home_assistant_settings", _create_home_assistant_settings_table),
+    ("20260307_home_assistant_channel_and_user_prefs", _add_home_assistant_channel_and_user_prefs),
 ]
 
 

@@ -3,19 +3,242 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..config import settings as app_settings
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import FamilyMembership, RecurrenceTypeEnum, RoleEnum, Task, TaskStatusEnum, TaskSubmission, User
+from ..models import FamilyMembership, HomeAssistantSettings, NotificationChannelEnum, RecurrenceTypeEnum, RoleEnum, Task, TaskStatusEnum, TaskSubmission, User
+from ..push_notifications import dispatch_home_assistant_notification, dispatch_remote_pushes_for_event
 from ..rbac import get_membership_or_403, require_roles
 from ..schemas import (
+    HomeAssistantUserConfigOut,
+    HomeAssistantUserConfigUpdateRequest,
+    HomeAssistantSettingsOut,
+    HomeAssistantSettingsUpdateRequest,
+    HomeAssistantUserTestRequest,
     SystemPracticalTestOut,
     SystemPracticalTestRequest,
     SystemTestNotificationOut,
     SystemTestNotificationRequest,
 )
+from ..secret_store import encrypt_secret
 from ..services import emit_live_event
 
 router = APIRouter(tags=["system"])
+
+
+def _get_or_create_home_assistant_settings(db: Session, family_id: int) -> HomeAssistantSettings:
+    settings = (
+        db.query(HomeAssistantSettings)
+        .filter(HomeAssistantSettings.family_id == family_id)
+        .first()
+    )
+    if settings:
+        return settings
+
+    settings = HomeAssistantSettings(
+        family_id=family_id,
+        ha_enabled=False,
+        notification_channel=NotificationChannelEnum.sse.value,
+        ha_base_url=None,
+        ha_token=None,
+        verify_ssl=True,
+        updated_by_id=None,
+    )
+    db.add(settings)
+    db.flush()
+    return settings
+
+
+def _serialize_home_assistant_user(member: FamilyMembership, user: User) -> HomeAssistantUserConfigOut:
+    return HomeAssistantUserConfigOut(
+        user_id=user.id,
+        display_name=user.display_name,
+        role=member.role,
+        is_active=user.is_active,
+        ha_notify_service=user.ha_notify_service,
+        ha_notifications_enabled=bool(user.ha_notifications_enabled),
+        ha_child_new_task=bool(user.ha_child_new_task),
+        ha_manager_task_submitted=bool(user.ha_manager_task_submitted),
+        ha_manager_reward_requested=bool(user.ha_manager_reward_requested),
+        ha_task_due_reminder=bool(user.ha_task_due_reminder),
+    )
+
+
+@router.get("/families/{family_id}/system/home-assistant-settings", response_model=HomeAssistantSettingsOut)
+def get_home_assistant_settings(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    settings = (
+        db.query(HomeAssistantSettings)
+        .filter(HomeAssistantSettings.family_id == family_id)
+        .first()
+    )
+    if settings is None:
+        return HomeAssistantSettingsOut(
+            ha_enabled=False,
+            notification_channel=NotificationChannelEnum.sse,
+            ha_base_url=None,
+            verify_ssl=True,
+            has_token=False,
+        )
+
+    return HomeAssistantSettingsOut(
+        ha_enabled=bool(settings.ha_enabled),
+        notification_channel=NotificationChannelEnum(settings.notification_channel or NotificationChannelEnum.sse.value),
+        ha_base_url=settings.ha_base_url,
+        verify_ssl=bool(settings.verify_ssl),
+        has_token=bool(settings.ha_token),
+    )
+
+
+@router.put("/families/{family_id}/system/home-assistant-settings", response_model=HomeAssistantSettingsOut)
+def update_home_assistant_settings(
+    family_id: int,
+    payload: HomeAssistantSettingsUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    settings = _get_or_create_home_assistant_settings(db, family_id)
+    if payload.notification_channel == NotificationChannelEnum.home_assistant:
+        if not payload.ha_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Für den Kanal 'home_assistant' muss HA aktiviert sein",
+            )
+        has_existing_token = bool(settings.ha_token)
+        if not payload.ha_base_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Für den Kanal 'home_assistant' ist eine Base URL erforderlich",
+            )
+        if payload.ha_token is None and payload.keep_existing_token and not has_existing_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Für den Kanal 'home_assistant' ist ein Token erforderlich",
+            )
+
+    settings.ha_enabled = payload.ha_enabled
+    settings.notification_channel = payload.notification_channel.value
+    settings.ha_base_url = payload.ha_base_url
+    settings.verify_ssl = payload.verify_ssl
+    settings.updated_by_id = current_user.id
+    if payload.ha_token is not None:
+        settings.ha_token = encrypt_secret(payload.ha_token)
+    elif not payload.keep_existing_token:
+        settings.ha_token = None
+
+    db.commit()
+    db.refresh(settings)
+    return HomeAssistantSettingsOut(
+        ha_enabled=bool(settings.ha_enabled),
+        notification_channel=NotificationChannelEnum(settings.notification_channel or NotificationChannelEnum.sse.value),
+        ha_base_url=settings.ha_base_url,
+        verify_ssl=bool(settings.verify_ssl),
+        has_token=bool(settings.ha_token),
+    )
+
+
+@router.get("/families/{family_id}/system/home-assistant-users", response_model=list[HomeAssistantUserConfigOut])
+def list_home_assistant_user_configs(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    rows = (
+        db.query(FamilyMembership, User)
+        .join(User, User.id == FamilyMembership.user_id)
+        .filter(FamilyMembership.family_id == family_id)
+        .order_by(User.display_name.asc())
+        .all()
+    )
+    return [_serialize_home_assistant_user(member, user) for member, user in rows]
+
+
+@router.put("/families/{family_id}/system/home-assistant-users/{user_id}", response_model=HomeAssistantUserConfigOut)
+def update_home_assistant_user_config(
+    family_id: int,
+    user_id: int,
+    payload: HomeAssistantUserConfigUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    row = (
+        db.query(FamilyMembership, User)
+        .join(User, User.id == FamilyMembership.user_id)
+        .filter(FamilyMembership.family_id == family_id, FamilyMembership.user_id == user_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mitglied nicht gefunden")
+
+    if payload.ha_notifications_enabled and not payload.ha_notify_service:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Für aktivierte HA-Benachrichtigungen ist ein Notify-Service erforderlich",
+        )
+
+    member, user = row
+    user.ha_notify_service = payload.ha_notify_service
+    user.ha_notifications_enabled = payload.ha_notifications_enabled
+    user.ha_child_new_task = payload.ha_child_new_task
+    user.ha_manager_task_submitted = payload.ha_manager_task_submitted
+    user.ha_manager_reward_requested = payload.ha_manager_reward_requested
+    user.ha_task_due_reminder = payload.ha_task_due_reminder
+
+    db.commit()
+    db.refresh(user)
+    return _serialize_home_assistant_user(member, user)
+
+
+@router.post("/families/{family_id}/system/home-assistant-users/{user_id}/test")
+def send_home_assistant_user_test(
+    family_id: int,
+    user_id: int,
+    payload: HomeAssistantUserTestRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    row = (
+        db.query(FamilyMembership, User)
+        .join(User, User.id == FamilyMembership.user_id)
+        .filter(FamilyMembership.family_id == family_id, FamilyMembership.user_id == user_id, User.is_active == True)  # noqa: E712
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mitglied nicht gefunden")
+
+    _, user = row
+    if not user.ha_notify_service:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="HA Notify-Service fehlt für diesen Nutzer")
+
+    summary = dispatch_home_assistant_notification(
+        db,
+        family_id=family_id,
+        title=payload.title,
+        body=payload.message,
+        recipient_user_ids=[user_id],
+        event_type="notification.test.manual.user",
+        dedupe_key=f"manual-ha-user-test:{family_id}:{user_id}:{datetime.utcnow().isoformat()}",
+    )
+    db.commit()
+    return {"sent": summary.sent_count > 0, "delivery": summary.as_dict()}
 
 
 @router.post("/families/{family_id}/system/test-notification", response_model=SystemTestNotificationOut)
@@ -59,8 +282,28 @@ def send_system_test_notification(
     recipient_user_ids = [entry.id for entry in selected_recipients]
     recipient_display_names = [entry.display_name for entry in selected_recipients]
     sent_at = datetime.utcnow().isoformat()
+    home_assistant_delivery = None
+    settings = (
+        db.query(HomeAssistantSettings)
+        .filter(HomeAssistantSettings.family_id == family_id)
+        .first()
+    )
+    active_channel = NotificationChannelEnum.sse
+    if settings and settings.notification_channel:
+        try:
+            active_channel = NotificationChannelEnum(settings.notification_channel)
+        except ValueError:
+            active_channel = NotificationChannelEnum.sse
 
-    emit_live_event(
+    requested_channel = payload.test_channel
+    if payload.send_via_home_assistant and requested_channel == "active":
+        requested_channel = "home_assistant"
+    if requested_channel == "active":
+        effective_channel = active_channel
+    else:
+        effective_channel = NotificationChannelEnum(requested_channel)
+
+    event = emit_live_event(
         db,
         family_id=family_id,
         event_type="notification.test",
@@ -71,7 +314,39 @@ def send_system_test_notification(
             "recipient_user_ids": recipient_user_ids,
             "sent_at": sent_at,
         },
+        dispatch_notifications=False,
     )
+
+    if effective_channel == NotificationChannelEnum.apns:
+        if not app_settings.apns_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="APNs ist nicht aktiviert oder konfiguriert",
+            )
+        dispatch_remote_pushes_for_event(
+            db,
+            family_id=family_id,
+            event=event,
+            payload={
+                "title": payload.title,
+                "message": payload.message,
+                "recipient_user_ids": recipient_user_ids,
+            },
+            forced_channel=NotificationChannelEnum.apns,
+        )
+    elif effective_channel == NotificationChannelEnum.home_assistant:
+        ha_summary = dispatch_home_assistant_notification(
+            db,
+            family_id=family_id,
+            title=payload.title,
+            body=payload.message,
+            recipient_user_ids=recipient_user_ids,
+            event_type="notification.test.manual",
+            preference_key=None,
+            dedupe_key=f"manual-test:{sent_at}",
+        )
+        home_assistant_delivery = ha_summary.as_dict()
+
     db.commit()
 
     return SystemTestNotificationOut(
@@ -82,9 +357,11 @@ def send_system_test_notification(
         recipient_count=len(recipient_user_ids),
         recipient_user_ids=recipient_user_ids,
         recipient_display_names=recipient_display_names,
-        delivery_mode="live_event_optional_apns",
+        test_channel=requested_channel,
+        delivery_mode=effective_channel.value,
         event_type="notification.test",
         sent_at=sent_at,
+        home_assistant_delivery=home_assistant_delivery,
     )
 
 
