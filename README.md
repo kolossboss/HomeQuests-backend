@@ -36,7 +36,7 @@ Weitere Punkte:
 1. [Erreichbarkeit](#erreichbarkeit)
 2. [Update auf neue Version](#update-auf-neue-version)
 3. [Wichtiger Hinweis zu Daten](#wichtiger-hinweis-zu-daten)
-4. [APNs Remote Push (optional)](#optional-apns-remote-push-aktivieren)
+4. [Benachrichtigungen](#benachrichtigungen)
 
 ## Installation
 
@@ -56,7 +56,7 @@ Weitere Punkte:
      - `APNS_BUNDLE_ID=swapps.HomeQuests`
      - `APNS_PRIVATE_KEY_PATH`
      - `PUSH_WORKER_ENABLED=true`
-   - Details: [APNs Remote Push Setup](docs/apns-remote-push.md)
+   - Details: [Apple Push Notification (APNs) Setup](docs/apns-remote-push.md)
 5. **Deploy the stack** klicken
 6. Danach WebUI/API ueber `http://SERVER-IP:PORT` aufrufen
 
@@ -95,7 +95,7 @@ APNS_ENABLED=false
 ENV
 ```
 
-#### Optional: APNs Remote Push aktivieren
+#### Optional: Apple Push Notification (APNs) aktivieren
 
 APNs ist optional. HomeQuests laeuft auch ohne Apple Developer Account.
 
@@ -104,7 +104,7 @@ APNs ist optional. HomeQuests laeuft auch ohne Apple Developer Account.
 
 Die vollstaendige Schritt-fuer-Schritt-Anleitung ist hier:
 
-- [APNs Remote Push Setup](docs/apns-remote-push.md)
+- [Apple Push Notification (APNs) Setup](docs/apns-remote-push.md)
 
 #### 4) `docker-compose.yml` erstellen (oder vorhandene Datei nutzen)
 
@@ -214,6 +214,43 @@ docker compose up -d --no-deps api
 ### Portainer
 
 - Stack oeffnen -> **Pull and redeploy**
+
+## Benachrichtigungen
+
+### Apple Push Notification (APNs)
+
+- APNs ist optional.
+- Mit APNs bekommst du zuverlaessige iOS-Remote-Pushes ueber Apple.
+- Die vollstaendige Einrichtung (Team ID, Key ID, `.p8`, Bundle ID) steht hier:
+  - [Apple Push Notification (APNs) Setup](docs/apns-remote-push.md)
+
+### Home Assistant Benachrichtigungen
+
+HomeQuests kann Benachrichtigungen alternativ auch ueber Home Assistant senden.
+
+1. Home Assistant URL finden
+   - In Home Assistant: **Einstellungen -> System -> Netzwerk**
+   - Nutze dort die **Lokale URL** oder **Externe URL** als `Base URL`
+   - Beispiel: `http://192.168.1.20:8123` oder `https://ha.deinedomain.tld`
+2. Long-Lived Access Token erstellen
+   - In Home Assistant rechts unten auf dein **Profil** klicken
+   - Abschnitt **Long-Lived Access Tokens** -> **Create Token**
+   - Token einmalig kopieren und sicher ablegen
+3. Notify-Service (Device) finden
+   - In Home Assistant: **Entwicklerwerkzeuge -> Dienste**
+   - Als Dienst z. B. `notify.mobile_app_iphone_von_simon` waehlen
+   - Der Teil hinter `notify.` ist der Service-Name fuer HomeQuests:
+     - Beispiel: `mobile_app_iphone_von_simon`
+4. In HomeQuests konfigurieren
+   - WebUI: **System -> Benachrichtigungskanäle -> Home Assistant -> Bearbeiten**
+   - `Base URL`, `Token`, optional `SSL pruefen` setzen
+   - Pro Nutzer das Geraet/den Notify-Service hinterlegen und speichern
+   - Mit **Testen** pro Nutzer pruefen
+
+Hinweise:
+- Der Token wird im Backend verschluesselt gespeichert.
+- Wenn beim Test `401 Unauthorized` kommt, sind URL oder Token in der Regel falsch.
+- In HomeQuests ist immer nur ein Benachrichtigungskanal gleichzeitig aktiv (`SSE`, `APNs` oder `Home Assistant`).
 
 ## Wichtiger Hinweis zu Daten
 
