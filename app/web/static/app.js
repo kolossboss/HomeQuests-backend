@@ -20,6 +20,7 @@ const state = {
   selectedPointsUserId: null,
   haSettings: null,
   haUserConfigs: [],
+  channelStatus: null,
 };
 
 const authPanel = document.getElementById("auth-panel");
@@ -46,6 +47,7 @@ const TASK_REMINDER_LABELS = {
 const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const DAILY_REMINDER_OFFSETS = [15, 30, 60, 120];
 const ALL_REMINDER_OFFSETS = [15, 30, 60, 120, 1440, 2880];
+const LOG_MAX_LINES = 1200;
 const LIVE_REFRESH_DEBOUNCE_MS = 350;
 const LIVE_RECONNECT_BASE_MS = 1000;
 const LIVE_RECONNECT_MAX_MS = 15000;
@@ -83,7 +85,9 @@ function safeHtmlText(value, fallback = "-") {
 
 function log(message, data = null) {
   const line = `[${new Date().toISOString()}] ${message}`;
-  logOutput.textContent = `${line}\n${data ? JSON.stringify(data, null, 2) : ""}\n\n${logOutput.textContent}`;
+  const nextText = `${line}\n${data ? JSON.stringify(data, null, 2) : ""}\n\n${logOutput.textContent}`;
+  const lines = nextText.split("\n");
+  logOutput.textContent = lines.slice(0, LOG_MAX_LINES).join("\n");
 }
 
 function toggleHidden(id, hidden) {
@@ -970,101 +974,6 @@ function fillSelect(id, options, includeEmpty = false, emptyLabel = "-") {
   }
 }
 
-function getSystemTestRecipientIds() {
-  const container = byId("system-test-recipients");
-  if (!container) return [];
-  return Array.from(container.querySelectorAll("input[type=\"checkbox\"]:checked"))
-    .map((checkbox) => Number(checkbox.value))
-    .filter((value) => Number.isInteger(value) && value > 0);
-}
-
-function setAllSystemTestRecipients(selected) {
-  const container = byId("system-test-recipients");
-  if (!container) return;
-  Array.from(container.querySelectorAll("input[type=\"checkbox\"]")).forEach((checkbox) => {
-    checkbox.checked = Boolean(selected);
-  });
-  setInvalid(byId("system-test-recipient-picker"), false);
-}
-
-function renderSystemTestRecipients() {
-  const container = byId("system-test-recipients");
-  if (!container) return;
-
-  const previousSelection = new Set(getSystemTestRecipientIds());
-  const hadSelection = previousSelection.size > 0;
-  const recipients = state.members
-    .filter((member) => member.is_active)
-    .sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""), "de"));
-
-  container.innerHTML = recipients
-    .map((member) => {
-      const checked = hadSelection ? previousSelection.has(member.user_id) : true;
-      const role = roleLabel(member.role);
-      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${safeHtmlText(member.display_name)} (${safeHtmlText(role)})</label>`;
-    })
-    .join("");
-
-  if (recipients.length > 0 && getSystemPracticalRecipientIds().length === 0) {
-    setAllSystemPracticalRecipients(true);
-  }
-}
-
-function getSystemPracticalRecipientIds() {
-  const container = byId("system-practical-recipients");
-  if (!container) return [];
-  return Array.from(container.querySelectorAll("input[type=\"checkbox\"]:checked"))
-    .map((checkbox) => Number(checkbox.value))
-    .filter((value) => Number.isInteger(value) && value > 0);
-}
-
-function getSystemPracticalScenario() {
-  const select = byId("system-practical-scenario");
-  return select ? select.value : "task_created";
-}
-
-function getSystemPracticalAllowedRoles() {
-  const scenario = getSystemPracticalScenario();
-  if (scenario === "task_submitted") return new Set(["admin", "parent"]);
-  return new Set(["child"]);
-}
-
-function setAllSystemPracticalRecipients(selected) {
-  const container = byId("system-practical-recipients");
-  if (!container) return;
-  Array.from(container.querySelectorAll("input[type=\"checkbox\"]")).forEach((checkbox) => {
-    checkbox.checked = Boolean(selected);
-  });
-  setInvalid(byId("system-practical-recipient-picker"), false);
-}
-
-function renderSystemPracticalRecipients() {
-  const container = byId("system-practical-recipients");
-  if (!container) return;
-  const labelTarget = byId("system-practical-recipient-label");
-
-  const previousSelection = new Set(getSystemPracticalRecipientIds());
-  const hadSelection = previousSelection.size > 0;
-  const allowedRoles = getSystemPracticalAllowedRoles();
-  const scenario = getSystemPracticalScenario();
-  const recipients = state.members
-    .filter((member) => member.is_active && allowedRoles.has(member.role))
-    .sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""), "de"));
-
-  if (labelTarget) {
-    if (scenario === "task_submitted") labelTarget.textContent = "Ziel-Empfänger (Eltern/Admin)";
-    else labelTarget.textContent = "Ziel-Empfänger (Kinder)";
-  }
-
-  container.innerHTML = recipients
-    .map((member) => {
-      const checked = hadSelection ? previousSelection.has(member.user_id) : true;
-      const role = roleLabel(member.role);
-      return `<label class="weekday-option"><input type="checkbox" value="${member.user_id}" ${checked ? "checked" : ""} />${safeHtmlText(member.display_name)} (${safeHtmlText(role)})</label>`;
-    })
-    .join("");
-}
-
 function applyMobileLabelsToTableBody(tbodyId) {
   const tbody = byId(tbodyId);
   if (!tbody) return;
@@ -1412,8 +1321,7 @@ function renderMembers() {
   fillSelect("task-assignee", memberOptions);
   fillSelect("task-editor-assignee", memberOptions);
   fillSelect("event-responsible", memberOptions, true, "keiner");
-  renderSystemTestRecipients();
-  renderSystemPracticalRecipients();
+  populateChannelTestRecipients();
 
   byId("stat-members").textContent = String(state.members.length);
 }
@@ -2231,8 +2139,8 @@ async function loadPointsHistory(userId) {
 function resetHomeAssistantSettingsForm() {
   state.haSettings = null;
   state.haUserConfigs = [];
+  state.channelStatus = null;
   const channelInput = byId("notification-channel");
-  const enabledInput = byId("ha-enabled");
   const baseUrlInput = byId("ha-base-url");
   const tokenInput = byId("ha-token");
   const verifySslInput = byId("ha-verify-ssl");
@@ -2244,9 +2152,11 @@ function resetHomeAssistantSettingsForm() {
   const userBody = byId("ha-user-config-body");
 
   if (channelInput) channelInput.value = "sse";
-  if (enabledInput) enabledInput.value = "false";
   if (baseUrlInput) baseUrlInput.value = "";
-  if (tokenInput) tokenInput.value = "";
+  if (tokenInput) {
+    tokenInput.value = "";
+    tokenInput.dataset.masked = "false";
+  }
   if (verifySslInput) verifySslInput.value = "true";
   if (resultTarget) resultTarget.textContent = "";
   if (userResultTarget) userResultTarget.textContent = "";
@@ -2258,21 +2168,165 @@ function resetHomeAssistantSettingsForm() {
   if (byId("ha-user-manager-reward-requested")) byId("ha-user-manager-reward-requested").checked = true;
   if (byId("ha-user-task-due-reminder")) byId("ha-user-task-due-reminder").checked = true;
   if (userBody) userBody.innerHTML = "";
+  closeAllChannelPanels();
+  closeHomeAssistantUserModal();
 }
 
 function applyHomeAssistantSettingsToForm(settingsPayload) {
   state.haSettings = settingsPayload;
   const channelInput = byId("notification-channel");
-  const enabledInput = byId("ha-enabled");
   const baseUrlInput = byId("ha-base-url");
   const tokenInput = byId("ha-token");
   const verifySslInput = byId("ha-verify-ssl");
 
   if (channelInput) channelInput.value = settingsPayload.notification_channel || "sse";
-  if (enabledInput) enabledInput.value = settingsPayload.ha_enabled ? "true" : "false";
   if (baseUrlInput) baseUrlInput.value = settingsPayload.ha_base_url || "";
-  if (tokenInput) tokenInput.value = "";
+  if (tokenInput) {
+    tokenInput.value = settingsPayload.has_token ? "********" : "";
+    tokenInput.dataset.masked = settingsPayload.has_token ? "true" : "false";
+  }
   if (verifySslInput) verifySslInput.value = settingsPayload.verify_ssl ? "true" : "false";
+}
+
+function closeAllChannelPanels() {
+  ["apns", "home_assistant", "sse"].forEach((channel) => toggleHidden(`channel-panel-${channel}`, true));
+}
+
+function openChannelPanel(channel) {
+  closeAllChannelPanels();
+  toggleHidden(`channel-panel-${channel}`, false);
+}
+
+function closeHomeAssistantUserModal() {
+  toggleHidden("ha-user-editor-modal", true);
+}
+
+function openHomeAssistantUserModal(userId) {
+  const userSelect = byId("ha-user-select");
+  if (userSelect) userSelect.value = String(userId);
+  populateHomeAssistantUserEditor(userId);
+  toggleHidden("ha-user-editor-modal", false);
+}
+
+function toggleChannelPanel(channel) {
+  const panel = byId(`channel-panel-${channel}`);
+  if (!panel) return;
+  const currentlyHidden = panel.classList.contains("hidden");
+  closeAllChannelPanels();
+  if (currentlyHidden) toggleHidden(`channel-panel-${channel}`, false);
+}
+
+function getActiveMembersForTests() {
+  return state.members
+    .filter((entry) => entry.is_active)
+    .sort((a, b) => String(a.display_name || "").localeCompare(String(b.display_name || ""), "de"));
+}
+
+function populateChannelTestRecipients() {
+  const options = getActiveMembersForTests().map((member) => ({
+    value: member.user_id,
+    label: `${member.display_name} (${roleLabel(member.role)})`,
+  }));
+  fillSelect("apns-test-recipient", options, true, "Nutzer auswählen");
+  fillSelect("sse-test-recipient", options, true, "Nutzer auswählen");
+}
+
+function boolLabel(value) {
+  return value ? "ja" : "nein";
+}
+
+function summarizeChannelStatus(channel, channelData, activeChannel) {
+  const active = activeChannel === channel;
+  const configured = channelData.configured !== false;
+  const prefix = `Aktiv: ${boolLabel(active)} • Konfiguriert: ${boolLabel(configured)}`;
+  if (channel === "apns") {
+    return `${prefix} • Geräte: ${Number(channelData.device_count || 0)} • ${channelData.status || "-"}`;
+  }
+  if (channel === "home_assistant") {
+    return `${prefix} • URL: ${boolLabel(Boolean(channelData.has_url))} • Token: ${boolLabel(Boolean(channelData.has_token))} • Nutzer: ${Number(channelData.configured_user_count || 0)} • ${channelData.status || "-"}`;
+  }
+  return `${prefix} • ${channelData.status || "-"}`;
+}
+
+function updateNotificationChannelRows(statusPayload) {
+  state.channelStatus = statusPayload;
+  const activeChannel = statusPayload.active_channel || "sse";
+  const channels = statusPayload.channels || {};
+  const channelInput = byId("notification-channel");
+  if (channelInput) channelInput.value = activeChannel;
+
+  ["apns", "home_assistant", "sse"].forEach((channel) => {
+    const row = byId(`channel-row-${channel}`);
+    const checkbox = byId(`channel-active-${channel}`);
+    const statusLabel = byId(`channel-status-${channel}`);
+    const detailLabel = byId(`${channel === "home_assistant" ? "ha" : channel}-detail-status`);
+    const channelData = channels[channel] || {};
+    const statusText = summarizeChannelStatus(channel, channelData, activeChannel);
+
+    if (checkbox) checkbox.checked = activeChannel === channel;
+    if (statusLabel) statusLabel.textContent = statusText;
+    if (detailLabel) detailLabel.textContent = statusText;
+    if (row) row.classList.toggle("channel-row-active", activeChannel === channel);
+  });
+}
+
+async function loadNotificationChannelStatus() {
+  const familyId = getSelectedFamilyId();
+  if (!familyId || !isManagerRole()) {
+    state.channelStatus = null;
+    return;
+  }
+  const payload = await api(`/families/${familyId}/system/notification-channels-status`);
+  updateNotificationChannelRows(payload);
+}
+
+async function setActiveNotificationChannel(channel) {
+  if (!isManagerRole()) return;
+  const familyId = getSelectedFamilyId();
+  if (!familyId) return;
+
+  await api(`/families/${familyId}/system/notification-channel`, {
+    method: "PUT",
+    body: { channel },
+  });
+  if (state.haSettings) {
+    state.haSettings.notification_channel = channel;
+    const channelInput = byId("notification-channel");
+    if (channelInput) channelInput.value = channel;
+  }
+  await loadNotificationChannelStatus();
+}
+
+async function sendChannelTest(channel, recipientUserId, title, message, resultTargetId) {
+  const familyId = getSelectedFamilyId();
+  const resultTarget = byId(resultTargetId);
+  if (!familyId || !recipientUserId) {
+    if (resultTarget) resultTarget.textContent = "Bitte einen Empfänger auswählen.";
+    return;
+  }
+  const response = await api(`/families/${familyId}/system/test-notification`, {
+    method: "POST",
+    body: {
+      title: title || "Testbenachrichtigung",
+      message: message || "Testnachricht",
+      recipient_user_ids: [Number(recipientUserId)],
+      test_channel: channel,
+    },
+  });
+  let text = `Gesendet an ${response.recipient_display_names.join(", ") || "-"} (Kanal: ${response.delivery_mode})`;
+  if (response.home_assistant_delivery) {
+    const ha = response.home_assistant_delivery;
+    text += ` • HA: ${ha.sent_count || 0} gesendet, ${ha.failed_count || 0} fehlgeschlagen, ${ha.skipped_count || 0} übersprungen`;
+    if (Array.isArray(ha.failures) && ha.failures.length > 0) {
+      text += ` • Fehler: ${ha.failures.join(" | ")}`;
+    }
+  }
+  if (resultTarget) resultTarget.textContent = text;
+  log("Kanal-Test gesendet", {
+    channel,
+    recipient_user_ids: [Number(recipientUserId)],
+    response,
+  });
 }
 
 function haEventsText(entry) {
@@ -2289,8 +2343,10 @@ function populateHomeAssistantUserEditor(userId) {
   const selected = state.haUserConfigs.find((entry) => entry.user_id === numericUserId);
   if (!selected) return;
 
+  const userNameLabel = byId("ha-user-modal-name");
   const userService = byId("ha-user-service");
   const userEnabled = byId("ha-user-enabled");
+  if (userNameLabel) userNameLabel.textContent = `${selected.display_name} (${roleLabel(selected.role)})`;
   if (userService) userService.value = selected.ha_notify_service || "";
   if (userEnabled) userEnabled.value = selected.ha_notifications_enabled ? "true" : "false";
   if (byId("ha-user-child-new-task")) byId("ha-user-child-new-task").checked = Boolean(selected.ha_child_new_task);
@@ -2355,7 +2411,7 @@ async function loadHomeAssistantUserConfigs({ showStatus = false } = {}) {
   }
 }
 
-async function loadHomeAssistantSettings({ showStatus = true } = {}) {
+async function loadHomeAssistantSettings({ showStatus = false } = {}) {
   const familyId = getSelectedFamilyId();
   const resultTarget = byId("ha-settings-result");
   if (!familyId || !isManagerRole()) {
@@ -2367,50 +2423,47 @@ async function loadHomeAssistantSettings({ showStatus = true } = {}) {
   applyHomeAssistantSettingsToForm(settingsPayload);
   if (showStatus && resultTarget) {
     const tokenStatus = settingsPayload.has_token ? "Token ist hinterlegt." : "Kein Token hinterlegt.";
-    resultTarget.textContent = `Einstellungen geladen. ${tokenStatus}`;
+    resultTarget.textContent = `HA-Konfiguration geladen. ${tokenStatus}`;
   }
 }
 
 async function saveHomeAssistantSettings() {
-  if (!isManagerRole()) return;
+  if (!isManagerRole()) return false;
 
-  clearInvalid(["ha-enabled", "ha-base-url", "ha-token"]);
+  clearInvalid(["ha-base-url", "ha-token"]);
   const familyId = getSelectedFamilyId();
-  if (!familyId) return;
+  if (!familyId) return false;
 
   const resultTarget = byId("ha-settings-result");
   const channelInput = byId("notification-channel");
-  const enabledInput = byId("ha-enabled");
   const baseUrlInput = byId("ha-base-url");
   const tokenInput = byId("ha-token");
   const verifySslInput = byId("ha-verify-ssl");
-  if (!channelInput || !enabledInput || !baseUrlInput || !tokenInput || !verifySslInput) return;
+  if (!channelInput || !baseUrlInput || !tokenInput || !verifySslInput) return false;
 
   const notification_channel = channelInput.value || "sse";
-  const ha_enabled = enabledInput.value === "true";
   const ha_base_url = baseUrlInput.value.trim();
   const ha_token = tokenInput.value.trim();
   const verify_ssl = verifySslInput.value === "true";
-  const keep_existing_token = !ha_token;
+  const maskedToken = tokenInput.dataset.masked === "true" && ha_token === "********";
+  const keep_existing_token = maskedToken || !ha_token;
   const hasStoredToken = Boolean(state.haSettings && state.haSettings.has_token);
+  const hasTokenAfterSave = keep_existing_token ? hasStoredToken : Boolean(ha_token);
+  const ha_enabled = Boolean(ha_base_url) && hasTokenAfterSave;
 
   let invalid = false;
   const requiresHaConfig = notification_channel === "home_assistant";
-  if (requiresHaConfig && !ha_enabled) {
-    setInvalid(enabledInput, true);
-    invalid = true;
-  }
-  if ((ha_enabled || requiresHaConfig) && !ha_base_url) {
+  if (requiresHaConfig && !ha_base_url) {
     setInvalid(baseUrlInput, true);
     invalid = true;
   }
-  if ((ha_enabled || requiresHaConfig) && keep_existing_token && !hasStoredToken) {
+  if (requiresHaConfig && keep_existing_token && !hasStoredToken) {
     setInvalid(tokenInput, true);
     invalid = true;
   }
   if (invalid) {
-    if (resultTarget) resultTarget.textContent = "Für Home Assistant sind Aktivierung, Base URL und Token erforderlich.";
-    return;
+    if (resultTarget) resultTarget.textContent = "Für den Kanal Home Assistant sind URL und Token erforderlich.";
+    return false;
   }
 
   const response = await api(`/families/${familyId}/system/home-assistant-settings`, {
@@ -2427,8 +2480,15 @@ async function saveHomeAssistantSettings() {
   applyHomeAssistantSettingsToForm(response);
   if (resultTarget) {
     const tokenStatus = response.has_token ? "Token gespeichert." : "Kein Token gespeichert.";
-    resultTarget.textContent = `HA-Einstellungen gespeichert. ${tokenStatus}`;
+    const configStatus = response.ha_enabled ? "HA aktiviert." : "HA deaktiviert.";
+    resultTarget.textContent = `HA-Einstellungen gespeichert. ${configStatus} ${tokenStatus}`;
   }
+  log("HA-Einstellungen gespeichert", {
+    notification_channel: response.notification_channel,
+    ha_enabled: response.ha_enabled,
+    has_token: response.has_token,
+  });
+  return true;
 }
 
 async function saveHomeAssistantUserConfig() {
@@ -2474,6 +2534,13 @@ async function saveHomeAssistantUserConfig() {
   }
   renderHomeAssistantUserConfigs();
   if (resultTarget) resultTarget.textContent = `Nutzerkonfiguration gespeichert: ${response.display_name}`;
+  log("HA Nutzerkonfiguration gespeichert", {
+    user_id: response.user_id,
+    display_name: response.display_name,
+    service: response.ha_notify_service,
+    notifications_enabled: response.ha_notifications_enabled,
+  });
+  closeHomeAssistantUserModal();
 }
 
 async function sendHomeAssistantUserTest(userIdOverride = null) {
@@ -2482,9 +2549,9 @@ async function sendHomeAssistantUserTest(userIdOverride = null) {
   const familyId = getSelectedFamilyId();
   const resultTarget = byId("ha-user-config-result");
   const userSelect = byId("ha-user-select");
-  if (!familyId || !userSelect) return;
+  if (!familyId) return;
 
-  const userId = userIdOverride ? Number(userIdOverride) : Number(userSelect.value || 0);
+  const userId = userIdOverride ? Number(userIdOverride) : Number(userSelect ? userSelect.value || 0 : 0);
   if (!userId) {
     if (resultTarget) resultTarget.textContent = "Bitte zuerst einen Nutzer auswählen.";
     return;
@@ -2501,6 +2568,11 @@ async function sendHomeAssistantUserTest(userIdOverride = null) {
   if (resultTarget) {
     resultTarget.textContent = `Test gesendet: ${response.sent ? "ja" : "nein"} (gesendet=${delivery.sent_count || 0}, fehlgeschlagen=${delivery.failed_count || 0}, übersprungen=${delivery.skipped_count || 0})`;
   }
+  log("HA Nutzertest", {
+    user_id: userId,
+    sent: response.sent,
+    delivery,
+  });
 }
 
 async function refreshFamilyData() {
@@ -2508,6 +2580,9 @@ async function refreshFamilyData() {
   await loadMembers();
   await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances()]);
   if (isManagerRole()) {
+    await loadNotificationChannelStatus().catch((error) =>
+      log("Kanalstatus laden Fehler", { error: error.message })
+    );
     await loadHomeAssistantSettings({ showStatus: false }).catch((error) =>
       log("HA Einstellungen laden Fehler", { error: error.message })
     );
@@ -3542,99 +3617,6 @@ async function savePointsAdjust() {
   await refreshFamilyData();
 }
 
-async function sendSystemTestNotification() {
-  if (!isManagerRole()) return;
-  clearInvalid(["system-test-title", "system-test-message", "system-test-recipient-picker"]);
-  const titleInput = byId("system-test-title");
-  const messageInput = byId("system-test-message");
-  const channelInput = byId("system-test-channel");
-  const resultTarget = byId("system-test-result");
-  const recipientUserIds = getSystemTestRecipientIds();
-
-  const title = titleInput.value.trim();
-  const message = messageInput.value.trim();
-
-  let invalid = false;
-  if (!title) {
-    setInvalid(titleInput, true);
-    invalid = true;
-  }
-  if (!message) {
-    setInvalid(messageInput, true);
-    invalid = true;
-  }
-  if (recipientUserIds.length === 0) {
-    setInvalid(byId("system-test-recipient-picker"), true);
-    invalid = true;
-  }
-  if (invalid) {
-    if (resultTarget) resultTarget.textContent = "Bitte Titel, Nachricht und mindestens einen Empfänger auswählen.";
-    return;
-  }
-
-  const response = await api(`/families/${getSelectedFamilyId()}/system/test-notification`, {
-    method: "POST",
-    body: {
-      title,
-      message,
-      recipient_user_ids: recipientUserIds,
-      test_channel: channelInput ? channelInput.value : "active",
-    },
-  });
-
-  if (resultTarget) {
-    let text = `Gesendet an ${response.recipient_count} Nutzer: ${response.recipient_display_names.join(", ") || "-"} (Kanal: ${response.delivery_mode})`;
-    if (response.home_assistant_delivery) {
-      const ha = response.home_assistant_delivery;
-      text += ` • HA: ${ha.sent_count || 0} gesendet, ${ha.failed_count || 0} fehlgeschlagen, ${ha.skipped_count || 0} übersprungen`;
-      if (Array.isArray(ha.failures) && ha.failures.length > 0) {
-        text += ` • Fehler: ${ha.failures.join(" | ")}`;
-      }
-    }
-    resultTarget.textContent = text;
-  }
-}
-
-async function sendSystemPracticalTestNotification() {
-  if (!isManagerRole()) return;
-  clearInvalid(["system-practical-recipient-picker"]);
-  const scenarioInput = byId("system-practical-scenario");
-  const dryRunInput = byId("system-practical-dry-run");
-  const resultTarget = byId("system-practical-result");
-  const recipientUserIds = getSystemPracticalRecipientIds();
-
-  if (!scenarioInput) return;
-
-  let invalid = false;
-  if (recipientUserIds.length === 0) {
-    setInvalid(byId("system-practical-recipient-picker"), true);
-    invalid = true;
-  }
-  if (invalid) {
-    if (resultTarget) resultTarget.textContent = "Bitte mindestens einen Empfänger auswählen.";
-    return;
-  }
-
-  const response = await api(`/families/${getSelectedFamilyId()}/system/test-notification/practical`, {
-    method: "POST",
-    body: {
-      scenario: scenarioInput.value,
-      dry_run: dryRunInput ? Boolean(dryRunInput.checked) : false,
-      recipient_user_ids: recipientUserIds,
-    },
-  });
-
-  if (resultTarget) {
-    const entities = response.affected_entities || {};
-    const dryRunLabel = response.dry_run ? " (dry-run)" : "";
-    const taskCount = Array.isArray(entities.task_ids) ? entities.task_ids.length : entities.task_id ? 1 : 0;
-    const notifyAt = entities.reminder_notify_at || "-";
-    const taskInfo = `${taskCount} Test-Aufgabe(n) erzeugt`;
-    const reminderInfo = response.scenario === "task_due_reminder" ? `, Reminder: ${notifyAt}` : "";
-    resultTarget.textContent = `Praxis-Test${dryRunLabel} ausgeführt: ${response.scenario}. Empfänger: ${response.recipient_display_names.join(", ") || "-"}, ${taskInfo}${reminderInfo}, Zustellung: ${response.delivery_expectation}`;
-  }
-}
-
 if (familySelect) {
   familySelect.addEventListener("change", async (event) => {
     stopLiveUpdates();
@@ -3894,9 +3876,7 @@ byId("ha-user-config-body").addEventListener("click", async (event) => {
 
   const action = button.dataset.haUserAction;
   if (action === "edit") {
-    const userSelect = byId("ha-user-select");
-    if (userSelect) userSelect.value = String(userId);
-    populateHomeAssistantUserEditor(userId);
+    openHomeAssistantUserModal(userId);
     return;
   }
   if (action === "test") {
@@ -3986,7 +3966,6 @@ byId("task-editor-due-mode").addEventListener("change", syncTaskEditorTimingUI);
 byId("task-editor-penalty-enabled").addEventListener("change", syncTaskEditorTimingUI);
 byId("special-task-interval").addEventListener("change", syncSpecialTaskCreateTimingUI);
 byId("special-task-editor-interval").addEventListener("change", syncSpecialTaskEditorTimingUI);
-byId("system-practical-scenario").addEventListener("change", renderSystemPracticalRecipients);
 byId("boot-password-visible").addEventListener("change", (event) =>
   setPasswordInputVisibility(["boot-password", "boot-password-confirm"], event.target.checked)
 );
@@ -4016,34 +3995,79 @@ byId("redeem-reward-select").addEventListener("change", () =>
 );
 byId("points-adjust-save-btn").addEventListener("click", () => savePointsAdjust().catch((error) => log("Punkte bearbeiten Fehler", { error: error.message })));
 byId("points-adjust-cancel-btn").addEventListener("click", closePointsAdjust);
-byId("system-test-send-btn").addEventListener("click", () =>
-  sendSystemTestNotification().catch((error) => log("Testbenachrichtigung Fehler", { error: error.message }))
-);
-byId("system-test-select-all-btn").addEventListener("click", () => setAllSystemTestRecipients(true));
-byId("system-test-clear-selection-btn").addEventListener("click", () => setAllSystemTestRecipients(false));
-byId("system-practical-send-btn").addEventListener("click", () =>
-  sendSystemPracticalTestNotification().catch((error) => log("Praxis-Test Fehler", { error: error.message }))
-);
-byId("system-practical-select-all-btn").addEventListener("click", () => setAllSystemPracticalRecipients(true));
-byId("system-practical-clear-selection-btn").addEventListener("click", () => setAllSystemPracticalRecipients(false));
-byId("ha-load-btn").addEventListener("click", () =>
-  Promise.all([
-    loadHomeAssistantSettings({ showStatus: true }),
-    loadHomeAssistantUserConfigs({ showStatus: true }),
-  ]).catch((error) => log("HA Einstellungen laden Fehler", { error: error.message }))
-);
 byId("ha-save-btn").addEventListener("click", () =>
   saveHomeAssistantSettings().catch((error) => log("HA Einstellungen speichern Fehler", { error: error.message }))
 );
-byId("ha-user-select").addEventListener("change", (event) => {
-  populateHomeAssistantUserEditor(Number(event.target.value));
-});
 byId("ha-user-save-btn").addEventListener("click", () =>
   saveHomeAssistantUserConfig().catch((error) => log("HA Nutzer speichern Fehler", { error: error.message }))
 );
-byId("ha-user-test-btn").addEventListener("click", () =>
-  sendHomeAssistantUserTest().catch((error) => log("HA Nutzertest Fehler", { error: error.message }))
+byId("ha-user-modal-cancel-btn").addEventListener("click", closeHomeAssistantUserModal);
+byId("apns-panel-close-btn").addEventListener("click", () => closeAllChannelPanels());
+byId("sse-panel-close-btn").addEventListener("click", () => closeAllChannelPanels());
+byId("ha-panel-close-btn").addEventListener("click", () =>
+  saveHomeAssistantSettings()
+    .then((saved) => {
+      if (saved) closeAllChannelPanels();
+    })
+    .catch((error) => log("HA Einstellungen speichern Fehler", { error: error.message }))
 );
+byId("apns-test-send-btn").addEventListener("click", () =>
+  sendChannelTest(
+    "apns",
+    byId("apns-test-recipient").value,
+    byId("apns-test-title").value,
+    byId("apns-test-message").value,
+    "apns-test-result"
+  ).catch((error) => log("APNs Test Fehler", { error: error.message }))
+);
+byId("sse-test-send-btn").addEventListener("click", () =>
+  sendChannelTest(
+    "sse",
+    byId("sse-test-recipient").value,
+    byId("sse-test-title").value,
+    byId("sse-test-message").value,
+    "sse-test-result"
+  ).catch((error) => log("SSE Test Fehler", { error: error.message }))
+);
+["apns", "home_assistant", "sse"].forEach((channel) => {
+  byId(`channel-edit-${channel}-btn`).addEventListener("click", async () => {
+    try {
+      await loadNotificationChannelStatus();
+      if (channel === "home_assistant") {
+        await Promise.all([loadHomeAssistantSettings(), loadHomeAssistantUserConfigs()]);
+      }
+      toggleChannelPanel(channel);
+    } catch (error) {
+      log("Kanal öffnen Fehler", { channel, error: error.message });
+    }
+  });
+  byId(`channel-active-${channel}`).addEventListener("change", async (event) => {
+    if (!event.target.checked) {
+      event.target.checked = true;
+      return;
+    }
+    try {
+      await setActiveNotificationChannel(channel);
+    } catch (error) {
+      await loadNotificationChannelStatus().catch(() => null);
+      log("Kanal aktivieren Fehler", { channel, error: error.message });
+    }
+  });
+});
+byId("ha-token").addEventListener("focus", () => {
+  const input = byId("ha-token");
+  if (input.dataset.masked === "true" && input.value === "********") {
+    input.value = "";
+    input.dataset.masked = "false";
+  }
+});
+byId("ha-token").addEventListener("blur", () => {
+  const input = byId("ha-token");
+  if (!input.value.trim() && state.haSettings && state.haSettings.has_token) {
+    input.value = "********";
+    input.dataset.masked = "true";
+  }
+});
 byId("redeem-reward-btn").addEventListener("click", () =>
   redeemReward().catch((error) => {
     window.alert(error.message);

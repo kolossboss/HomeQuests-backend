@@ -730,138 +730,142 @@
           <p class="muted">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></p>
 
           <div class="section-block">
-            <h4>Home Assistant Integration</h4>
-            <p class="muted">Wähle genau einen aktiven Benachrichtigungskanal pro Haushalt: SSE, APNs oder Home Assistant.</p>
-            <div class="form-grid compact">
-              <label>Aktiver Kanal
-                <select id="notification-channel">
-                  <option value="sse">SSE Stream</option>
-                  <option value="apns">APNs (Apple)</option>
-                  <option value="home_assistant">Home Assistant</option>
-                </select>
-              </label>
-              <label>Aktiv
-                <select id="ha-enabled">
-                  <option value="false">nein</option>
-                  <option value="true">ja</option>
-                </select>
-              </label>
-              <label>Base URL<input id="ha-base-url" type="text" placeholder="https://homeassistant.local:8123" /></label>
-              <label>Token<input id="ha-token" type="password" placeholder="Long-Lived Access Token (leer = unverändert)" /></label>
-              <label>SSL prüfen
-                <select id="ha-verify-ssl">
-                  <option value="true">ja</option>
-                  <option value="false">nein</option>
-                </select>
-              </label>
-            </div>
-            <div class="row-wrap">
-              <button id="ha-load-btn" type="button">HA Einstellungen laden</button>
-              <button id="ha-save-btn" type="button">HA Einstellungen speichern</button>
-            </div>
-            <p id="ha-settings-result" class="muted"></p>
-          </div>
+            <h4>Benachrichtigungskanäle</h4>
+            <p class="muted">Nur ein Kanal ist gleichzeitig aktiv. SSE für Live-Daten bleibt im Hintergrund bestehen, damit nichts bricht.</p>
 
-          <div class="section-block">
-            <h4>Home Assistant Nutzer-Konfiguration</h4>
-            <p class="muted">Pro Nutzer Gerät/Service und erlaubte Ereignisse konfigurieren. Token wird serverseitig verschlüsselt gespeichert.</p>
-            <div class="form-grid compact">
-              <label>Nutzer
-                <select id="ha-user-select"></select>
-              </label>
-              <label>Gerät/Service
-                <input id="ha-user-service" type="text" placeholder="z. B. mobile_app_iphone_von_simon" />
-              </label>
-              <label>Aktiv
-                <select id="ha-user-enabled">
-                  <option value="true">ja</option>
-                  <option value="false">nein</option>
-                </select>
-              </label>
-            </div>
-            <div class="weekday-picker">
-              <span>Erlaubte Ereignisse</span>
-              <div class="weekday-options">
-                <label class="weekday-option"><input id="ha-user-child-new-task" type="checkbox" checked /> Kind: neue Aufgabe</label>
-                <label class="weekday-option"><input id="ha-user-manager-task-submitted" type="checkbox" checked /> Eltern: Aufgabe eingereicht</label>
-                <label class="weekday-option"><input id="ha-user-manager-reward-requested" type="checkbox" checked /> Eltern: Belohnung angefragt</label>
-                <label class="weekday-option"><input id="ha-user-task-due-reminder" type="checkbox" checked /> Erinnerung vor Fälligkeit</label>
+            <article class="channel-row" id="channel-row-apns">
+              <div>
+                <strong>APNs (Apple)</strong>
+                <p id="channel-status-apns" class="muted">Status wird geladen...</p>
               </div>
-            </div>
-            <div class="row-wrap">
-              <button id="ha-user-save-btn" type="button">Nutzer speichern</button>
-              <button id="ha-user-test-btn" type="button">Test an Nutzer senden</button>
-            </div>
-            <p id="ha-user-config-result" class="muted"></p>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Name</th><th>Rolle</th><th>Service</th><th>Aktiv</th><th>Ereignisse</th><th>Aktionen</th></tr></thead>
-                <tbody id="ha-user-config-body"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="section-block">
-            <h4>Testbenachrichtigung</h4>
-            <p class="muted">Getrennte Testumgebung für SSE, APNs und Home Assistant.</p>
-            <div class="form-grid compact">
-              <label>Titel<input id="system-test-title" type="text" value="Testbenachrichtigung" /></label>
-              <label>Nachricht<input id="system-test-message" type="text" placeholder="Nachricht eingeben" /></label>
-              <label>Kanal
-                <select id="system-test-channel">
-                  <option value="active">Aktiver Kanal</option>
-                  <option value="sse">SSE Stream</option>
-                  <option value="apns">APNs</option>
-                  <option value="home_assistant">Home Assistant</option>
-                </select>
-              </label>
-            </div>
-            <div id="system-test-recipient-picker" class="weekday-picker">
-              <span>Empfänger</span>
               <div class="row-wrap">
-                <button id="system-test-select-all-btn" type="button">Alle auswählen</button>
-                <button id="system-test-clear-selection-btn" type="button">Auswahl leeren</button>
+                <label class="checkbox-line"><input id="channel-active-apns" type="checkbox" /> aktiv</label>
+                <button id="channel-edit-apns-btn" type="button">Bearbeiten</button>
               </div>
-              <div id="system-test-recipients" class="weekday-options"></div>
-            </div>
-            <div class="row-wrap">
-              <button id="system-test-send-btn">Testbenachrichtigung senden</button>
-            </div>
-            <p id="system-test-result" class="muted"></p>
-          </div>
-
-          <div class="section-block">
-            <h4>Praxis-Test</h4>
-            <p class="muted">Produktivfluss-Test: Erzeugt echte Domänenereignisse (`task_submitted`, `task_created`, `task_due_reminder`) und nutzt damit denselben Benachrichtigungspfad wie im Alltag.</p>
-            <div class="form-grid compact">
-              <label>Szenario
-                <select id="system-practical-scenario">
-                  <option value="task_created">Neue Aufgabe für Kinder</option>
-                  <option value="task_due_reminder">Fälligkeits-Erinnerung (in ca. 1 Minute)</option>
-                  <option value="task_submitted">Task eingereicht (Eltern/Admin)</option>
-                </select>
-              </label>
-              <label class="checkbox-line"><input id="system-practical-dry-run" type="checkbox" /> Nur prüfen (dry-run)</label>
-            </div>
-            <div id="system-practical-recipient-picker" class="weekday-picker">
-              <span id="system-practical-recipient-label">Ziel-Empfänger</span>
+            </article>
+            <div id="channel-panel-apns" class="section-block hidden">
+              <p id="apns-detail-status" class="muted">Status wird geladen...</p>
+              <div class="form-grid compact">
+                <label>Testempfänger
+                  <select id="apns-test-recipient"></select>
+                </label>
+                <label>Titel<input id="apns-test-title" type="text" value="APNs Test" /></label>
+                <label>Nachricht<input id="apns-test-message" type="text" value="Testnachricht aus HomeQuests" /></label>
+              </div>
               <div class="row-wrap">
-                <button id="system-practical-select-all-btn" type="button">Alle auswählen</button>
-                <button id="system-practical-clear-selection-btn" type="button">Auswahl leeren</button>
+                <button id="apns-test-send-btn" type="button">Test senden</button>
+                <button id="apns-panel-close-btn" type="button" class="btn-secondary">Schließen</button>
               </div>
-              <div id="system-practical-recipients" class="weekday-options"></div>
+              <p id="apns-test-result" class="muted"></p>
             </div>
-            <div class="row-wrap">
-              <button id="system-practical-send-btn">Praxis-Test (Produktivfluss)</button>
+
+            <article class="channel-row" id="channel-row-home_assistant">
+              <div>
+                <strong>Home Assistant</strong>
+                <p id="channel-status-home_assistant" class="muted">Status wird geladen...</p>
+              </div>
+              <div class="row-wrap">
+                <label class="checkbox-line"><input id="channel-active-home_assistant" type="checkbox" /> aktiv</label>
+                <button id="channel-edit-home_assistant-btn" type="button">Bearbeiten</button>
+              </div>
+            </article>
+            <div id="channel-panel-home_assistant" class="section-block hidden">
+              <div class="form-grid compact">
+                <label>Base URL<input id="ha-base-url" type="text" placeholder="https://homeassistant.local:8123" /></label>
+                <label>Token<input id="ha-token" type="password" placeholder="********" /></label>
+                <label>SSL prüfen
+                  <select id="ha-verify-ssl">
+                    <option value="true">ja</option>
+                    <option value="false">nein</option>
+                  </select>
+                </label>
+              </div>
+              <p id="ha-settings-result" class="muted"></p>
+              <div class="row-wrap">
+                <button id="ha-save-btn" type="button">Speichern</button>
+                <button id="ha-panel-close-btn" type="button" class="btn-secondary">Speichern und schließen</button>
+              </div>
+
+              <h5>HA Nutzer</h5>
+              <p class="muted">Gerät und erlaubte Ereignisse pro Nutzer konfigurieren.</p>
+              <p id="ha-user-config-result" class="muted"></p>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Name</th><th>Rolle</th><th>Service</th><th>Aktiv</th><th>Ereignisse</th><th>Aktionen</th></tr></thead>
+                  <tbody id="ha-user-config-body"></tbody>
+                </table>
+              </div>
             </div>
-            <p id="system-practical-result" class="muted"></p>
+
+            <article class="channel-row" id="channel-row-sse">
+              <div>
+                <strong>SSE (Benachrichtigung)</strong>
+                <p id="channel-status-sse" class="muted">Status wird geladen...</p>
+              </div>
+              <div class="row-wrap">
+                <label class="checkbox-line"><input id="channel-active-sse" type="checkbox" /> aktiv</label>
+                <button id="channel-edit-sse-btn" type="button">Bearbeiten</button>
+              </div>
+            </article>
+            <div id="channel-panel-sse" class="section-block hidden">
+              <p id="sse-detail-status" class="muted">Status wird geladen...</p>
+              <div class="form-grid compact">
+                <label>Testempfänger
+                  <select id="sse-test-recipient"></select>
+                </label>
+                <label>Titel<input id="sse-test-title" type="text" value="SSE Test" /></label>
+                <label>Nachricht<input id="sse-test-message" type="text" value="Testnachricht aus HomeQuests" /></label>
+              </div>
+              <div class="row-wrap">
+                <button id="sse-test-send-btn" type="button">Test senden</button>
+                <button id="sse-panel-close-btn" type="button" class="btn-secondary">Schließen</button>
+              </div>
+              <p id="sse-test-result" class="muted"></p>
+            </div>
           </div>
 
+          <div id="ha-user-editor-modal" class="modal-overlay hidden">
+            <div class="modal-card">
+              <h4>HA Nutzer bearbeiten</h4>
+              <p id="ha-user-modal-name" class="muted"></p>
+              <div class="form-grid compact">
+                <label>Gerät/Service
+                  <input id="ha-user-service" type="text" placeholder="z. B. mobile_app_iphone_von_simon" />
+                </label>
+                <label>Aktiv
+                  <select id="ha-user-enabled">
+                    <option value="true">ja</option>
+                    <option value="false">nein</option>
+                  </select>
+                </label>
+              </div>
+              <div class="weekday-picker">
+                <span>Erlaubte Ereignisse</span>
+                <div class="weekday-options">
+                  <label class="weekday-option"><input id="ha-user-child-new-task" type="checkbox" checked /> Kind: neue Aufgabe</label>
+                  <label class="weekday-option"><input id="ha-user-manager-task-submitted" type="checkbox" checked /> Eltern: Aufgabe eingereicht</label>
+                  <label class="weekday-option"><input id="ha-user-manager-reward-requested" type="checkbox" checked /> Eltern: Belohnung angefragt</label>
+                  <label class="weekday-option"><input id="ha-user-task-due-reminder" type="checkbox" checked /> Erinnerung vor Fälligkeit</label>
+                </div>
+              </div>
+              <div class="row-wrap">
+                <button id="ha-user-save-btn" type="button">Speichern</button>
+                <button id="ha-user-modal-cancel-btn" type="button" class="btn-secondary">Abbrechen</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="hidden">
+            <select id="notification-channel"></select>
+            <select id="ha-user-select"></select>
+          </div>
+
+          <h4>Diagnose</h4>
           <pre id="log-output"></pre>
         </section>
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260307c"></script>
+    <script src="/static/app.js?v=20260307d"></script>
   </body>
 </html>
