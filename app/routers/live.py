@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from ..database import SessionLocal
 from ..deps import get_current_user_from_token_value
 from ..live_bus import live_event_bus
-from ..models import LiveUpdateEvent, User
+from ..models import HomeAssistantSettings, LiveUpdateEvent, NotificationChannelEnum, User
 from ..rbac import get_membership_or_403
 from ..services import parse_live_payload
 
@@ -52,6 +52,20 @@ def _extract_bearer_token(
     )
 
 
+def _active_notification_channel(family_id: int) -> str:
+    with SessionLocal() as db:
+        row = (
+            db.query(HomeAssistantSettings.notification_channel)
+            .filter(HomeAssistantSettings.family_id == family_id)
+            .first()
+        )
+    raw = row[0] if row and row[0] else NotificationChannelEnum.sse.value
+    try:
+        return NotificationChannelEnum(str(raw)).value
+    except ValueError:
+        return NotificationChannelEnum.sse.value
+
+
 @router.get("/families/{family_id}/live/stream")
 async def stream_family_updates(
     family_id: int,
@@ -67,6 +81,7 @@ async def stream_family_updates(
         current_user: User = get_current_user_from_token_value(token, auth_db)
         get_membership_or_403(auth_db, family_id, current_user.id)
     cursor = max(since_id, _parse_last_event_id(last_event_id))
+    active_channel = _active_notification_channel(family_id)
 
     async def event_generator():
         nonlocal cursor
@@ -77,6 +92,7 @@ async def stream_family_updates(
             "user_id": current_user.id,
             "auth_source": token_source,
             "token_conflict": token_conflict,
+            "active_notification_channel": active_channel,
         }
         yield f"event: connected\ndata: {json.dumps(connected_payload, ensure_ascii=False)}\n\n"
 
