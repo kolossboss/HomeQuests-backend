@@ -7,6 +7,7 @@
 </p>
 
 **HomeQuests iOS App:** [HomeQuests im App Store](https://apps.apple.com/de/app/homequests/id6759489304)
+**Home Assistant Integration:** [homequests-backend-ha](https://github.com/kolossboss/homequests-backend-ha)
 
 ## Was ist HomeQuests?
 
