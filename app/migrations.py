@@ -236,12 +236,71 @@ def _add_home_assistant_channel_and_user_prefs(engine: Engine) -> None:
         )
 
 
+def _create_home_assistant_delivery_logs_table(engine: Engine) -> None:
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS home_assistant_delivery_logs ("
+                    "id SERIAL PRIMARY KEY, "
+                    "family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE, "
+                    "user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, "
+                    "notify_service VARCHAR(255) NOT NULL, "
+                    "dedupe_key VARCHAR(255) NOT NULL, "
+                    "event_type VARCHAR(120) NOT NULL, "
+                    "status VARCHAR(32) NOT NULL DEFAULT 'sent', "
+                    "error_reason TEXT NULL, "
+                    "sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ha_delivery_dedupe "
+                    "ON home_assistant_delivery_logs (family_id, user_id, notify_service, dedupe_key)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_ha_delivery_logs_family_user_sent_at "
+                    "ON home_assistant_delivery_logs (family_id, user_id, sent_at)"
+                )
+            )
+        else:
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS home_assistant_delivery_logs ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "family_id INTEGER NOT NULL, "
+                    "user_id INTEGER NOT NULL, "
+                    "notify_service VARCHAR(255) NOT NULL, "
+                    "dedupe_key VARCHAR(255) NOT NULL, "
+                    "event_type VARCHAR(120) NOT NULL, "
+                    "status VARCHAR(32) NOT NULL DEFAULT 'sent', "
+                    "error_reason TEXT NULL, "
+                    "sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_ha_delivery_dedupe "
+                    "ON home_assistant_delivery_logs (family_id, user_id, notify_service, dedupe_key)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_ha_delivery_logs_family_user_sent_at "
+                    "ON home_assistant_delivery_logs (family_id, user_id, sent_at)"
+                )
+            )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
     ("20260307_user_ha_notify_service", _add_user_ha_notify_service_column),
     ("20260307_home_assistant_settings", _create_home_assistant_settings_table),
     ("20260307_home_assistant_channel_and_user_prefs", _add_home_assistant_channel_and_user_prefs),
+    ("20260307_home_assistant_delivery_logs", _create_home_assistant_delivery_logs_table),
 ]
 
 

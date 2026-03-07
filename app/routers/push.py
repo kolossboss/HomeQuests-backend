@@ -23,6 +23,15 @@ def _family_id_for_user(db: Session, user_id: int) -> int:
     return int(membership.family_id)
 
 
+def _mask_device_token(token: str) -> str:
+    normalized = (token or "").strip()
+    if not normalized:
+        return ""
+    if len(normalized) <= 10:
+        return "*" * len(normalized)
+    return f"{normalized[:6]}...{normalized[-4:]}"
+
+
 @router.post("/push/devices/register", response_model=PushDeviceOut)
 def register_push_device(
     payload: PushDeviceRegisterRequest,
@@ -63,7 +72,21 @@ def register_push_device(
 
     db.commit()
     db.refresh(device)
-    return device
+    return PushDeviceOut(
+        id=device.id,
+        family_id=device.family_id,
+        user_id=device.user_id,
+        device_token=_mask_device_token(device.device_token),
+        platform=device.platform,
+        bundle_id=device.bundle_id,
+        push_environment=device.push_environment,
+        notifications_enabled=device.notifications_enabled,
+        child_new_task=device.child_new_task,
+        manager_task_submitted=device.manager_task_submitted,
+        manager_reward_requested=device.manager_reward_requested,
+        task_due_reminder=device.task_due_reminder,
+        last_seen_at=device.last_seen_at,
+    )
 
 
 @router.post("/push/devices/unregister")

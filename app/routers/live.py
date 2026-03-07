@@ -4,6 +4,7 @@ import json
 from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
+from ..config import settings
 from ..database import SessionLocal
 from ..deps import get_current_user_from_token_value
 from ..live_bus import live_event_bus
@@ -43,6 +44,12 @@ def _extract_bearer_token(
         return cookie_value, "auth_cookie", token_conflict
 
     if query_token:
+        if not settings.sse_allow_query_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Query-Token ist deaktiviert. Bitte Authorization Header oder Cookie verwenden.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         return query_token, "access_token_query", False
 
     raise HTTPException(

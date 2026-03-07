@@ -1,50 +1,47 @@
-name: ${COMPOSE_PROJECT_NAME:-homequests}
+name: homequests
 
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-homequests}
-      POSTGRES_USER: ${POSTGRES_USER:-homequests}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-homequests}
+      POSTGRES_DB: homequests
+      POSTGRES_USER: homequests
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - /opt/homequests/postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-homequests} -d ${POSTGRES_DB:-homequests}"]
+      test: ["CMD-SHELL", "pg_isready -U homequests -d homequests"]
       interval: 5s
       timeout: 5s
       retries: 10
 
   api:
-    build:
-      context: .
+    image: ghcr.io/kolossboss/homequests-api:latest
+    pull_policy: always
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://${POSTGRES_USER:-homequests}:${POSTGRES_PASSWORD:-homequests}@${DB_HOST:-db}:${DB_PORT:-5432}/${POSTGRES_DB:-homequests}}
-      SECRET_KEY: ${SECRET_KEY:-CHANGE_THIS_SECRET}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
-      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
-      PENALTY_WORKER_ENABLED: ${PENALTY_WORKER_ENABLED:-true}
-      PENALTY_WORKER_INTERVAL_SECONDS: ${PENALTY_WORKER_INTERVAL_SECONDS:-60}
-      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
-      # Optional APNs Remote Push fuer iOS. Standard bleibt aus.
-      # Einrichtung und benoetigte Apple-Keys: siehe README.md in diesem Ordner.
-      APNS_ENABLED: ${APNS_ENABLED:-false}
-      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
-      APNS_KEY_ID: ${APNS_KEY_ID:-}
-      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-swapps.HomeQuests}
-      APNS_PRIVATE_KEY: ${APNS_PRIVATE_KEY:-}
-      APNS_PRIVATE_KEY_PATH: ${APNS_PRIVATE_KEY_PATH:-}
-      PUSH_WORKER_ENABLED: ${PUSH_WORKER_ENABLED:-false}
-      PUSH_WORKER_INTERVAL_SECONDS: ${PUSH_WORKER_INTERVAL_SECONDS:-60}
+      DATABASE_URL: postgresql+psycopg2://homequests:${POSTGRES_PASSWORD}@db:5432/homequests
+      SECRET_KEY: ${SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: 525600
+      APNS_ENABLED: "false"
+      PUSH_WORKER_ENABLED: "false"
+
+      # Optional: APNs fuer iOS Remote Push
+      # APNS_ENABLED: "true"
+      # APNS_TEAM_ID: "${APNS_TEAM_ID}"
+      # APNS_KEY_ID: "${APNS_KEY_ID}"
+      # APNS_BUNDLE_ID: "swapps.HomeQuests"
+      # APNS_PRIVATE_KEY_PATH: "/run/secrets/AuthKey.p8"
+      # PUSH_WORKER_ENABLED: "true"
+      # PUSH_WORKER_INTERVAL_SECONDS: "60"
+
     depends_on:
       db:
         condition: service_healthy
     ports:
-      - "${API_PORT:-8010}:8000"
+      - "8010:8000"
 
-volumes:
-  postgres_data:
-    external: true
-    name: ${POSTGRES_VOLUME_NAME:-homequests_postgres_data}
+    # Optional: APNs Key ins API-Container-Dateisystem mounten
+    # volumes:
+    #   - /opt/homequests/secrets/AuthKey.p8:/run/secrets/AuthKey.p8:ro

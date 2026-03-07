@@ -81,7 +81,7 @@ class PushDeviceOut(BaseModel):
     id: int
     family_id: int
     user_id: int
-    device_token: str
+    device_token: str = Field(description="Maskierter Device-Token (nicht der vollständige Wert)")
     platform: str
     bundle_id: str
     push_environment: str

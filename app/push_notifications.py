@@ -4,15 +4,19 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 import logging
+import re
+from threading import Lock
 import time
 
 import httpx
 from jose import jwt
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .config import settings
 from .models import (
     FamilyMembership,
+    HomeAssistantDeliveryLog,
     HomeAssistantSettings,
     LiveUpdateEvent,
     NotificationChannelEnum,
@@ -29,8 +33,23 @@ from .secret_store import decrypt_secret, encrypt_secret
 logger = logging.getLogger(__name__)
 _PROVIDER_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
 _PROVIDER_TOKEN_TTL_SECONDS = 45 * 60
-_HA_DEDUPE_CACHE: dict[str, float] = {}
-_HA_DEDUPE_TTL_SECONDS = 6 * 60 * 60
+_MAX_REMINDER_OFFSET_MINUTES = 2880
+_PUSH_LOCK_KEY = 860032
+_fallback_push_lock = Lock()
+
+
+def _sanitize_error_reason(reason: str | None, *, max_len: int = 400) -> str | None:
+    if reason is None:
+        return None
+    sanitized = str(reason).strip().replace("\n", " ")
+    if not sanitized:
+        return None
+    sanitized = re.sub(r"(?i)bearer\s+[a-z0-9\-_=\.]+", "Bearer [REDACTED]", sanitized)
+    sanitized = re.sub(r"(?i)(token=)[^\s&]+", r"\1[REDACTED]", sanitized)
+    sanitized = re.sub(r"(?i)(authorization:)[^\s]+", r"\1[REDACTED]", sanitized)
+    if len(sanitized) > max_len:
+        return f"{sanitized[:max_len]}..."
+    return sanitized
 
 
 @dataclass
@@ -68,6 +87,14 @@ class HomeAssistantRuntimeConfig:
     base_url: str
     token: str
     verify_ssl: bool
+
+
+@dataclass
+class NotificationDispatchSummary:
+    channel: NotificationChannelEnum
+    sent_count: int = 0
+    failed_count: int = 0
+    skipped_count: int = 0
 
 
 class APNsConfigurationError(RuntimeError):
@@ -127,7 +154,7 @@ class APNsClient:
                 response = client.post(url, headers=headers, json=payload)
         except Exception as exc:
             logger.exception("APNs-Versand fehlgeschlagen")
-            return False, None, str(exc)
+            return False, None, _sanitize_error_reason(str(exc))
 
         apns_id = response.headers.get("apns-id")
         if response.status_code == 200:
@@ -140,7 +167,7 @@ class APNsClient:
                 reason = data.get("reason")
         except Exception:
             reason = response.text or None
-        return False, apns_id, reason or f"HTTP {response.status_code}"
+        return False, apns_id, _sanitize_error_reason(reason or f"HTTP {response.status_code}")
 
     def _provider_token(self) -> str:
         cache_key = f"{settings.apns_team_id}:{settings.apns_key_id}"
@@ -219,12 +246,12 @@ class HomeAssistantClient:
                 response = client.post(url, headers=headers, json=payload)
         except Exception as exc:
             logger.exception("Home Assistant Versand fehlgeschlagen")
-            return False, str(exc)
+            return False, _sanitize_error_reason(str(exc))
 
         if 200 <= response.status_code < 300:
             return True, None
 
-        detail = response.text.strip() or f"HTTP {response.status_code}"
+        detail = _sanitize_error_reason(response.text.strip() or f"HTTP {response.status_code}")
         return False, detail
 
 
@@ -238,20 +265,22 @@ def dispatch_remote_pushes_for_event(
     event: LiveUpdateEvent,
     payload: dict | None = None,
     forced_channel: NotificationChannelEnum | None = None,
-) -> None:
+) -> NotificationDispatchSummary:
     plan = _build_push_plan(db, family_id=family_id, event_type=event.event_type, payload=payload or {})
+    channel = forced_channel or _notification_channel_for_family(db, family_id)
+    summary = NotificationDispatchSummary(channel=channel)
     if plan is None or not plan.recipient_user_ids:
         logger.info(
             "Push: kein Push-Plan fuer Event %s in Familie %s erzeugt",
             event.event_type,
             family_id,
         )
-        return
+        return summary
 
-    channel = forced_channel or _notification_channel_for_family(db, family_id)
     if channel == NotificationChannelEnum.sse:
         logger.info("Push: Kanal fuer Familie %s ist SSE, kein Remote-Versand fuer %s", family_id, event.event_type)
-        return
+        summary.skipped_count = len(plan.recipient_user_ids)
+        return summary
 
     if channel == NotificationChannelEnum.apns and settings.apns_enabled:
         devices = _eligible_devices(
@@ -268,6 +297,7 @@ def dispatch_remote_pushes_for_event(
                 plan.recipient_user_ids,
                 plan.preference_key,
             )
+            summary.skipped_count += len(plan.recipient_user_ids)
         for device in devices:
             dedupe_key = f"live:{event.id}"
             if _delivery_exists(db, device.id, dedupe_key):
@@ -277,6 +307,7 @@ def dispatch_remote_pushes_for_event(
                     device.id,
                     dedupe_key,
                 )
+                summary.skipped_count += 1
                 continue
             sent, apns_id, reason = _apns_client.send_alert(
                 device=device,
@@ -297,6 +328,7 @@ def dispatch_remote_pushes_for_event(
                 reason=reason,
             )
             if sent:
+                summary.sent_count += 1
                 logger.info(
                     "APNs: Push fuer Event %s an user_id=%s device_id=%s erfolgreich gesendet (apns_id=%s)",
                     event.event_type,
@@ -305,17 +337,19 @@ def dispatch_remote_pushes_for_event(
                     apns_id,
                 )
             else:
+                summary.failed_count += 1
                 logger.warning(
                     "APNs: Push fuer Event %s an user_id=%s device_id=%s fehlgeschlagen (%s)",
                     event.event_type,
                     device.user_id,
                     device.id,
-                    reason,
+                    _sanitize_error_reason(reason),
                 )
             if reason in {"Unregistered", "BadDeviceToken", "DeviceTokenNotForTopic"}:
                 db.delete(device)
     elif channel == NotificationChannelEnum.apns:
         logger.warning("APNs als aktiver Kanal gewählt, aber APNs ist nicht konfiguriert.")
+        summary.failed_count += len(plan.recipient_user_ids)
 
     if channel == NotificationChannelEnum.home_assistant:
         ha_summary = dispatch_home_assistant_notification(
@@ -328,6 +362,9 @@ def dispatch_remote_pushes_for_event(
             preference_key=plan.preference_key,
             dedupe_key=f"event:{event.id}",
         )
+        summary.sent_count += ha_summary.sent_count
+        summary.failed_count += ha_summary.failed_count
+        summary.skipped_count += ha_summary.skipped_count
         if ha_summary.failed_count:
             logger.warning(
                 "HA: %s Fehler bei Event %s (family=%s): %s",
@@ -336,6 +373,7 @@ def dispatch_remote_pushes_for_event(
                 family_id,
                 ha_summary.failures or [],
             )
+    return summary
 
 
 def dispatch_home_assistant_notification(
@@ -384,7 +422,13 @@ def dispatch_home_assistant_notification(
             continue
 
         per_user_dedupe = f"{dedupe_key}:{user_id}:{notify_service}"
-        if _ha_recently_sent(per_user_dedupe):
+        if _ha_delivery_exists(
+            db,
+            family_id=family_id,
+            user_id=user_id,
+            notify_service=notify_service,
+            dedupe_key=per_user_dedupe,
+        ):
             summary.skipped_count += 1
             continue
 
@@ -400,9 +444,29 @@ def dispatch_home_assistant_notification(
         )
         if sent:
             summary.sent_count += 1
-            _remember_ha_dedupe(per_user_dedupe)
+            _record_ha_delivery(
+                db,
+                family_id=family_id,
+                user_id=user_id,
+                notify_service=notify_service,
+                dedupe_key=per_user_dedupe,
+                event_type=event_type,
+                sent=True,
+                reason=None,
+            )
         else:
-            summary.add_failure(f"user_id={user_id}: {reason or 'unbekannter Fehler'}")
+            sanitized_reason = _sanitize_error_reason(reason) or "unbekannter Fehler"
+            summary.add_failure(f"user_id={user_id}: {sanitized_reason}")
+            _record_ha_delivery(
+                db,
+                family_id=family_id,
+                user_id=user_id,
+                notify_service=notify_service,
+                dedupe_key=per_user_dedupe,
+                event_type=event_type,
+                sent=False,
+                reason=sanitized_reason,
+            )
     return summary
 
 
@@ -476,150 +540,213 @@ def has_any_enabled_home_assistant_config(db: Session) -> bool:
     return row is not None
 
 
-def _ha_recently_sent(dedupe_key: str) -> bool:
-    now = time.time()
-    sent_at = _HA_DEDUPE_CACHE.get(dedupe_key)
-    if sent_at is None:
-        return False
-    if now - sent_at > _HA_DEDUPE_TTL_SECONDS:
-        _HA_DEDUPE_CACHE.pop(dedupe_key, None)
-        return False
-    return True
+def _ha_delivery_exists(
+    db: Session,
+    *,
+    family_id: int,
+    user_id: int,
+    notify_service: str,
+    dedupe_key: str,
+) -> bool:
+    return (
+        db.query(HomeAssistantDeliveryLog.id)
+        .filter(
+            HomeAssistantDeliveryLog.family_id == family_id,
+            HomeAssistantDeliveryLog.user_id == user_id,
+            HomeAssistantDeliveryLog.notify_service == notify_service,
+            HomeAssistantDeliveryLog.dedupe_key == dedupe_key,
+            HomeAssistantDeliveryLog.status == "sent",
+        )
+        .first()
+        is not None
+    )
 
 
-def _remember_ha_dedupe(dedupe_key: str) -> None:
-    now = time.time()
-    _HA_DEDUPE_CACHE[dedupe_key] = now
-    stale_before = now - _HA_DEDUPE_TTL_SECONDS
-    stale_keys = [key for key, sent_at in _HA_DEDUPE_CACHE.items() if sent_at < stale_before]
-    for key in stale_keys:
-        _HA_DEDUPE_CACHE.pop(key, None)
+def _record_ha_delivery(
+    db: Session,
+    *,
+    family_id: int,
+    user_id: int,
+    notify_service: str,
+    dedupe_key: str,
+    event_type: str,
+    sent: bool,
+    reason: str | None,
+) -> None:
+    sanitized_reason = _sanitize_error_reason(reason)
+    params = {
+        "family_id": family_id,
+        "user_id": user_id,
+        "notify_service": notify_service,
+        "dedupe_key": dedupe_key,
+        "event_type": event_type,
+        "status": "sent" if sent else "failed",
+        "error_reason": sanitized_reason,
+    }
+    db.execute(
+        text(
+            "INSERT INTO home_assistant_delivery_logs "
+            "(family_id, user_id, notify_service, dedupe_key, event_type, status, error_reason) "
+            "VALUES (:family_id, :user_id, :notify_service, :dedupe_key, :event_type, :status, :error_reason) "
+            "ON CONFLICT (family_id, user_id, notify_service, dedupe_key) DO UPDATE SET "
+            "status = EXCLUDED.status, "
+            "event_type = EXCLUDED.event_type, "
+            "error_reason = EXCLUDED.error_reason, "
+            "sent_at = CURRENT_TIMESTAMP"
+        ),
+        params,
+    )
+
+
+def _acquire_push_lock(db: Session) -> bool:
+    if engine.dialect.name == "postgresql":
+        return bool(db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": _PUSH_LOCK_KEY}).scalar())
+    return _fallback_push_lock.acquire(blocking=False)
+
+
+def _release_push_lock(db: Session) -> None:
+    if engine.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _PUSH_LOCK_KEY})
+        return
+    if _fallback_push_lock.locked():
+        _fallback_push_lock.release()
 
 
 def run_push_reminder_sweep_once() -> bool:
     now = datetime.utcnow()
     with SessionLocal() as db:  # type: ignore[name-defined]
-        if not settings.apns_enabled and not has_any_enabled_home_assistant_config(db):
-            logger.info("Push: Reminder-Worker uebersprungen, weder APNs noch Home Assistant aktiv")
+        if not _acquire_push_lock(db):
             return False
 
-        tasks = (
-            db.query(Task)
-            .filter(
-                Task.is_active == True,  # noqa: E712
-                Task.status == TaskStatusEnum.open,
-                Task.due_at.is_not(None),
-            )
-            .all()
-        )
-        devices_by_user: dict[tuple[int, int], list[PushDevice]] = {}
-        if settings.apns_enabled:
-            all_devices = (
-                db.query(PushDevice)
+        try:
+            if not settings.apns_enabled and not has_any_enabled_home_assistant_config(db):
+                logger.info("Push: Reminder-Worker uebersprungen, weder APNs noch Home Assistant aktiv")
+                return False
+
+            window_seconds = max(settings.push_worker_interval_seconds + 30, 90)
+            earliest_due = now - timedelta(seconds=window_seconds)
+            latest_due = now + timedelta(minutes=_MAX_REMINDER_OFFSET_MINUTES)
+            tasks = (
+                db.query(Task)
                 .filter(
-                    PushDevice.notifications_enabled == True,  # noqa: E712
-                    PushDevice.task_due_reminder == True,  # noqa: E712
+                    Task.is_active == True,  # noqa: E712
+                    Task.status == TaskStatusEnum.open,
+                    Task.due_at.is_not(None),
+                    Task.due_at >= earliest_due,
+                    Task.due_at <= latest_due,
                 )
-                .order_by(PushDevice.id.asc())
                 .all()
             )
-            for device in all_devices:
-                key = (int(device.family_id), int(device.user_id))
-                devices_by_user.setdefault(key, []).append(device)
+            devices_by_user: dict[tuple[int, int], list[PushDevice]] = {}
+            if settings.apns_enabled:
+                all_devices = (
+                    db.query(PushDevice)
+                    .filter(
+                        PushDevice.notifications_enabled == True,  # noqa: E712
+                        PushDevice.task_due_reminder == True,  # noqa: E712
+                    )
+                    .order_by(PushDevice.id.asc())
+                    .all()
+                )
+                for device in all_devices:
+                    key = (int(device.family_id), int(device.user_id))
+                    devices_by_user.setdefault(key, []).append(device)
 
-        changed = False
-        had_any_delivery_attempt = False
-        window_seconds = max(settings.push_worker_interval_seconds + 30, 90)
-        ha_sent_in_run: set[str] = set()
-        channel_cache: dict[int, NotificationChannelEnum] = {}
-        for task in tasks:
-            due_at = task.due_at
-            if due_at is None:
-                continue
-            family_channel = channel_cache.get(int(task.family_id))
-            if family_channel is None:
-                family_channel = _notification_channel_for_family(db, int(task.family_id))
-                channel_cache[int(task.family_id)] = family_channel
-            if family_channel == NotificationChannelEnum.sse:
-                continue
-            for offset in task.reminder_offsets_minutes or []:
-                notify_at = due_at - timedelta(minutes=int(offset))
-                if notify_at > now or (now - notify_at).total_seconds() > window_seconds:
+            changed = False
+            had_any_delivery_attempt = False
+            ha_sent_in_run: set[str] = set()
+            channel_cache: dict[int, NotificationChannelEnum] = {}
+            for task in tasks:
+                due_at = task.due_at
+                if due_at is None:
                     continue
-                dedupe_key = f"reminder:{task.id}:{offset}:{due_at.isoformat()}"
-                if family_channel == NotificationChannelEnum.apns and settings.apns_enabled:
-                    devices = devices_by_user.get((int(task.family_id), int(task.assignee_id)), [])
-                    for device in devices:
-                        if _delivery_exists(db, device.id, dedupe_key):
+                family_channel = channel_cache.get(int(task.family_id))
+                if family_channel is None:
+                    family_channel = _notification_channel_for_family(db, int(task.family_id))
+                    channel_cache[int(task.family_id)] = family_channel
+                if family_channel == NotificationChannelEnum.sse:
+                    continue
+                for offset in task.reminder_offsets_minutes or []:
+                    notify_at = due_at - timedelta(minutes=int(offset))
+                    if notify_at > now or (now - notify_at).total_seconds() > window_seconds:
+                        continue
+                    dedupe_key = f"reminder:{task.id}:{offset}:{due_at.isoformat()}"
+                    if family_channel == NotificationChannelEnum.apns and settings.apns_enabled:
+                        devices = devices_by_user.get((int(task.family_id), int(task.assignee_id)), [])
+                        for device in devices:
+                            if _delivery_exists(db, device.id, dedupe_key):
+                                continue
+                            had_any_delivery_attempt = True
+                            sent, apns_id, reason = _apns_client.send_alert(
+                                device=device,
+                                title="Aufgaben-Erinnerung",
+                                body=f"„{task.title}“ ist fällig: {due_at.strftime('%d.%m.%Y %H:%M')}",
+                                event_type="task.due_reminder",
+                                family_id=task.family_id,
+                            )
+                            _record_delivery(
+                                db,
+                                device=device,
+                                family_id=task.family_id,
+                                user_id=device.user_id,
+                                dedupe_key=dedupe_key,
+                                event_type="task.due_reminder",
+                                sent=sent,
+                                apns_id=apns_id,
+                                reason=reason,
+                            )
+                            if sent:
+                                logger.info(
+                                    "APNs: Reminder fuer task_id=%s an user_id=%s device_id=%s erfolgreich gesendet (apns_id=%s)",
+                                    task.id,
+                                    device.user_id,
+                                    device.id,
+                                    apns_id,
+                                )
+                            else:
+                                logger.warning(
+                                    "APNs: Reminder fuer task_id=%s an user_id=%s device_id=%s fehlgeschlagen (%s)",
+                                    task.id,
+                                    device.user_id,
+                                    device.id,
+                                    _sanitize_error_reason(reason),
+                                )
+                            if reason in {"Unregistered", "BadDeviceToken", "DeviceTokenNotForTopic"}:
+                                db.delete(device)
+                            changed = True
+
+                    if family_channel == NotificationChannelEnum.home_assistant:
+                        ha_run_key = f"{task.family_id}:{task.assignee_id}:{dedupe_key}"
+                        if ha_run_key in ha_sent_in_run:
                             continue
-                        had_any_delivery_attempt = True
-                        sent, apns_id, reason = _apns_client.send_alert(
-                            device=device,
+                        ha_sent_in_run.add(ha_run_key)
+                        ha_summary = dispatch_home_assistant_notification(
+                            db,
+                            family_id=task.family_id,
                             title="Aufgaben-Erinnerung",
                             body=f"„{task.title}“ ist fällig: {due_at.strftime('%d.%m.%Y %H:%M')}",
+                            recipient_user_ids=[task.assignee_id],
                             event_type="task.due_reminder",
-                            family_id=task.family_id,
-                        )
-                        _record_delivery(
-                            db,
-                            device=device,
-                            family_id=task.family_id,
-                            user_id=device.user_id,
+                            preference_key="task_due_reminder",
                             dedupe_key=dedupe_key,
-                            event_type="task.due_reminder",
-                            sent=sent,
-                            apns_id=apns_id,
-                            reason=reason,
                         )
-                        if sent:
-                            logger.info(
-                                "APNs: Reminder fuer task_id=%s an user_id=%s device_id=%s erfolgreich gesendet (apns_id=%s)",
-                                task.id,
-                                device.user_id,
-                                device.id,
-                                apns_id,
-                            )
-                        else:
+                        if ha_summary.sent_count or ha_summary.failed_count:
+                            had_any_delivery_attempt = True
+                            changed = True
+                        if ha_summary.failed_count:
                             logger.warning(
-                                "APNs: Reminder fuer task_id=%s an user_id=%s device_id=%s fehlgeschlagen (%s)",
+                                "HA: Reminder fuer task_id=%s an user_id=%s teilweise/komplett fehlgeschlagen: %s",
                                 task.id,
-                                device.user_id,
-                                device.id,
-                                reason,
+                                task.assignee_id,
+                                ha_summary.failures or [],
                             )
-                        if reason in {"Unregistered", "BadDeviceToken", "DeviceTokenNotForTopic"}:
-                            db.delete(device)
-                        changed = True
-
-                if family_channel == NotificationChannelEnum.home_assistant:
-                    ha_run_key = f"{task.family_id}:{task.assignee_id}:{dedupe_key}"
-                    if ha_run_key in ha_sent_in_run:
-                        continue
-                    ha_sent_in_run.add(ha_run_key)
-                    ha_summary = dispatch_home_assistant_notification(
-                        db,
-                        family_id=task.family_id,
-                        title="Aufgaben-Erinnerung",
-                        body=f"„{task.title}“ ist fällig: {due_at.strftime('%d.%m.%Y %H:%M')}",
-                        recipient_user_ids=[task.assignee_id],
-                        event_type="task.due_reminder",
-                        preference_key="task_due_reminder",
-                        dedupe_key=dedupe_key,
-                    )
-                    if ha_summary.sent_count or ha_summary.failed_count:
-                        had_any_delivery_attempt = True
-                    if ha_summary.failed_count:
-                        logger.warning(
-                            "HA: Reminder fuer task_id=%s an user_id=%s teilweise/komplett fehlgeschlagen: %s",
-                            task.id,
-                            task.assignee_id,
-                            ha_summary.failures or [],
-                        )
-        if changed:
-            db.commit()
-        else:
-            db.rollback()
-        return had_any_delivery_attempt
+            if changed:
+                db.commit()
+            else:
+                db.rollback()
+            return had_any_delivery_attempt
+        finally:
+            _release_push_lock(db)
 
 
 def _eligible_devices(
@@ -668,17 +795,25 @@ def _record_delivery(
     apns_id: str | None,
     reason: str | None,
 ) -> None:
-    db.add(
-        PushDeliveryLog(
-            device_id=device.id,
-            family_id=family_id,
-            user_id=user_id,
-            dedupe_key=dedupe_key,
-            event_type=event_type,
-            apns_id=apns_id,
-            status="sent" if sent else "failed",
-            error_reason=reason,
-        )
+    sanitized_reason = _sanitize_error_reason(reason)
+    params = {
+        "device_id": device.id,
+        "family_id": family_id,
+        "user_id": user_id,
+        "dedupe_key": dedupe_key,
+        "event_type": event_type,
+        "apns_id": apns_id,
+        "status": "sent" if sent else "failed",
+        "error_reason": sanitized_reason,
+    }
+    db.execute(
+        text(
+            "INSERT INTO push_delivery_logs "
+            "(device_id, family_id, user_id, dedupe_key, event_type, apns_id, status, error_reason) "
+            "VALUES (:device_id, :family_id, :user_id, :dedupe_key, :event_type, :apns_id, :status, :error_reason) "
+            "ON CONFLICT (device_id, dedupe_key) DO NOTHING"
+        ),
+        params,
     )
 
 
@@ -779,4 +914,4 @@ def _normalize_user_ids(raw: object) -> list[int]:
     return normalized
 
 
-from .database import SessionLocal  # noqa: E402  # circular import safe here
+from .database import SessionLocal, engine  # noqa: E402  # circular import safe here

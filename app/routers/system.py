@@ -416,6 +416,7 @@ def send_system_test_notification(
     recipient_display_names = [entry.display_name for entry in selected_recipients]
     sent_at = datetime.utcnow().isoformat()
     home_assistant_delivery = None
+    sent = False
     settings = (
         db.query(HomeAssistantSettings)
         .filter(HomeAssistantSettings.family_id == family_id)
@@ -456,7 +457,7 @@ def send_system_test_notification(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="APNs ist nicht aktiviert oder konfiguriert",
             )
-        dispatch_remote_pushes_for_event(
+        dispatch_summary = dispatch_remote_pushes_for_event(
             db,
             family_id=family_id,
             event=event,
@@ -467,6 +468,7 @@ def send_system_test_notification(
             },
             forced_channel=NotificationChannelEnum.apns,
         )
+        sent = dispatch_summary.sent_count > 0
     elif effective_channel == NotificationChannelEnum.home_assistant:
         ha_summary = dispatch_home_assistant_notification(
             db,
@@ -479,11 +481,15 @@ def send_system_test_notification(
             dedupe_key=f"manual-test:{sent_at}",
         )
         home_assistant_delivery = ha_summary.as_dict()
+        sent = ha_summary.sent_count > 0
+    else:
+        # SSE-Test gilt als gesendet, sobald Event erfolgreich persistiert wurde.
+        sent = True
 
     db.commit()
 
     return SystemTestNotificationOut(
-        sent=True,
+        sent=sent,
         family_id=family_id,
         title=payload.title,
         message=payload.message,

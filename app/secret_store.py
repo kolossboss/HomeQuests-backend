@@ -11,7 +11,8 @@ _ENC_PREFIX = "enc:v1:"
 
 
 def _fernet() -> Fernet:
-    digest = hashlib.sha256(settings.secret_key.encode("utf-8")).digest()
+    key_material = (settings.secret_encryption_key or settings.secret_key).encode("utf-8")
+    digest = hashlib.sha256(key_material).digest()
     key = base64.urlsafe_b64encode(digest)
     return Fernet(key)
 

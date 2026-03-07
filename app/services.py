@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from .live_bus import live_event_bus
 from .models import LiveUpdateEvent, PointsLedger
+from .notification_dispatcher import enqueue_remote_dispatch_job
 
 MAX_LIVE_EVENTS_PER_FAMILY = 5000
 LIVE_EVENT_TRIM_BATCH_SIZE = 500
@@ -37,17 +38,24 @@ def emit_live_event(
     db.add(event)
     db.flush()
     if dispatch_notifications:
-        try:
-            from .push_notifications import dispatch_remote_pushes_for_event
+        queued = enqueue_remote_dispatch_job(
+            family_id=family_id,
+            event_id=int(event.id),
+            payload=payload,
+        )
+        if not queued:
+            # Fallback: Bei voller Queue weiterhin inline versenden, um Events nicht zu verlieren.
+            try:
+                from .push_notifications import dispatch_remote_pushes_for_event
 
-            dispatch_remote_pushes_for_event(
-                db,
-                family_id=family_id,
-                event=event,
-                payload=payload,
-            )
-        except Exception:
-            logger.exception("Remote-Push-Versand fehlgeschlagen")
+                dispatch_remote_pushes_for_event(
+                    db,
+                    family_id=family_id,
+                    event=event,
+                    payload=payload,
+                )
+            except Exception:
+                logger.exception("Remote-Push-Versand fehlgeschlagen")
     live_event_bus.publish(family_id)
     _trim_live_events(db, family_id)
     return event
