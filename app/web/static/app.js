@@ -4030,7 +4030,9 @@ byId("sse-test-send-btn").addEventListener("click", () =>
   ).catch((error) => log("SSE Test Fehler", { error: error.message }))
 );
 ["apns", "home_assistant", "sse"].forEach((channel) => {
-  byId(`channel-edit-${channel}-btn`).addEventListener("click", async () => {
+  byId(`channel-edit-${channel}-btn`).addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     try {
       await loadNotificationChannelStatus();
       if (channel === "home_assistant") {
