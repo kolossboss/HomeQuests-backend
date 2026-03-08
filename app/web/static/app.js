@@ -21,6 +21,12 @@ const state = {
   haSettings: null,
   haUserConfigs: [],
   channelStatus: null,
+  tasksSort: "updated_desc",
+  specialTasksSort: "updated_desc",
+  taskEditorDirty: false,
+  specialTaskEditorDirty: false,
+  taskEditorInitialSnapshot: "",
+  specialTaskEditorInitialSnapshot: "",
 };
 
 const authPanel = document.getElementById("auth-panel");
@@ -429,6 +435,127 @@ function taskScheduleMeta(task) {
 function taskPenaltyText(task) {
   if (!task.penalty_enabled || Number(task.penalty_points || 0) <= 0) return "Minuspunkte: aus";
   return `Minuspunkte: -${task.penalty_points} bei verpasster Fälligkeit`;
+}
+
+function taskRecurrenceSortWeight(task) {
+  const map = { none: 0, daily: 1, weekly: 2, monthly: 3 };
+  return map[task?.recurrence_type] ?? 99;
+}
+
+function specialTaskIntervalSortWeight(entry) {
+  const map = { daily: 0, weekly: 1, monthly: 2 };
+  return map[entry?.interval_type] ?? 99;
+}
+
+function sortManagerTasks(list) {
+  const selected = state.tasksSort || "updated_desc";
+  const items = [...(list || [])];
+  if (selected === "name_asc") {
+    return items.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "de"));
+  }
+  if (selected === "recurrence") {
+    return items.sort((a, b) =>
+      taskRecurrenceSortWeight(a) - taskRecurrenceSortWeight(b)
+      || String(a.title || "").localeCompare(String(b.title || ""), "de")
+    );
+  }
+  return items.sort((a, b) =>
+    new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
+  );
+}
+
+function sortSpecialTaskTemplates(list) {
+  const selected = state.specialTasksSort || "updated_desc";
+  const items = [...(list || [])];
+  if (selected === "name_asc") {
+    return items.sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "de"));
+  }
+  if (selected === "interval") {
+    return items.sort((a, b) =>
+      specialTaskIntervalSortWeight(a) - specialTaskIntervalSortWeight(b)
+      || String(a.title || "").localeCompare(String(b.title || ""), "de")
+    );
+  }
+  return items.sort((a, b) =>
+    new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()
+  );
+}
+
+function taskEditorSnapshot() {
+  return JSON.stringify({
+    title: byId("task-editor-title")?.value || "",
+    description: byId("task-editor-description")?.value || "",
+    assignee_id: byId("task-editor-assignee")?.value || "",
+    points: byId("task-editor-points")?.value || "",
+    recurrence_type: byId("task-editor-recurrence")?.value || "",
+    due_mode: byId("task-editor-due-mode")?.value || "",
+    due: byId("task-editor-due")?.value || "",
+    daily_time: byId("task-editor-daily-time")?.value || "",
+    weekly_day: byId("task-editor-weekly-day")?.value || "",
+    weekly_time: byId("task-editor-weekly-time")?.value || "",
+    status: byId("task-editor-status")?.value || "",
+    active: byId("task-editor-active")?.value || "",
+    always_submittable: byId("task-editor-always-submittable")?.value || "",
+    penalty_enabled: byId("task-editor-penalty-enabled")?.value || "",
+    penalty_points: byId("task-editor-penalty-points")?.value || "",
+    weekdays: getSelectedWeekdays("task-editor-weekdays"),
+    reminders: getSelectedReminderOffsets("task-editor-reminder-options"),
+  });
+}
+
+function specialTaskEditorSnapshot() {
+  return JSON.stringify({
+    title: byId("special-task-editor-title")?.value || "",
+    description: byId("special-task-editor-description")?.value || "",
+    points: byId("special-task-editor-points")?.value || "",
+    interval_type: byId("special-task-editor-interval")?.value || "",
+    due_time_hhmm: byId("special-task-editor-due-time")?.value || "",
+    max_claims_per_interval: byId("special-task-editor-limit")?.value || "",
+    is_active: byId("special-task-editor-active")?.value || "",
+    weekdays: getSelectedWeekdays("special-task-editor-weekdays"),
+  });
+}
+
+function updateTaskEditButtons() {
+  const isOpen = isSectionOpen("task-editor-section");
+  document.querySelectorAll("#tasks-manager-cards button[data-task-action=\"edit\"]").forEach((button) => {
+    const taskId = Number(button.dataset.taskId || 0);
+    if (!isOpen || !taskId || taskId !== state.selectedTaskId) {
+      button.textContent = "Bearbeiten";
+      return;
+    }
+    button.textContent = state.taskEditorDirty ? "Speichern" : "Schließen";
+  });
+}
+
+function updateSpecialTaskEditButtons() {
+  const isOpen = isSectionOpen("special-task-editor-section");
+  document.querySelectorAll("#special-task-manager-cards button[data-special-task-action=\"edit\"]").forEach((button) => {
+    const templateId = Number(button.dataset.specialTaskId || 0);
+    if (!isOpen || !templateId || templateId !== state.selectedSpecialTaskTemplateId) {
+      button.textContent = "Bearbeiten";
+      return;
+    }
+    button.textContent = state.specialTaskEditorDirty ? "Speichern" : "Schließen";
+  });
+}
+
+function syncTaskEditorDirtyState() {
+  if (!state.selectedTaskId || !isSectionOpen("task-editor-section")) {
+    state.taskEditorDirty = false;
+  } else {
+    state.taskEditorDirty = taskEditorSnapshot() !== state.taskEditorInitialSnapshot;
+  }
+  updateTaskEditButtons();
+}
+
+function syncSpecialTaskEditorDirtyState() {
+  if (!state.selectedSpecialTaskTemplateId || !isSectionOpen("special-task-editor-section")) {
+    state.specialTaskEditorDirty = false;
+  } else {
+    state.specialTaskEditorDirty = specialTaskEditorSnapshot() !== state.specialTaskEditorInitialSnapshot;
+  }
+  updateSpecialTaskEditButtons();
 }
 
 function parseDateSafe(value) {
@@ -1439,17 +1566,21 @@ function renderTasks() {
     )
     .join("");
 
-  const managerTasks = manager ? state.tasks.filter((task) => task.status !== "approved") : [];
+  const managerTasks = manager ? sortManagerTasks(state.tasks.filter((task) => task.status !== "approved")) : [];
   const managerHistoryTasks = manager
     ? state.tasks
       .filter((task) => task.status === "approved")
       .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
     : [];
+  const tasksSortSelect = byId("tasks-sort-select");
+  if (tasksSortSelect && tasksSortSelect.value !== state.tasksSort) {
+    tasksSortSelect.value = state.tasksSort;
+  }
   byId("tasks-manager-cards").innerHTML = manager
     ? managerTasks.length
       ? managerTasks
         .map(
-          (task) => `<article class="entity-card">
+          (task) => `<article class="entity-card entity-card-list">
             <div class="entity-card-head">
               <p class="entity-card-title">${safeHtmlText(task.title)}</p>
               <span class="entity-tag">${task.is_active === false ? "deaktiviert" : statusLabel(task.status)}</span>
@@ -1457,6 +1588,7 @@ function renderTasks() {
             <p class="entity-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
             <p class="entity-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${task.points} Punkte</p>
             <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
+            <p class="entity-card-meta">Zuletzt geändert: ${fmtDate(task.updated_at || task.created_at)}</p>
             <p class="entity-card-meta">${taskPenaltyText(task)}</p>
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
             <div class="request-card-actions">
@@ -1469,6 +1601,7 @@ function renderTasks() {
         .join("")
       : "<p class=\"muted\">Keine offenen oder wartenden Aufgaben.</p>"
     : "";
+  updateTaskEditButtons();
   byId("task-history-cards").innerHTML = manager
     ? managerHistoryTasks.length
       ? managerHistoryTasks
@@ -1659,24 +1792,35 @@ function fillSpecialTaskEditorForm() {
 function openSpecialTaskEditor(templateId, triggerButton = null) {
   state.selectedSpecialTaskTemplateId = templateId;
   fillSpecialTaskEditorForm();
+  state.specialTaskEditorInitialSnapshot = specialTaskEditorSnapshot();
+  state.specialTaskEditorDirty = false;
   mountInlineEditorSectionBelowTrigger("special-task-editor-section", triggerButton);
   toggleHidden("special-task-editor-section", false);
+  updateSpecialTaskEditButtons();
 }
 
 function closeSpecialTaskEditor() {
   state.selectedSpecialTaskTemplateId = null;
+  state.specialTaskEditorInitialSnapshot = "";
+  state.specialTaskEditorDirty = false;
   toggleHidden("special-task-editor-section", true);
   restoreInlineEditorSection("special-task-editor-section");
+  updateSpecialTaskEditButtons();
 }
 
 function renderSpecialTaskTemplates() {
   const manager = isManagerRole();
+  const sortedTemplates = sortSpecialTaskTemplates(state.specialTaskTemplates);
+  const specialSortSelect = byId("special-tasks-sort-select");
+  if (specialSortSelect && specialSortSelect.value !== state.specialTasksSort) {
+    specialSortSelect.value = state.specialTasksSort;
+  }
 
   byId("special-task-manager-cards").innerHTML = manager
-    ? state.specialTaskTemplates.length
-      ? state.specialTaskTemplates
+    ? sortedTemplates.length
+      ? sortedTemplates
         .map(
-          (entry) => `<article class="entity-card">
+          (entry) => `<article class="entity-card entity-card-list">
             <div class="entity-card-head">
               <p class="entity-card-title">${safeHtmlText(entry.title)}</p>
               <span class="entity-tag">${entry.is_active ? "aktiv" : "deaktiviert"}</span>
@@ -1685,6 +1829,7 @@ function renderSpecialTaskTemplates() {
             <p class="entity-card-meta">Punkte: ${entry.points}</p>
             <p class="entity-card-meta">${specialTaskScheduleMeta(entry)}</p>
             <p class="entity-card-meta">Limit pro Intervall: ${entry.max_claims_per_interval}</p>
+            <p class="entity-card-meta">Zuletzt geändert: ${fmtDate(entry.updated_at || entry.created_at)}</p>
             <div class="request-card-actions">
               <button data-special-task-action="edit" data-special-task-id="${entry.id}">Bearbeiten</button>
               <button class="btn-secondary" data-special-task-action="delete" data-special-task-id="${entry.id}">Löschen</button>
@@ -1694,11 +1839,17 @@ function renderSpecialTaskTemplates() {
         .join("")
       : "<p class=\"muted\">Keine Sonderaufgaben vorhanden.</p>"
     : "";
+  updateSpecialTaskEditButtons();
 
   if (state.selectedSpecialTaskTemplateId) {
     const exists = state.specialTaskTemplates.some((entry) => entry.id === state.selectedSpecialTaskTemplateId);
     if (!exists) closeSpecialTaskEditor();
-    else fillSpecialTaskEditorForm();
+    else {
+      fillSpecialTaskEditorForm();
+      state.specialTaskEditorInitialSnapshot = specialTaskEditorSnapshot();
+      state.specialTaskEditorDirty = false;
+      updateSpecialTaskEditButtons();
+    }
   }
 }
 
@@ -1766,14 +1917,20 @@ function fillTaskEditorForm() {
 function openTaskEditor(taskId, triggerButton = null) {
   state.selectedTaskId = taskId;
   fillTaskEditorForm();
+  state.taskEditorInitialSnapshot = taskEditorSnapshot();
+  state.taskEditorDirty = false;
   mountInlineEditorSectionBelowTrigger("task-editor-section", triggerButton);
   toggleHidden("task-editor-section", false);
+  updateTaskEditButtons();
 }
 
 function closeTaskEditor() {
   state.selectedTaskId = null;
+  state.taskEditorInitialSnapshot = "";
+  state.taskEditorDirty = false;
   toggleHidden("task-editor-section", true);
   restoreInlineEditorSection("task-editor-section");
+  updateTaskEditButtons();
 }
 
 function renderEvents() {
@@ -2709,24 +2866,29 @@ async function bootstrap() {
   const password_confirm = passwordConfirmInput.value;
 
   let invalid = false;
+  const validationMessages = [];
   if (!display_name) {
     setInvalid(nameInput, true);
     invalid = true;
+    validationMessages.push("Name fehlt");
   }
   if (email && !isValidEmail(email)) {
     setInvalid(emailInput, true);
     invalid = true;
+    validationMessages.push("E-Mail ist ungültig");
   }
   if (password.length < 8) {
     setInvalid(passwordInput, true);
     invalid = true;
+    validationMessages.push("Passwort muss mindestens 8 Zeichen haben");
   }
   if (password !== password_confirm || password_confirm.length < 8) {
     setInvalid(passwordConfirmInput, true);
     invalid = true;
+    validationMessages.push("Passwort-Bestätigung muss identisch sein und mindestens 8 Zeichen haben");
   }
   if (invalid) {
-    log("Initialisierung: Bitte Pflichtfelder korrekt ausfuellen");
+    log("Initialisierung: Bitte Eingaben prüfen", { details: validationMessages });
     return;
   }
 
@@ -2762,6 +2924,12 @@ async function logout() {
   state.specialTaskTemplates = [];
   state.availableSpecialTasks = [];
   state.pointsHistory = [];
+  state.tasksSort = "updated_desc";
+  state.specialTasksSort = "updated_desc";
+  state.taskEditorDirty = false;
+  state.specialTaskEditorDirty = false;
+  state.taskEditorInitialSnapshot = "";
+  state.specialTaskEditorInitialSnapshot = "";
   initAuthPanel().catch((error) => log("Auth-Ansicht Fehler", { error: error.message }));
 }
 
@@ -3646,7 +3814,20 @@ byId("tasks-manager-cards").addEventListener("click", async (event) => {
 
   const action = actionButton.dataset.taskAction;
   if (action === "edit") {
-    openTaskEditor(taskId, actionButton);
+    const sameTaskOpen = isSectionOpen("task-editor-section") && state.selectedTaskId === taskId;
+    if (sameTaskOpen) {
+      if (state.taskEditorDirty) {
+        try {
+          await updateTask();
+        } catch (error) {
+          log("Aufgabe speichern Fehler", { error: error.message });
+        }
+      } else {
+        closeTaskEditor();
+      }
+    } else {
+      openTaskEditor(taskId, actionButton);
+    }
     return;
   }
 
@@ -3686,7 +3867,20 @@ byId("special-task-manager-cards").addEventListener("click", async (event) => {
 
   const action = actionButton.dataset.specialTaskAction;
   if (action === "edit") {
-    openSpecialTaskEditor(templateId, actionButton);
+    const sameTaskOpen = isSectionOpen("special-task-editor-section") && state.selectedSpecialTaskTemplateId === templateId;
+    if (sameTaskOpen) {
+      if (state.specialTaskEditorDirty) {
+        try {
+          await updateSpecialTaskTemplate();
+        } catch (error) {
+          log("Sonderaufgabe speichern Fehler", { error: error.message });
+        }
+      } else {
+        closeSpecialTaskEditor();
+      }
+    } else {
+      openSpecialTaskEditor(templateId, actionButton);
+    }
     return;
   }
 
@@ -3966,12 +4160,24 @@ byId("task-editor-due-mode").addEventListener("change", syncTaskEditorTimingUI);
 byId("task-editor-penalty-enabled").addEventListener("change", syncTaskEditorTimingUI);
 byId("special-task-interval").addEventListener("change", syncSpecialTaskCreateTimingUI);
 byId("special-task-editor-interval").addEventListener("change", syncSpecialTaskEditorTimingUI);
+byId("tasks-sort-select").addEventListener("change", (event) => {
+  state.tasksSort = event.target.value || "updated_desc";
+  renderTasks();
+});
+byId("special-tasks-sort-select").addEventListener("change", (event) => {
+  state.specialTasksSort = event.target.value || "updated_desc";
+  renderSpecialTaskTemplates();
+});
 byId("boot-password-visible").addEventListener("change", (event) =>
   setPasswordInputVisibility(["boot-password", "boot-password-confirm"], event.target.checked)
 );
 byId("member-password-visible").addEventListener("change", (event) =>
   setPasswordInputVisibility(["member-password", "member-password-confirm"], event.target.checked)
 );
+byId("task-editor-section").addEventListener("input", syncTaskEditorDirtyState);
+byId("task-editor-section").addEventListener("change", syncTaskEditorDirtyState);
+byId("special-task-editor-section").addEventListener("input", syncSpecialTaskEditorDirtyState);
+byId("special-task-editor-section").addEventListener("change", syncSpecialTaskEditorDirtyState);
 
 byId("login-btn").addEventListener("click", () => login().catch((error) => log("Login Fehler", { error: error.message })));
 byId("bootstrap-btn").addEventListener("click", () => bootstrap().catch((error) => log("Initialisierung Fehler", { error: error.message })));
