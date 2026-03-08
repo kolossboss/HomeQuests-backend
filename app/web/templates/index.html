@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260221b" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260308b" />
   </head>
   <body>
     <main class="container">
@@ -21,7 +21,8 @@
       <section class="panel" id="auth-panel">
         <div id="login-section" class="hidden">
           <h2>Login</h2>
-          <div class="form-grid">
+          <p class="muted auth-hint">Bei neuen Konten gilt: Passwort mit mindestens 8 Zeichen.</p>
+          <div class="form-grid auth-form">
             <label>Username or Email<input id="login-email" type="text" placeholder="Username or Email" /></label>
             <label>Passwort<input id="login-password" type="password" placeholder="Passwort" /></label>
           </div>
@@ -31,7 +32,8 @@
         <div id="bootstrap-section" class="hidden">
           <h2>Erstinitialisierung</h2>
           <p class="muted">Nur beim allerersten Start notwendig. Der Haushalt wird automatisch angelegt.</p>
-          <div class="form-grid">
+          <p class="muted auth-hint auth-hint-strong">Passwort-Regel: mindestens 8 Zeichen, zweimal identisch eingeben.</p>
+          <div class="form-grid auth-form">
             <label>Name<input id="boot-name" type="text" placeholder="Admin Name" /></label>
             <label>E-Mail (optional)<input id="boot-email" type="email" placeholder="optional@example.com" /></label>
             <label>Passwort<input id="boot-password" type="password" placeholder="mind. 8 Zeichen" /></label>
@@ -359,7 +361,16 @@
           </div>
 
           <div id="tasks-table-section" class="section-block">
-            <h4>Alle Aufgaben</h4>
+            <div class="section-head-row">
+              <h4>Alle Aufgaben</h4>
+              <label class="compact-filter">Sortierung
+                <select id="tasks-sort-select">
+                  <option value="updated_desc">Änderungsdatum (neueste zuerst)</option>
+                  <option value="name_asc">Name (A-Z)</option>
+                  <option value="recurrence">Wiederholung</option>
+                </select>
+              </label>
+            </div>
             <div id="tasks-manager-cards" class="entity-cards-grid"></div>
           </div>
 
@@ -515,6 +526,16 @@
               <button id="create-special-task-btn">Sonderaufgabe speichern</button>
             </div>
 
+            <div class="section-head-row">
+              <h5>Vorhandene Sonderaufgaben</h5>
+              <label class="compact-filter">Sortierung
+                <select id="special-tasks-sort-select">
+                  <option value="updated_desc">Änderungsdatum (neueste zuerst)</option>
+                  <option value="name_asc">Name (A-Z)</option>
+                  <option value="interval">Wiederholung</option>
+                </select>
+              </label>
+            </div>
             <div id="special-task-manager-cards" class="entity-cards-grid"></div>
 
             <div id="special-task-editor-section" class="section-block hidden">
@@ -866,6 +887,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260307e"></script>
+    <script src="/static/app.js?v=20260308a"></script>
   </body>
 </html>
