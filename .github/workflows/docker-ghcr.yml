@@ -46,3 +46,17 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Hinweis bei fehlendem Dispatch-Token
+        if: ${{ success() && secrets.HA_ADDON_DISPATCH_TOKEN == '' }}
+        run: echo "HA_ADDON_DISPATCH_TOKEN ist nicht gesetzt - Add-on Sync Dispatch wurde uebersprungen."
+
+      - name: Trigger HomeQuests HA Add-on Sync
+        if: ${{ success() && secrets.HA_ADDON_DISPATCH_TOKEN != '' }}
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HA_ADDON_DISPATCH_TOKEN }}
+          repository: kolossboss/homequests-backend-ha-addon
+          event-type: homequests_backend_updated
+          client-payload: >-
+            {"source_repo":"${{ github.repository }}","source_sha":"${{ github.sha }}","source_ref":"${{ github.ref_name }}"}
