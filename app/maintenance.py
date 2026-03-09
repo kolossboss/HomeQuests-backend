@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
+from datetime import datetime
 from threading import Lock
 
 from sqlalchemy import text
@@ -11,7 +12,7 @@ from .config import settings
 from .database import SessionLocal, engine
 from .models import RecurrenceTypeEnum, Task, TaskStatusEnum
 from .push_notifications import run_push_reminder_sweep_once
-from .routers.tasks import _apply_penalties_for_family
+from .routers.tasks import _apply_penalties_for_family, _rollover_missed_tasks_for_family
 
 logger = logging.getLogger(__name__)
 PENALTY_LOCK_KEY = 860031
@@ -38,7 +39,8 @@ def run_penalty_sweep_once() -> bool:
             return False
 
         try:
-            family_ids = [
+            now = datetime.utcnow()
+            penalty_family_ids = [
                 int(row[0])
                 for row in (
                     db.query(Task.family_id)
@@ -48,15 +50,39 @@ def run_penalty_sweep_once() -> bool:
                         Task.penalty_enabled == True,  # noqa: E712
                         Task.penalty_points > 0,
                         Task.due_at.is_not(None),
+                        Task.due_at < now,
                         Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
                     )
                     .distinct()
                     .all()
                 )
             ]
+            rollover_family_ids = [
+                int(row[0])
+                for row in (
+                    db.query(Task.family_id)
+                    .filter(
+                        Task.is_active == True,  # noqa: E712
+                        Task.recurrence_type.in_(
+                            [
+                                RecurrenceTypeEnum.daily.value,
+                                RecurrenceTypeEnum.weekly.value,
+                                RecurrenceTypeEnum.monthly.value,
+                            ]
+                        ),
+                        Task.due_at.is_not(None),
+                        Task.due_at < now,
+                        Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
+                    )
+                    .distinct()
+                    .all()
+                )
+            ]
+            family_ids = sorted(set(rollover_family_ids + penalty_family_ids))
 
             changed = False
             for family_id in family_ids:
+                changed = _rollover_missed_tasks_for_family(db, family_id) or changed
                 changed = _apply_penalties_for_family(db, family_id) or changed
 
             if changed:

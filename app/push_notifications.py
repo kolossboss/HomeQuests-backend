@@ -121,6 +121,8 @@ class APNsClient:
         body: str,
         event_type: str,
         family_id: int,
+        event_id: int | None = None,
+        dedupe_key: str | None = None,
     ) -> tuple[bool, str | None, str | None]:
         if not self.is_enabled():
             return False, None, "APNs nicht konfiguriert"
@@ -132,15 +134,21 @@ class APNsClient:
         provider_token = self._provider_token()
         host = "https://api.sandbox.push.apple.com" if device.push_environment == "development" else "https://api.push.apple.com"
         url = f"{host}/3/device/{device.device_token}"
+        homequests_payload: dict[str, object] = {
+            "family_id": family_id,
+            "event_type": event_type,
+        }
+        if event_id is not None:
+            homequests_payload["event_id"] = int(event_id)
+        if dedupe_key:
+            homequests_payload["dedupe_key"] = str(dedupe_key)
+
         payload = {
             "aps": {
                 "alert": {"title": title, "body": body},
                 "sound": "default",
             },
-            "homequests": {
-                "family_id": family_id,
-                "event_type": event_type,
-            },
+            "homequests": homequests_payload,
         }
         headers = {
             "authorization": f"bearer {provider_token}",
@@ -148,6 +156,10 @@ class APNsClient:
             "apns-push-type": "alert",
             "apns-priority": "10",
         }
+        if dedupe_key:
+            collapse_id = re.sub(r"[^a-zA-Z0-9._-]", "-", str(dedupe_key))[:64]
+            if collapse_id:
+                headers["apns-collapse-id"] = collapse_id
 
         try:
             with httpx.Client(http2=True, timeout=10.0) as client:
@@ -315,6 +327,8 @@ def dispatch_remote_pushes_for_event(
                 body=plan.body,
                 event_type=event.event_type,
                 family_id=family_id,
+                event_id=int(event.id),
+                dedupe_key=dedupe_key,
             )
             _record_delivery(
                 db,
@@ -683,6 +697,7 @@ def run_push_reminder_sweep_once() -> bool:
                                 body=f"„{task.title}“ ist fällig: {due_at.strftime('%d.%m.%Y %H:%M')}",
                                 event_type="task.due_reminder",
                                 family_id=task.family_id,
+                                dedupe_key=dedupe_key,
                             )
                             _record_delivery(
                                 db,
@@ -758,20 +773,30 @@ def _eligible_devices(
 ) -> list[PushDevice]:
     if not user_ids:
         return []
-    query = db.query(PushDevice).filter(
+    base_query = db.query(PushDevice).filter(
         PushDevice.family_id == family_id,
         PushDevice.user_id.in_(user_ids),
         PushDevice.notifications_enabled == True,  # noqa: E712
     )
     if preference_key == "child_new_task":
-        query = query.filter(PushDevice.child_new_task == True)  # noqa: E712
+        base_query = base_query.filter(PushDevice.child_new_task == True)  # noqa: E712
     elif preference_key == "manager_task_submitted":
-        query = query.filter(PushDevice.manager_task_submitted == True)  # noqa: E712
+        base_query = base_query.filter(PushDevice.manager_task_submitted == True)  # noqa: E712
     elif preference_key == "manager_reward_requested":
-        query = query.filter(PushDevice.manager_reward_requested == True)  # noqa: E712
+        base_query = base_query.filter(PushDevice.manager_reward_requested == True)  # noqa: E712
     elif preference_key == "task_due_reminder":
-        query = query.filter(PushDevice.task_due_reminder == True)  # noqa: E712
-    return query.order_by(PushDevice.id.asc()).all()
+        base_query = base_query.filter(PushDevice.task_due_reminder == True)  # noqa: E712
+
+    fresh_cutoff = datetime.utcnow() - timedelta(days=45)
+    fresh_devices = (
+        base_query
+        .filter(PushDevice.last_seen_at >= fresh_cutoff)
+        .order_by(PushDevice.last_seen_at.desc(), PushDevice.id.desc())
+        .all()
+    )
+    if fresh_devices:
+        return fresh_devices
+    return base_query.order_by(PushDevice.last_seen_at.desc(), PushDevice.id.desc()).all()
 
 
 def _delivery_exists(db: Session, device_id: int, dedupe_key: str) -> bool:

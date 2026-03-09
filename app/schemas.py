@@ -347,7 +347,7 @@ class TaskReviewRequest(BaseModel):
 
 
 class MissedTaskReviewRequest(BaseModel):
-    action: Literal["delete", "penalty"]
+    action: Literal["delete", "penalty", "approve"]
     comment: str | None = None
 
 

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260308b" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260309c" />
   </head>
   <body>
     <main class="container">
@@ -85,15 +85,16 @@
 
           <div class="stats-grid">
             <article class="stat-card"><span>Mitglieder</span><strong id="stat-members">0</strong></article>
-            <article class="stat-card"><span>Offene Aufgaben</span><strong id="stat-open">0</strong></article>
-            <article class="stat-card"><span>In Prüfung</span><strong id="stat-submitted">0</strong></article>
+            <article id="stat-card-open" class="stat-card is-clickable"><span>Offene Aufgaben</span><strong id="stat-open">0</strong></article>
+            <article id="stat-card-submitted" class="stat-card is-clickable"><span>In Prüfung</span><strong id="stat-submitted">0</strong></article>
+            <article id="stat-card-missed" class="stat-card is-clickable"><span>Verpasst</span><strong id="stat-missed">0</strong></article>
             <article id="stat-card-approved" class="stat-card is-clickable"><span>Abgeschlossen</span><strong id="stat-approved">0</strong></article>
             <article class="stat-card"><span>Abgelehnt</span><strong id="stat-rejected">0</strong></article>
             <article class="stat-card"><span>Diese Woche erledigt</span><strong id="stat-approved-week">0</strong></article>
             <article class="stat-card"><span>Diese Woche offen</span><strong id="stat-week-open">0</strong></article>
             <article class="stat-card"><span>Punkte diese Woche</span><strong id="stat-week-points">0</strong></article>
             <article class="stat-card"><span>Erfolgsquote</span><strong id="stat-completion-rate">0%</strong></article>
-            <article id="stat-card-child-points" class="stat-card hidden"><span>Meine Punkte</span><strong id="stat-child-points-value">-</strong></article>
+            <article id="stat-card-child-points" class="stat-card is-clickable hidden"><span>Meine Punkte</span><strong id="stat-child-points-value">-</strong></article>
           </div>
 
           <div class="dashboard-charts-grid">
@@ -107,6 +108,10 @@
                 <div class="progress-row">
                   <div class="progress-label-line"><span>In Prüfung</span><strong id="status-submitted-value">0 (0%)</strong></div>
                   <div class="progress-track"><span id="status-submitted-bar" class="progress-fill status-submitted" style="width: 0%"></span></div>
+                </div>
+                <div class="progress-row">
+                  <div class="progress-label-line"><span>Verpasst</span><strong id="status-missed-value">0 (0%)</strong></div>
+                  <div class="progress-track"><span id="status-missed-bar" class="progress-fill status-missed" style="width: 0%"></span></div>
                 </div>
                 <div class="progress-row">
                   <div class="progress-label-line"><span>Bestätigt</span><strong id="status-approved-value">0 (0%)</strong></div>
@@ -126,12 +131,49 @@
             </article>
           </div>
 
+          <div id="dashboard-child-focus-section" class="section-block hidden">
+            <h4>Dein Tagesüberblick</h4>
+            <div class="child-focus-grid">
+              <article id="dashboard-child-today-focus" class="child-focus-card is-clickable focus-normal">
+                <p class="child-focus-kicker">Heute fällig</p>
+                <p id="dashboard-child-today-count" class="child-focus-count">0</p>
+                <p id="dashboard-child-today-meta" class="child-focus-meta">Keine fälligen Aufgaben</p>
+              </article>
+              <article id="dashboard-child-missed-focus" class="child-focus-card is-clickable focus-missed">
+                <p class="child-focus-kicker">Verpasst</p>
+                <p id="dashboard-child-missed-count" class="child-focus-count">0</p>
+                <p id="dashboard-child-missed-meta" class="child-focus-meta">Keine verpassten Aufgaben</p>
+              </article>
+            </div>
+          </div>
+
+          <div id="dashboard-child-today-list-section" class="section-block hidden">
+            <div class="section-headline-row">
+              <h4>Heute fällig und überfällig</h4>
+              <button id="dashboard-child-focus-close" type="button" class="btn-secondary">Schließen</button>
+            </div>
+            <div class="request-cards-grid child-focus-details-grid">
+              <article class="task-category-card">
+                <h5>Überfällig</h5>
+                <div id="dashboard-child-overdue-cards" class="request-card-list"></div>
+              </article>
+              <article class="task-category-card">
+                <h5>Heute fällig</h5>
+                <div id="dashboard-child-today-cards" class="request-card-list"></div>
+              </article>
+            </div>
+          </div>
+
           <div id="dashboard-pending-section" class="section-block">
             <h4>Neue Anfragen</h4>
             <div class="request-cards-grid">
               <article class="task-category-card">
                 <h5>Aufgaben warten auf Prüfung</h5>
                 <div id="dashboard-pending-task-cards" class="request-card-list"></div>
+              </article>
+              <article id="dashboard-missed-card" class="task-category-card">
+                <h5>Verpasste Aufgaben</h5>
+                <div id="dashboard-missed-task-cards" class="request-card-list"></div>
               </article>
               <article class="task-category-card">
                 <h5>Belohnungen warten auf Prüfung</h5>
@@ -341,6 +383,10 @@
               <article class="task-category-card">
                 <h5>Überfällige Aufgaben</h5>
                 <div id="child-overdue-task-cards" class="task-card-list"></div>
+              </article>
+              <article class="task-category-card">
+                <h5>Verpasste Aufgaben</h5>
+                <div id="child-missed-task-cards" class="task-card-list"></div>
               </article>
             </div>
           </div>
@@ -887,6 +933,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260308a"></script>
+    <script src="/static/app.js?v=20260309c"></script>
   </body>
 </html>

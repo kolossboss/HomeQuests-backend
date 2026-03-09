@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -41,6 +41,7 @@ def register_push_device(
     family_id = _family_id_for_user(db, current_user.id)
 
     device = db.query(PushDevice).filter(PushDevice.device_token == payload.device_token).first()
+    now = datetime.utcnow()
     if device is None:
         device = PushDevice(
             family_id=family_id,
@@ -54,7 +55,7 @@ def register_push_device(
             manager_task_submitted=payload.manager_task_submitted,
             manager_reward_requested=payload.manager_reward_requested,
             task_due_reminder=payload.task_due_reminder,
-            last_seen_at=datetime.utcnow(),
+            last_seen_at=now,
         )
         db.add(device)
     else:
@@ -68,7 +69,24 @@ def register_push_device(
         device.manager_task_submitted = payload.manager_task_submitted
         device.manager_reward_requested = payload.manager_reward_requested
         device.task_due_reminder = payload.task_due_reminder
-        device.last_seen_at = datetime.utcnow()
+        device.last_seen_at = now
+
+    # Alte Token derselben App-Installation loeschen, damit ein einzelnes Geraet
+    # nicht mehrfach benachrichtigt wird, wenn APNs Tokens rotiert.
+    stale_cutoff = now - timedelta(days=7)
+    stale_devices = (
+        db.query(PushDevice)
+        .filter(
+            PushDevice.user_id == current_user.id,
+            PushDevice.bundle_id == payload.bundle_id,
+            PushDevice.push_environment == payload.push_environment,
+            PushDevice.device_token != payload.device_token,
+            PushDevice.last_seen_at < stale_cutoff,
+        )
+        .all()
+    )
+    for stale in stale_devices:
+        db.delete(stale)
 
     db.commit()
     db.refresh(device)
