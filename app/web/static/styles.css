@@ -268,6 +268,10 @@ p {
   border-color: rgba(120, 210, 255, 0.6);
 }
 
+.stat-card.is-clickable:active {
+  transform: translateY(1px);
+}
+
 .stat-card span {
   color: var(--text-soft);
   font-size: 12px;
@@ -287,6 +291,84 @@ p {
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.child-focus-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+}
+
+.child-focus-details-grid {
+  margin-top: 8px;
+}
+
+.section-headline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.section-headline-row h4 {
+  margin: 0;
+}
+
+.child-focus-card {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 14px;
+  padding: 14px;
+  background: linear-gradient(165deg, rgba(37, 67, 108, 0.95) 0%, rgba(25, 43, 74, 0.98) 100%);
+}
+
+.child-focus-card.is-clickable {
+  cursor: pointer;
+}
+
+.child-focus-kicker {
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 12px;
+  color: #d7e8ff;
+}
+
+.child-focus-count {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.child-focus-meta {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #d5e2f7;
+}
+
+.child-focus-card.focus-normal {
+  border-color: rgba(92, 196, 255, 0.55);
+  background: linear-gradient(160deg, rgba(45, 97, 161, 0.96) 0%, rgba(32, 69, 121, 0.98) 100%);
+}
+
+.child-focus-card.focus-soon {
+  border-color: rgba(255, 186, 110, 0.58);
+  background: linear-gradient(165deg, rgba(134, 87, 35, 0.96) 0%, rgba(98, 63, 29, 0.98) 100%);
+}
+
+.child-focus-card.focus-overdue {
+  border-color: rgba(255, 138, 133, 0.62);
+  background: linear-gradient(165deg, rgba(129, 53, 61, 0.96) 0%, rgba(94, 37, 45, 0.98) 100%);
+}
+
+.child-focus-card.focus-empty {
+  border-color: rgba(114, 239, 194, 0.45);
+  background: linear-gradient(165deg, rgba(41, 99, 92, 0.92) 0%, rgba(31, 78, 74, 0.96) 100%);
+}
+
+.child-focus-card.focus-missed {
+  border-color: rgba(255, 164, 121, 0.55);
+  background: linear-gradient(165deg, rgba(118, 74, 42, 0.94) 0%, rgba(85, 52, 34, 0.97) 100%);
 }
 
 .analytics-card {
@@ -336,6 +418,10 @@ p {
 
 .status-submitted {
   background: linear-gradient(90deg, #ffd07a, #ffad66);
+}
+
+.status-missed {
+  background: linear-gradient(90deg, #ffb47c, #ff8f63);
 }
 
 .status-approved {
@@ -887,6 +973,20 @@ tr:last-child td {
   color: #ffd8dd;
 }
 
+.task-action-card {
+  border: 1px solid rgba(74, 229, 196, 0.45);
+  border-radius: 10px;
+  background: linear-gradient(160deg, rgba(38, 103, 101, 0.45) 0%, rgba(29, 72, 83, 0.35) 100%);
+  color: #d7fbf5;
+  padding: 10px;
+}
+
+.task-action-card.overdue {
+  border-color: rgba(255, 138, 133, 0.52);
+  background: linear-gradient(160deg, rgba(138, 51, 62, 0.42) 0%, rgba(95, 30, 39, 0.35) 100%);
+  color: #ffd8dd;
+}
+
 .task-card-title {
   display: block;
   font-weight: 700;
@@ -1039,6 +1139,7 @@ pre {
   }
 
   .dashboard-charts-grid,
+  .child-focus-grid,
   .child-task-columns,
   .child-task-secondary-columns,
   .request-cards-grid,

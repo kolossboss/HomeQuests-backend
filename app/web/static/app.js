@@ -159,13 +159,6 @@ function fmtDate(value) {
   }
 }
 
-function isNotYetDueByDefaultRule(task) {
-  if (!task || !task.due_at) return false;
-  const dueAt = new Date(task.due_at);
-  const now = new Date();
-  return dueAt > now && dueAt.toDateString() !== now.toDateString();
-}
-
 function roleLabel(role) {
   const map = { admin: "Admin", parent: "Eltern", child: "Kind" };
   return map[role] || role;
@@ -175,7 +168,7 @@ function statusLabel(status) {
   const map = {
     open: "offen",
     submitted: "wartet auf Bestätigung",
-    missed_submitted: "nicht erledigt gemeldet",
+    missed_submitted: "verpasst (wartet auf Entscheidung)",
     approved: "bestätigt",
     rejected: "abgelehnt",
     pending: "offen",
@@ -597,6 +590,44 @@ function childTaskDueText(task) {
   return fmtDate(task.due_at);
 }
 
+function childTaskCardMarkup(task, { overdue = false, actionable = true } = {}) {
+  if (!actionable) {
+    return `<article class="request-card ${overdue ? "overdue" : ""}">
+      <span class="task-card-title">${safeHtmlText(task.title)}</span>
+      <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
+    </article>`;
+  }
+  return `<article class="task-action-card ${overdue ? "overdue" : ""}">
+    <span class="task-card-title">${safeHtmlText(task.title)}</span>
+    <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
+    <div class="request-card-actions">
+      <button data-task-id="${task.id}" data-task-action="submit_done">Erledigt</button>
+      <button class="btn-secondary" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>
+    </div>
+  </article>`;
+}
+
+function renderChildTaskCards(targetId, tasks, emptyText, { overdue = false, actionable = true } = {}) {
+  const target = byId(targetId);
+  if (!target) return;
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    target.innerHTML = `<p class="muted">${emptyText}</p>`;
+    return;
+  }
+  target.innerHTML = tasks
+    .map((task) => childTaskCardMarkup(task, { overdue, actionable }))
+    .join("");
+}
+
+function openChildDashboardTodayList() {
+  switchTab("dashboard");
+  toggleHidden("dashboard-child-today-list-section", false);
+  const section = byId("dashboard-child-today-list-section");
+  if (section) {
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 function getTaskActivityDate(task) {
   return parseDateSafe(task.updated_at || task.created_at || task.due_at);
 }
@@ -674,7 +705,7 @@ function getTaskStatusCounts(tasks) {
   return tasks.reduce(
     (acc, task) => {
       if (task.status === "missed_submitted") {
-        acc.submitted += 1;
+        acc.missed += 1;
         return acc;
       }
       if (Object.prototype.hasOwnProperty.call(acc, task.status)) {
@@ -682,7 +713,7 @@ function getTaskStatusCounts(tasks) {
       }
       return acc;
     },
-    { open: 0, submitted: 0, approved: 0, rejected: 0 }
+    { open: 0, submitted: 0, missed: 0, approved: 0, rejected: 0 }
   );
 }
 
@@ -740,7 +771,7 @@ function renderWeeklyTrend(tasks) {
 }
 
 function renderDashboardAnalytics(tasks, statusCounts = getTaskStatusCounts(tasks)) {
-  const totalStatusCount = statusCounts.open + statusCounts.submitted + statusCounts.approved + statusCounts.rejected;
+  const totalStatusCount = statusCounts.open + statusCounts.submitted + statusCounts.missed + statusCounts.approved + statusCounts.rejected;
   const completionRate = totalStatusCount > 0 ? Math.round((statusCounts.approved / totalStatusCount) * 100) : 0;
 
   const { start, end } = getWeekRange(new Date());
@@ -768,6 +799,7 @@ function renderDashboardAnalytics(tasks, statusCounts = getTaskStatusCounts(task
 
   setStatusProgress("open", statusCounts.open, totalStatusCount);
   setStatusProgress("submitted", statusCounts.submitted, totalStatusCount);
+  setStatusProgress("missed", statusCounts.missed, totalStatusCount);
   setStatusProgress("approved", statusCounts.approved, totalStatusCount);
   setStatusProgress("rejected", statusCounts.rejected, totalStatusCount);
   renderWeeklyTrend(tasks);
@@ -1226,8 +1258,13 @@ function syncDashboardStatsCardOrder() {
 
 function openTaskHistoryFromDashboard() {
   if (isChildRole()) return;
+  openTasksTabWithSection("task-history-section");
+}
+
+function openTasksTabWithSection(sectionId = null) {
   switchTab("tasks");
-  const section = byId("task-history-section");
+  if (!sectionId) return;
+  const section = byId(sectionId);
   if (!section) return;
   section.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -1247,6 +1284,11 @@ function applyRoleVisibility() {
   closeMemberEditor();
   toggleHidden("dashboard-members-section", child);
   toggleHidden("dashboard-pending-section", child);
+  toggleHidden("dashboard-child-focus-section", !child);
+  toggleHidden("dashboard-missed-card", child);
+  if (!child) {
+    toggleHidden("dashboard-child-today-list-section", true);
+  }
   toggleHidden("stat-card-child-points", !child);
   syncDashboardStatsCardOrder();
 
@@ -1501,21 +1543,13 @@ function getPendingRewardRequests() {
 
 function renderDashboardPendingRequests() {
   const pendingTasks = getPendingTaskRequests();
+  const submittedTasks = pendingTasks.filter((task) => task.status === "submitted");
+  const missedTasks = pendingTasks.filter((task) => task.status === "missed_submitted");
   const pendingRewards = getPendingRewardRequests();
 
-  byId("dashboard-pending-task-cards").innerHTML = pendingTasks.length
-    ? pendingTasks
+  byId("dashboard-pending-task-cards").innerHTML = submittedTasks.length
+    ? submittedTasks
       .map((task) => {
-        if (task.status === "missed_submitted") {
-          return `<article class="request-card">
-          <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als nicht erledigt gemeldet</p>
-          <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
-          <div class="request-card-actions">
-            <button data-dashboard-missed-task-action="delete" data-task-id="${task.id}">Löschen</button>
-            <button class="btn-secondary" data-dashboard-missed-task-action="penalty" data-task-id="${task.id}">Minuspunkte</button>
-          </div>
-        </article>`;
-        }
         return `<article class="request-card">
           <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als erledigt gemeldet</p>
           <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
@@ -1530,7 +1564,21 @@ function renderDashboardPendingRequests() {
         </article>`;
       })
       .join("")
-    : "<p class=\"muted\">Keine offenen Aufgabenanfragen</p>";
+    : "<p class=\"muted\">Keine Aufgaben in Prüfung</p>";
+
+  byId("dashboard-missed-task-cards").innerHTML = missedTasks.length
+    ? missedTasks
+      .map((task) => `<article class="request-card">
+          <p class="request-card-title">${memberNameHtml(task.assignee_id)}: "${safeHtmlText(task.title)}" verpasst</p>
+          <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
+          <div class="request-card-actions">
+            <button data-dashboard-missed-task-action="approve" data-task-id="${task.id}">Doch bestätigen</button>
+            <button data-dashboard-missed-task-action="delete" data-task-id="${task.id}">Löschen</button>
+            <button class="btn-secondary" data-dashboard-missed-task-action="penalty" data-task-id="${task.id}">Minuspunkte</button>
+          </div>
+        </article>`)
+      .join("")
+    : "<p class=\"muted\">Keine verpassten Aufgaben</p>";
 
   byId("dashboard-pending-reward-cards").innerHTML = pendingRewards.length
     ? pendingRewards
@@ -1626,6 +1674,7 @@ function renderTasks() {
 
   byId("stat-open").textContent = String(statusCounts.open);
   byId("stat-submitted").textContent = String(statusCounts.submitted);
+  byId("stat-missed").textContent = String(statusCounts.missed);
   byId("stat-approved").textContent = String(statusCounts.approved);
   byId("stat-rejected").textContent = String(statusCounts.rejected);
 
@@ -1665,64 +1714,41 @@ function renderChildTaskLists() {
     return due >= tomorrowStart;
   });
 
-  const waitingTasks = newestRecurringEntries(
-    ownVisibleTasks.filter((task) => task.status === "submitted" || task.status === "missed_submitted")
-  );
+  const waitingTasks = newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "submitted"));
+  const missedTasks = newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "missed_submitted"));
   const completedTasks = ownVisibleTasks.filter(
     (task) => task.status === "approved" && task.recurrence_type === "none"
   );
 
-  function renderTaskCards(targetId, tasks, emptyText, overdue = false, actionable = true) {
-    const target = byId(targetId);
-    if (!target) return;
-    if (tasks.length === 0) {
-      target.innerHTML = `<p class="muted">${emptyText}</p>`;
-      return;
-    }
-
-    target.innerHTML = tasks
-      .map((task) => {
-        if (!actionable) {
-          return `<article class="request-card ${overdue ? "overdue" : ""}">
-          <span class="task-card-title">${safeHtmlText(task.title)}</span>
-          <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
-        </article>`;
-        }
-        if (overdue) {
-          return `<article class="request-card overdue">
-          <span class="task-card-title">${safeHtmlText(task.title)}</span>
-          <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
-          <div class="request-card-actions">
-            <button data-task-id="${task.id}" data-task-action="submit_done">Als erledigt melden</button>
-            <button class="btn-secondary" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>
-          </div>
-        </article>`;
-        }
-        return `<button class="task-card-btn ${overdue ? "overdue" : ""}" data-task-id="${task.id}">
-          <span class="task-card-title">${safeHtmlText(task.title)}</span>
-          <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
-        </button>`;
-      })
-      .join("");
-  }
-
-  renderTaskCards("child-today-task-cards", todayTasks, "Heute keine fälligen Aufgaben");
-  renderTaskCards("child-upcoming-task-cards", upcomingTasks, "Keine Aufgaben für die nächsten Tage", false, false);
-  renderTaskCards("child-week-task-cards", weekTasks, "Keine Wochenaufgaben");
-  renderTaskCards("child-overdue-task-cards", overdueTasks, "Keine überfälligen Aufgaben", true);
+  renderChildTaskCards("child-today-task-cards", todayTasks, "Heute keine fälligen Aufgaben");
+  renderChildTaskCards("child-upcoming-task-cards", upcomingTasks, "Keine Aufgaben für die nächsten Tage", { actionable: false });
+  renderChildTaskCards("child-week-task-cards", weekTasks, "Keine Wochenaufgaben");
+  renderChildTaskCards("child-overdue-task-cards", overdueTasks, "Keine überfälligen Aufgaben", { overdue: true });
 
   byId("child-submitted-cards").innerHTML = waitingTasks.length
     ? waitingTasks
       .map(
         (task) => `<article class="request-card">
           <p class="request-card-title">${safeHtmlText(task.title)}</p>
-          <p class="request-card-meta">${
-            task.status === "missed_submitted" ? "Als nicht erledigt gemeldet" : "Eingereicht"
-          }: ${fmtDate(task.updated_at || task.created_at)} • ${childTaskDueText(task)}</p>
+          <p class="request-card-meta">Eingereicht: ${fmtDate(task.updated_at || task.created_at)} • ${childTaskDueText(task)}</p>
         </article>`
       )
       .join("")
     : "<p class=\"muted\">Keine Aufgaben in Prüfung</p>";
+
+  byId("child-missed-task-cards").innerHTML = missedTasks.length
+    ? missedTasks
+      .map(
+        (task) => `<article class="request-card">
+          <p class="request-card-title">${safeHtmlText(task.title)}</p>
+          <p class="request-card-meta">Verpasst • ${childTaskDueText(task)} • Entscheidung durch Eltern offen</p>
+        </article>`
+      )
+      .join("")
+    : "<p class=\"muted\">Keine verpassten Aufgaben</p>";
+
+  renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks);
+  renderChildDashboardTodayDetails(todayTasks, overdueTasks);
 
   byId("child-completed-cards").innerHTML = completedTasks.length
     ? completedTasks
@@ -1736,6 +1762,76 @@ function renderChildTaskLists() {
     : "<p class=\"muted\">Noch keine bestätigten Aufgaben</p>";
 }
 
+function renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks) {
+  const todayCard = byId("dashboard-child-today-focus");
+  const missedCard = byId("dashboard-child-missed-focus");
+  const todayCount = byId("dashboard-child-today-count");
+  const todayMeta = byId("dashboard-child-today-meta");
+  const missedCount = byId("dashboard-child-missed-count");
+  const missedMeta = byId("dashboard-child-missed-meta");
+  if (!todayCard || !missedCard || !todayCount || !todayMeta || !missedCount || !missedMeta) return;
+
+  const totalToday = Array.isArray(todayTasks) ? todayTasks.length : 0;
+  const totalOverdue = Array.isArray(overdueTasks) ? overdueTasks.length : 0;
+  const totalTodayTile = totalToday + totalOverdue;
+  const totalMissed = Array.isArray(missedTasks) ? missedTasks.length : 0;
+  todayCount.textContent = String(totalTodayTile);
+  missedCount.textContent = String(totalMissed);
+  missedMeta.textContent = totalMissed > 0 ? `${totalMissed} warten auf Eltern-Entscheidung` : "Keine verpassten Aufgaben";
+
+  const currentClasses = ["focus-normal", "focus-soon", "focus-overdue", "focus-empty"];
+  todayCard.classList.remove(...currentClasses);
+  if (totalOverdue > 0) {
+    todayCard.classList.add("focus-overdue");
+    todayMeta.textContent = `${totalOverdue} überfällig • jetzt zuerst erledigen`;
+    return;
+  }
+  if (totalTodayTile === 0) {
+    todayCard.classList.add("focus-empty");
+    todayMeta.textContent = "Keine fälligen Aufgaben";
+    return;
+  }
+  if (totalTodayTile <= 3) {
+    todayCard.classList.add("focus-soon");
+    todayMeta.textContent = `${totalTodayTile} Aufgabe(n) heute`;
+  } else {
+    todayCard.classList.add("focus-overdue");
+    todayMeta.textContent = `${totalTodayTile} Aufgabe(n) heute`;
+  }
+}
+
+function renderChildDashboardTodayDetails(todayTasks, overdueTasks) {
+  const section = byId("dashboard-child-today-list-section");
+  if (!section) return;
+  if (!isChildRole()) {
+    toggleHidden("dashboard-child-today-list-section", true);
+    return;
+  }
+  renderChildTaskCards("dashboard-child-overdue-cards", overdueTasks, "Keine überfälligen Aufgaben", { overdue: true });
+  renderChildTaskCards("dashboard-child-today-cards", todayTasks, "Heute keine fälligen Aufgaben");
+}
+
+async function handleChildTaskActionButton(button) {
+  const taskId = Number(button.dataset.taskId);
+  if (!taskId) return;
+  const action = button.dataset.taskAction || "submit_done";
+
+  if (action === "report_missed") {
+    try {
+      await reportMissedTaskById(taskId);
+    } catch (error) {
+      log("Nicht-erledigt melden fehlgeschlagen", { error: error.message });
+    }
+    return;
+  }
+
+  try {
+    await submitTaskById(taskId, null);
+  } catch (error) {
+    log("Aufgabe konnte nicht eingereicht werden", { error: error.message });
+  }
+}
+
 function renderManagerTaskReviewCards() {
   if (!isManagerRole()) return;
   const pendingTasks = getPendingTaskRequests();
@@ -1746,8 +1842,9 @@ function renderManagerTaskReviewCards() {
         if (task.status === "missed_submitted") {
           return `<article class="request-card">
           <p class="request-card-title">${memberNameHtml(task.assignee_id)}: ${safeHtmlText(task.title)}</p>
-          <p class="request-card-meta">Als nicht erledigt gemeldet • ${taskDueText(task)}</p>
+          <p class="request-card-meta">Verpasst • ${taskDueText(task)}</p>
           <div class="request-card-actions">
+            <button data-task-missed-review-action="approve" data-task-id="${task.id}">Doch bestätigen</button>
             <button data-task-missed-review-action="delete" data-task-id="${task.id}">Löschen</button>
             <button class="btn-secondary" data-task-missed-review-action="penalty" data-task-id="${task.id}">Minuspunkte</button>
           </div>
@@ -3804,6 +3901,40 @@ const statCardApproved = byId("stat-card-approved");
 if (statCardApproved) {
   statCardApproved.addEventListener("click", openTaskHistoryFromDashboard);
 }
+const statCardOpen = byId("stat-card-open");
+if (statCardOpen) {
+  statCardOpen.addEventListener("click", () => {
+    if (isChildRole()) {
+      openChildDashboardTodayList();
+      return;
+    }
+    openTasksTabWithSection("tasks-table-section");
+  });
+}
+const statCardSubmitted = byId("stat-card-submitted");
+if (statCardSubmitted) {
+  statCardSubmitted.addEventListener("click", () => openTasksTabWithSection(isChildRole() ? "child-submitted-section" : "task-review-cards-section"));
+}
+const statCardMissed = byId("stat-card-missed");
+if (statCardMissed) {
+  statCardMissed.addEventListener("click", () => openTasksTabWithSection(isChildRole() ? "child-task-categories-section" : "task-review-cards-section"));
+}
+const statCardChildPoints = byId("stat-card-child-points");
+if (statCardChildPoints) {
+  statCardChildPoints.addEventListener("click", () => switchTab("points"));
+}
+const childTodayFocusCard = byId("dashboard-child-today-focus");
+if (childTodayFocusCard) {
+  childTodayFocusCard.addEventListener("click", openChildDashboardTodayList);
+}
+const childMissedFocusCard = byId("dashboard-child-missed-focus");
+if (childMissedFocusCard) {
+  childMissedFocusCard.addEventListener("click", () => openTasksTabWithSection("child-task-categories-section"));
+}
+const childFocusCloseButton = byId("dashboard-child-focus-close");
+if (childFocusCloseButton) {
+  childFocusCloseButton.addEventListener("click", () => toggleHidden("dashboard-child-today-list-section", true));
+}
 
 byId("tasks-manager-cards").addEventListener("click", async (event) => {
   const actionButton = event.target.closest("button[data-task-action]");
@@ -4085,39 +4216,13 @@ byId("ha-user-config-body").addEventListener("click", async (event) => {
 byId("child-task-categories-section").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-task-id]");
   if (!button) return;
+  await handleChildTaskActionButton(button);
+});
 
-  const taskId = Number(button.dataset.taskId);
-  if (!taskId) return;
-  const task = state.tasks.find((entry) => entry.id === taskId);
-  const taskTitle = task ? task.title : "Aufgabe";
-  const action = button.dataset.taskAction || "submit_done";
-
-  if (action === "report_missed") {
-    const confirmedMissed = window.confirm(`Aufgabe \"${taskTitle}\" als nicht erledigt melden?`);
-    if (!confirmedMissed) return;
-    try {
-      await reportMissedTaskById(taskId);
-    } catch (error) {
-      log("Nicht-erledigt melden fehlgeschlagen", { error: error.message });
-    }
-    return;
-  }
-
-  const confirmed = window.confirm(`Aufgabe \"${taskTitle}\" als erledigt melden?`);
-  if (!confirmed) return;
-
-  if (task && task.always_submittable && isNotYetDueByDefaultRule(task)) {
-    const earlyConfirm = window.confirm(
-      `Aufgabe \"${taskTitle}\" ist noch nicht fällig. Wirklich jetzt als erledigt einreichen?`
-    );
-    if (!earlyConfirm) return;
-  }
-
-  try {
-    await submitTaskById(taskId, null);
-  } catch (error) {
-    log("Aufgabe konnte nicht eingereicht werden", { error: error.message });
-  }
+byId("dashboard-child-today-list-section").addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-task-id]");
+  if (!button) return;
+  await handleChildTaskActionButton(button);
 });
 
 byId("child-special-task-section").addEventListener("click", async (event) => {

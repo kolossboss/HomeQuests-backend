@@ -220,52 +220,37 @@ def _apply_penalty_for_task(db: Session, task: Task) -> bool:
     if not current_due:
         return False
 
-    changed = False
+    if current_due > now:
+        return False
+
     last_penalty_at = _as_utc_naive(task.penalty_last_applied_at)
-    while current_due <= now:
-        if not last_penalty_at or last_penalty_at < current_due:
-            db.add(
-                PointsLedger(
-                    family_id=task.family_id,
-                    user_id=task.assignee_id,
-                    source_type=PointsSourceEnum.task_penalty,
-                    source_id=task.id,
-                    points_delta=-task.penalty_points,
-                    description=f"Minuspunkte (nicht erledigt): {task.title}",
-                    created_by_id=None,
-                )
-            )
-            task.penalty_last_applied_at = current_due
-            last_penalty_at = current_due
-            changed = True
-            emit_live_event(
-                db,
-                family_id=task.family_id,
-                event_type="points.adjusted",
-                payload={
-                    "user_id": task.assignee_id,
-                    "points_delta": -task.penalty_points,
-                    "task_id": task.id,
-                    "reason": "task_penalty",
-                },
-            )
+    if last_penalty_at and last_penalty_at >= current_due:
+        return False
 
-        next_due = _next_due(current_due, task.recurrence_type, task.active_weekdays)
-        if not next_due or next_due <= current_due:
-            break
-        current_due = next_due
-
-    if current_due != _as_utc_naive(task.due_at):
-        task.due_at = current_due
-        changed = True
-        emit_live_event(
-            db,
+    db.add(
+        PointsLedger(
             family_id=task.family_id,
-            event_type="task.updated",
-            payload={"task_id": task.id, "status": task.status.value, "is_active": task.is_active, "assignee_id": task.assignee_id},
+            user_id=task.assignee_id,
+            source_type=PointsSourceEnum.task_penalty,
+            source_id=task.id,
+            points_delta=-task.penalty_points,
+            description=f"Minuspunkte (nicht erledigt): {task.title}",
+            created_by_id=None,
         )
-
-    return changed
+    )
+    task.penalty_last_applied_at = current_due
+    emit_live_event(
+        db,
+        family_id=task.family_id,
+        event_type="points.adjusted",
+        payload={
+            "user_id": task.assignee_id,
+            "points_delta": -task.penalty_points,
+            "task_id": task.id,
+            "reason": "task_penalty",
+        },
+    )
+    return True
 
 
 def _apply_penalties_for_family(db: Session, family_id: int) -> bool:
@@ -349,7 +334,6 @@ def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task |
                     TaskStatusEnum.open,
                     TaskStatusEnum.rejected,
                     TaskStatusEnum.submitted,
-                    TaskStatusEnum.missed_submitted,
                 ]
             ),
         )
@@ -366,6 +350,76 @@ def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task |
         if _recurring_task_identity_key(candidate) == key:
             return candidate
     return None
+
+
+def _next_cycle_boundary(task: Task) -> datetime | None:
+    due = _as_utc_naive(task.due_at)
+    if due is None:
+        return None
+
+    if task.recurrence_type == RecurrenceTypeEnum.daily.value:
+        return due.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
+    if task.recurrence_type == RecurrenceTypeEnum.weekly.value:
+        week_start = due.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=due.weekday())
+        return week_start + timedelta(days=7)
+
+    if task.recurrence_type == RecurrenceTypeEnum.monthly.value:
+        month_start = due.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        return _add_months(month_start, 1)
+
+    return None
+
+
+def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
+    now = datetime.utcnow()
+    candidates = (
+        db.query(Task)
+        .filter(
+            Task.family_id == family_id,
+            Task.is_active == True,  # noqa: E712
+            Task.due_at.is_not(None),
+            Task.recurrence_type.in_(
+                [
+                    RecurrenceTypeEnum.daily.value,
+                    RecurrenceTypeEnum.weekly.value,
+                    RecurrenceTypeEnum.monthly.value,
+                ]
+            ),
+            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
+        )
+        .order_by(Task.due_at.asc(), Task.id.asc())
+        .all()
+    )
+
+    changed = False
+    for task in candidates:
+        due = _as_utc_naive(task.due_at)
+        if not due or due >= now:
+            continue
+        boundary = _next_cycle_boundary(task)
+        if boundary is None or now < boundary:
+            continue
+
+        db.add(
+            TaskSubmission(
+                task_id=task.id,
+                submitted_by_id=task.assignee_id,
+                note="Automatisch als verpasst markiert",
+            )
+        )
+        task.status = TaskStatusEnum.missed_submitted
+        db.flush()
+        emit_live_event(
+            db,
+            family_id=task.family_id,
+            event_type="task.missed_reported",
+            payload={"task_id": task.id, "assignee_id": task.assignee_id, "auto": True},
+        )
+        _create_next_recurring_task(db, task, task.created_by_id)
+        changed = True
+
+    return changed
 
 
 def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int) -> Task | None:
@@ -941,6 +995,7 @@ def report_task_missed(
         )
     )
     task.status = TaskStatusEnum.missed_submitted
+    _create_next_recurring_task(db, task, current_user.id)
     db.flush()
     emit_live_event(
         db,
@@ -1040,6 +1095,57 @@ def review_missed_task(
 
     due_at = _as_utc_naive(task.due_at)
     deduction = 0
+    if payload.action == "approve":
+        latest_submission = (
+            db.query(TaskSubmission)
+            .filter(TaskSubmission.task_id == task.id)
+            .order_by(TaskSubmission.submitted_at.desc())
+            .first()
+        )
+        if not latest_submission:
+            latest_submission = TaskSubmission(
+                task_id=task.id,
+                submitted_by_id=task.assignee_id,
+                note="Nachträglich als erledigt bestätigt",
+            )
+            db.add(latest_submission)
+            db.flush()
+
+        approval = TaskApproval(
+            submission_id=latest_submission.id,
+            reviewed_by_id=current_user.id,
+            decision=ApprovalDecisionEnum.approved,
+            comment=payload.comment or "Nachträglich bestätigt",
+        )
+        db.add(approval)
+        db.flush()
+
+        task.status = TaskStatusEnum.approved
+        if task.points > 0:
+            db.add(
+                PointsLedger(
+                    family_id=task.family_id,
+                    user_id=task.assignee_id,
+                    source_type=PointsSourceEnum.task_approval,
+                    source_id=approval.id,
+                    points_delta=task.points,
+                    description=f"Punkte für Aufgabe: {task.title}",
+                    created_by_id=current_user.id,
+                )
+            )
+
+        _create_next_recurring_task(db, task, current_user.id)
+        db.flush()
+        emit_live_event(
+            db,
+            family_id=task.family_id,
+            event_type="task.reviewed",
+            payload={"task_id": task.id, "status": task.status.value, "assignee_id": task.assignee_id},
+        )
+        db.commit()
+        db.refresh(task)
+        return {"deleted": False, "penalty_applied": 0, "approved": True, "task_id": task.id}
+
     if payload.action == "penalty":
         deduction = task.penalty_points if task.penalty_points > 0 else max(task.points, 0)
         if due_at and task.penalty_last_applied_at and _as_utc_naive(task.penalty_last_applied_at) and _as_utc_naive(task.penalty_last_applied_at) >= due_at:
