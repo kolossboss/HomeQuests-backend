@@ -1,7 +1,5 @@
 # Changelog
 
-Kurz und knapp: nur Backend/WebUI-Änderungen für GitHub.
-
 ## v2026.03.09-02 (2026-03-09)
 
 - Tasks: Verpasste wiederkehrende Aufgaben werden sauber als `missed_submitted` behandelt; Eltern-Review unterstützt `approve`.

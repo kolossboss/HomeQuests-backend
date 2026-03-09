@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260309c" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260309d" />
   </head>
   <body>
     <main class="container">
@@ -83,6 +83,22 @@
             <p id="dashboard-week-summary" class="hero-pill">Diese Woche: 0 erledigt</p>
           </div>
 
+          <div id="dashboard-child-focus-section" class="section-block hidden">
+            <h4>Dein Tagesüberblick</h4>
+            <div class="child-focus-grid">
+              <article id="dashboard-child-today-focus" class="child-focus-card is-clickable focus-normal">
+                <p class="child-focus-kicker">Heute fällig</p>
+                <p id="dashboard-child-today-count" class="child-focus-count">0</p>
+                <p id="dashboard-child-today-meta" class="child-focus-meta">Keine fälligen Aufgaben</p>
+              </article>
+              <article id="dashboard-child-missed-focus" class="child-focus-card is-clickable focus-missed">
+                <p class="child-focus-kicker">Verpasst</p>
+                <p id="dashboard-child-missed-count" class="child-focus-count">0</p>
+                <p id="dashboard-child-missed-meta" class="child-focus-meta">Keine verpassten Aufgaben</p>
+              </article>
+            </div>
+          </div>
+
           <div class="stats-grid">
             <article class="stat-card"><span>Mitglieder</span><strong id="stat-members">0</strong></article>
             <article id="stat-card-open" class="stat-card is-clickable"><span>Offene Aufgaben</span><strong id="stat-open">0</strong></article>
@@ -129,39 +145,6 @@
               <p id="dashboard-weekly-caption" class="muted">Erledigte Aufgaben pro Tag</p>
               <div id="weekly-trend-bars" class="trend-bars"></div>
             </article>
-          </div>
-
-          <div id="dashboard-child-focus-section" class="section-block hidden">
-            <h4>Dein Tagesüberblick</h4>
-            <div class="child-focus-grid">
-              <article id="dashboard-child-today-focus" class="child-focus-card is-clickable focus-normal">
-                <p class="child-focus-kicker">Heute fällig</p>
-                <p id="dashboard-child-today-count" class="child-focus-count">0</p>
-                <p id="dashboard-child-today-meta" class="child-focus-meta">Keine fälligen Aufgaben</p>
-              </article>
-              <article id="dashboard-child-missed-focus" class="child-focus-card is-clickable focus-missed">
-                <p class="child-focus-kicker">Verpasst</p>
-                <p id="dashboard-child-missed-count" class="child-focus-count">0</p>
-                <p id="dashboard-child-missed-meta" class="child-focus-meta">Keine verpassten Aufgaben</p>
-              </article>
-            </div>
-          </div>
-
-          <div id="dashboard-child-today-list-section" class="section-block hidden">
-            <div class="section-headline-row">
-              <h4>Heute fällig und überfällig</h4>
-              <button id="dashboard-child-focus-close" type="button" class="btn-secondary">Schließen</button>
-            </div>
-            <div class="request-cards-grid child-focus-details-grid">
-              <article class="task-category-card">
-                <h5>Überfällig</h5>
-                <div id="dashboard-child-overdue-cards" class="request-card-list"></div>
-              </article>
-              <article class="task-category-card">
-                <h5>Heute fällig</h5>
-                <div id="dashboard-child-today-cards" class="request-card-list"></div>
-              </article>
-            </div>
           </div>
 
           <div id="dashboard-pending-section" class="section-block">
@@ -933,6 +916,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260309c"></script>
+    <script src="/static/app.js?v=20260309d"></script>
   </body>
 </html>

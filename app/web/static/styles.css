@@ -299,21 +299,6 @@ p {
   gap: 12px;
 }
 
-.child-focus-details-grid {
-  margin-top: 8px;
-}
-
-.section-headline-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.section-headline-row h4 {
-  margin: 0;
-}
-
 .child-focus-card {
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 14px;
@@ -985,6 +970,23 @@ tr:last-child td {
   border-color: rgba(255, 138, 133, 0.52);
   background: linear-gradient(160deg, rgba(138, 51, 62, 0.42) 0%, rgba(95, 30, 39, 0.35) 100%);
   color: #ffd8dd;
+}
+
+.child-task-btn {
+  padding: 5px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  border-radius: 8px;
+}
+
+.child-task-btn.done {
+  background: linear-gradient(160deg, #2a8f57 0%, #216f44 100%);
+  border-color: rgba(63, 200, 121, 0.62);
+}
+
+.child-task-btn.missed {
+  background: linear-gradient(160deg, #8b2d31 0%, #6e2226 100%);
+  border-color: rgba(241, 116, 116, 0.62);
 }
 
 .task-card-title {

@@ -601,8 +601,8 @@ function childTaskCardMarkup(task, { overdue = false, actionable = true } = {}) 
     <span class="task-card-title">${safeHtmlText(task.title)}</span>
     <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
     <div class="request-card-actions">
-      <button data-task-id="${task.id}" data-task-action="submit_done">Erledigt</button>
-      <button class="btn-secondary" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>
+      <button class="child-task-btn done" data-task-id="${task.id}" data-task-action="submit_done">Erledigt</button>
+      ${overdue ? `<button class="child-task-btn missed" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>` : ""}
     </div>
   </article>`;
 }
@@ -620,12 +620,7 @@ function renderChildTaskCards(targetId, tasks, emptyText, { overdue = false, act
 }
 
 function openChildDashboardTodayList() {
-  switchTab("dashboard");
-  toggleHidden("dashboard-child-today-list-section", false);
-  const section = byId("dashboard-child-today-list-section");
-  if (section) {
-    section.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
+  openTasksTabWithSection("child-task-categories-section");
 }
 
 function getTaskActivityDate(task) {
@@ -1286,9 +1281,6 @@ function applyRoleVisibility() {
   toggleHidden("dashboard-pending-section", child);
   toggleHidden("dashboard-child-focus-section", !child);
   toggleHidden("dashboard-missed-card", child);
-  if (!child) {
-    toggleHidden("dashboard-child-today-list-section", true);
-  }
   toggleHidden("stat-card-child-points", !child);
   syncDashboardStatsCardOrder();
 
@@ -1748,7 +1740,6 @@ function renderChildTaskLists() {
     : "<p class=\"muted\">Keine verpassten Aufgaben</p>";
 
   renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks);
-  renderChildDashboardTodayDetails(todayTasks, overdueTasks);
 
   byId("child-completed-cards").innerHTML = completedTasks.length
     ? completedTasks
@@ -1798,17 +1789,6 @@ function renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks) {
     todayCard.classList.add("focus-overdue");
     todayMeta.textContent = `${totalTodayTile} Aufgabe(n) heute`;
   }
-}
-
-function renderChildDashboardTodayDetails(todayTasks, overdueTasks) {
-  const section = byId("dashboard-child-today-list-section");
-  if (!section) return;
-  if (!isChildRole()) {
-    toggleHidden("dashboard-child-today-list-section", true);
-    return;
-  }
-  renderChildTaskCards("dashboard-child-overdue-cards", overdueTasks, "Keine überfälligen Aufgaben", { overdue: true });
-  renderChildTaskCards("dashboard-child-today-cards", todayTasks, "Heute keine fälligen Aufgaben");
 }
 
 async function handleChildTaskActionButton(button) {
@@ -3931,10 +3911,6 @@ const childMissedFocusCard = byId("dashboard-child-missed-focus");
 if (childMissedFocusCard) {
   childMissedFocusCard.addEventListener("click", () => openTasksTabWithSection("child-task-categories-section"));
 }
-const childFocusCloseButton = byId("dashboard-child-focus-close");
-if (childFocusCloseButton) {
-  childFocusCloseButton.addEventListener("click", () => toggleHidden("dashboard-child-today-list-section", true));
-}
 
 byId("tasks-manager-cards").addEventListener("click", async (event) => {
   const actionButton = event.target.closest("button[data-task-action]");
@@ -4214,12 +4190,6 @@ byId("ha-user-config-body").addEventListener("click", async (event) => {
 });
 
 byId("child-task-categories-section").addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-task-id]");
-  if (!button) return;
-  await handleChildTaskActionButton(button);
-});
-
-byId("dashboard-child-today-list-section").addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-task-id]");
   if (!button) return;
   await handleChildTaskActionButton(button);
