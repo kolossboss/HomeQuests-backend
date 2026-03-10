@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.10-02 (2026-03-10)
+
+- WebUI: weiteres Rework von Aufgabenansicht, Filter-/Aktionsbereichen und Kartenstruktur.
+- Styling: zusaetzliche Responsive- und Layout-Anpassungen in `styles.css` fuer bessere Nutzbarkeit.
+- Frontend-Logik: Interaktionen in `app.js` und Markup in `index.html` fuer den neuen Flow nachgezogen.
+
 ## v2026.03.10-01 (2026-03-10)
 
 - WebUI: umfangreiches Styling-Update fuer Listen, Karten und Filterbereiche.

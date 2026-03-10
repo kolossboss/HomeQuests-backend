@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260309e" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260310b" />
   </head>
   <body>
     <main class="container">
@@ -83,6 +83,14 @@
             <p id="dashboard-week-summary" class="hero-pill">Interaktive Übersicht mit Status, Trends und Familienmetriken.</p>
           </div>
 
+          <div id="dashboard-parent-open-summary-section" class="section-block hidden">
+            <div class="section-copy">
+              <h4>Offene Aufgaben je Kind</h4>
+              <p class="muted">Heute fällige und demnächst anstehende Aufgaben pro Kind.</p>
+            </div>
+            <div id="dashboard-parent-open-summary-cards" class="child-open-summary-grid"></div>
+          </div>
+
           <div id="dashboard-child-focus-section" class="section-block hidden">
             <h4>Dein Tagesüberblick</h4>
             <div class="child-focus-grid">
@@ -105,15 +113,10 @@
               <p class="muted">Schneller Überblick zu Aufgaben, Freigaben und Punkten.</p>
             </div>
             <div class="stats-grid">
-              <article class="stat-card metric-indigo">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-members">0</strong></div>
-                <span>Mitglieder</span>
-                <small class="stat-caption">Familie verwalten</small>
-              </article>
               <article id="stat-card-open" class="stat-card metric-blue is-clickable">
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-open">0</strong></div>
                 <span>Offene Aufgaben</span>
-                <small class="stat-caption">Jetzt aktiv</small>
+                <small class="stat-caption">Alle aktuell offenen Aufgaben</small>
               </article>
               <article id="stat-card-submitted" class="stat-card metric-orange is-clickable">
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-submitted">0</strong></div>
@@ -135,7 +138,7 @@
                 <span>Meine Punkte</span>
                 <small class="stat-caption">Punkteverlauf</small>
               </article>
-              <article class="stat-card metric-slate">
+              <article class="stat-card metric-red">
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-rejected">0</strong></div>
                 <span>Abgelehnt</span>
                 <small class="stat-caption">Erneut prüfen</small>
@@ -145,10 +148,10 @@
                 <span>Diese Woche erledigt</span>
                 <small class="stat-caption">Bestätigte Aufgaben</small>
               </article>
-              <article class="stat-card metric-slate">
+              <article id="stat-card-week-open" class="stat-card metric-slate is-clickable">
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-week-open">0</strong></div>
                 <span>Diese Woche offen</span>
-                <small class="stat-caption">Noch offen</small>
+                <small class="stat-caption">Fällig in dieser Woche</small>
               </article>
               <article class="stat-card metric-slate">
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-week-points">0</strong></div>
@@ -219,7 +222,7 @@
             </div>
           </div>
 
-          <div id="dashboard-members-section" class="section-block">
+          <div id="dashboard-members-section" class="section-block hidden">
             <h4>Nutzer</h4>
             <div class="table-wrap">
               <table>
@@ -959,6 +962,19 @@
             </div>
           </div>
 
+          <div id="dashboard-detail-modal" class="modal-overlay hidden">
+            <div class="modal-card dashboard-detail-modal-card">
+              <div class="modal-head">
+                <div>
+                  <h4 id="dashboard-detail-modal-title">Details</h4>
+                  <p id="dashboard-detail-modal-subtitle" class="muted"></p>
+                </div>
+                <button id="dashboard-detail-modal-close" type="button" class="btn-secondary">Schließen</button>
+              </div>
+              <div id="dashboard-detail-modal-body" class="dashboard-detail-modal-body"></div>
+            </div>
+          </div>
+
           <div class="hidden">
             <select id="notification-channel"></select>
             <select id="ha-user-select"></select>
@@ -970,6 +986,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260309e"></script>
+    <script src="/static/app.js?v=20260310b"></script>
   </body>
 </html>
