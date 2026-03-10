@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260309d" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260309e" />
   </head>
   <body>
     <main class="container">
@@ -80,7 +80,7 @@
               <h3>Familien-Dashboard</h3>
               <p class="muted">Aktueller Fortschritt fuer Aufgaben, Punkte und offene Freigaben.</p>
             </div>
-            <p id="dashboard-week-summary" class="hero-pill">Diese Woche: 0 erledigt</p>
+            <p id="dashboard-week-summary" class="hero-pill">Interaktive Übersicht mit Status, Trends und Familienmetriken.</p>
           </div>
 
           <div id="dashboard-child-focus-section" class="section-block hidden">
@@ -99,20 +99,74 @@
             </div>
           </div>
 
-          <div class="stats-grid">
-            <article class="stat-card"><span>Mitglieder</span><strong id="stat-members">0</strong></article>
-            <article id="stat-card-open" class="stat-card is-clickable"><span>Offene Aufgaben</span><strong id="stat-open">0</strong></article>
-            <article id="stat-card-submitted" class="stat-card is-clickable"><span>In Prüfung</span><strong id="stat-submitted">0</strong></article>
-            <article id="stat-card-missed" class="stat-card is-clickable"><span>Verpasst</span><strong id="stat-missed">0</strong></article>
-            <article id="stat-card-approved" class="stat-card is-clickable"><span>Abgeschlossen</span><strong id="stat-approved">0</strong></article>
-            <article class="stat-card"><span>Abgelehnt</span><strong id="stat-rejected">0</strong></article>
-            <article class="stat-card"><span>Diese Woche erledigt</span><strong id="stat-approved-week">0</strong></article>
-            <article class="stat-card"><span>Diese Woche offen</span><strong id="stat-week-open">0</strong></article>
-            <article class="stat-card"><span>Punkte diese Woche</span><strong id="stat-week-points">0</strong></article>
-            <article class="stat-card"><span>Erfolgsquote</span><strong id="stat-completion-rate">0%</strong></article>
-            <article id="stat-card-child-points" class="stat-card is-clickable hidden"><span>Meine Punkte</span><strong id="stat-child-points-value">-</strong></article>
+          <div class="section-block metrics-shell">
+            <div class="section-copy">
+              <h4>Kernmetriken</h4>
+              <p class="muted">Schneller Überblick zu Aufgaben, Freigaben und Punkten.</p>
+            </div>
+            <div class="stats-grid">
+              <article class="stat-card metric-indigo">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-members">0</strong></div>
+                <span>Mitglieder</span>
+                <small class="stat-caption">Familie verwalten</small>
+              </article>
+              <article id="stat-card-open" class="stat-card metric-blue is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-open">0</strong></div>
+                <span>Offene Aufgaben</span>
+                <small class="stat-caption">Jetzt aktiv</small>
+              </article>
+              <article id="stat-card-submitted" class="stat-card metric-orange is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-submitted">0</strong></div>
+                <span>In Prüfung</span>
+                <small class="stat-caption">Warten auf Freigabe</small>
+              </article>
+              <article id="stat-card-approved" class="stat-card metric-green is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-approved">0</strong></div>
+                <span>Abgeschlossen</span>
+                <small class="stat-caption">Historie öffnen</small>
+              </article>
+              <article id="stat-card-missed" class="stat-card metric-red is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-missed">0</strong></div>
+                <span>Verpasst</span>
+                <small class="stat-caption">Handlungsbedarf</small>
+              </article>
+              <article id="stat-card-child-points" class="stat-card metric-gold is-clickable hidden">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-child-points-value">-</strong></div>
+                <span>Meine Punkte</span>
+                <small class="stat-caption">Punkteverlauf</small>
+              </article>
+              <article class="stat-card metric-slate">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-rejected">0</strong></div>
+                <span>Abgelehnt</span>
+                <small class="stat-caption">Erneut prüfen</small>
+              </article>
+              <article class="stat-card metric-slate">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-approved-week">0</strong></div>
+                <span>Diese Woche erledigt</span>
+                <small class="stat-caption">Bestätigte Aufgaben</small>
+              </article>
+              <article class="stat-card metric-slate">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-week-open">0</strong></div>
+                <span>Diese Woche offen</span>
+                <small class="stat-caption">Noch offen</small>
+              </article>
+              <article class="stat-card metric-slate">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-week-points">0</strong></div>
+                <span>Punkte diese Woche</span>
+                <small class="stat-caption">Aktueller Trend</small>
+              </article>
+              <article class="stat-card metric-slate">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-completion-rate">0%</strong></div>
+                <span>Erfolgsquote</span>
+                <small class="stat-caption">Bestätigt vs. offen</small>
+              </article>
+            </div>
           </div>
 
+          <div class="section-copy dashboard-section-copy">
+            <h4>Statistiken</h4>
+            <p class="muted">Statusverteilung und Wochenverlauf der letzten Tage.</p>
+          </div>
           <div class="dashboard-charts-grid">
             <article class="section-block analytics-card">
               <h4>Statusverteilung</h4>
@@ -916,6 +970,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260309d"></script>
+    <script src="/static/app.js?v=20260309e"></script>
   </body>
 </html>

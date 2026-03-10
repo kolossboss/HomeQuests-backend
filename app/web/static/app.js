@@ -1633,7 +1633,7 @@ function renderTasks() {
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
             <div class="request-card-actions">
               <button data-task-action="edit" data-task-id="${task.id}">Bearbeiten</button>
-              <button data-task-action="toggle-active" data-task-id="${task.id}">${task.is_active === false ? "Aktivieren" : "Deaktivieren"}</button>
+              <button class="${task.is_active === false ? "btn-success" : "btn-danger"}" data-task-action="toggle-active" data-task-id="${task.id}">${task.is_active === false ? "Aktivieren" : "Deaktivieren"}</button>
               <button class="btn-secondary" data-task-action="delete" data-task-id="${task.id}">Löschen</button>
             </div>
           </article>`
@@ -1909,7 +1909,7 @@ function renderSpecialTaskTemplates() {
             <p class="entity-card-meta">Zuletzt geändert: ${fmtDate(entry.updated_at || entry.created_at)}</p>
             <div class="request-card-actions">
               <button data-special-task-action="edit" data-special-task-id="${entry.id}">Bearbeiten</button>
-              <button class="btn-secondary" data-special-task-action="delete" data-special-task-id="${entry.id}">Löschen</button>
+              <button class="btn-danger" data-special-task-action="delete" data-special-task-id="${entry.id}">Löschen</button>
             </div>
           </article>`
         )
@@ -1949,7 +1949,7 @@ function renderChildSpecialTaskCards() {
           <p class="request-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")} • ${entry.points} Punkte</p>
           <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
           <div class="request-card-actions">
-            <button data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
+            <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
           </div>
         </article>`;
       })
