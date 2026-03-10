@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.10-01 (2026-03-10)
+
+- WebUI: umfangreiches Styling-Update fuer Listen, Karten und Filterbereiche.
+- Dashboard/UI: Layout in `index.html` und Logik in `app.js` weiter aufgeraeumt.
+- Fokus: bessere Lesbarkeit und klarere visuelle Trennung in der Aufgabenansicht.
+
 ## v2026.03.09-02 (2026-03-09)
 
 - Tasks: Verpasste wiederkehrende Aufgaben werden sauber als `missed_submitted` behandelt; Eltern-Review unterstützt `approve`.
