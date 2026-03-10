@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260310b" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260310c" />
   </head>
   <body>
     <main class="container">
@@ -931,50 +931,6 @@
             </div>
           </div>
 
-          <div id="ha-user-editor-modal" class="modal-overlay hidden">
-            <div class="modal-card">
-              <h4>HA Nutzer bearbeiten</h4>
-              <p id="ha-user-modal-name" class="muted"></p>
-              <div class="form-grid compact">
-                <label>Gerät/Service
-                  <input id="ha-user-service" type="text" placeholder="z. B. mobile_app_iphone_von_simon" />
-                </label>
-                <label>Aktiv
-                  <select id="ha-user-enabled">
-                    <option value="true">ja</option>
-                    <option value="false">nein</option>
-                  </select>
-                </label>
-              </div>
-              <div class="weekday-picker">
-                <span>Erlaubte Ereignisse</span>
-                <div class="weekday-options">
-                  <label class="weekday-option"><input id="ha-user-child-new-task" type="checkbox" checked /> Kind: neue Aufgabe</label>
-                  <label class="weekday-option"><input id="ha-user-manager-task-submitted" type="checkbox" checked /> Eltern: Aufgabe eingereicht</label>
-                  <label class="weekday-option"><input id="ha-user-manager-reward-requested" type="checkbox" checked /> Eltern: Belohnung angefragt</label>
-                  <label class="weekday-option"><input id="ha-user-task-due-reminder" type="checkbox" checked /> Erinnerung vor Fälligkeit</label>
-                </div>
-              </div>
-              <div class="row-wrap">
-                <button id="ha-user-save-btn" type="button">Speichern</button>
-                <button id="ha-user-modal-cancel-btn" type="button" class="btn-secondary">Abbrechen</button>
-              </div>
-            </div>
-          </div>
-
-          <div id="dashboard-detail-modal" class="modal-overlay hidden">
-            <div class="modal-card dashboard-detail-modal-card">
-              <div class="modal-head">
-                <div>
-                  <h4 id="dashboard-detail-modal-title">Details</h4>
-                  <p id="dashboard-detail-modal-subtitle" class="muted"></p>
-                </div>
-                <button id="dashboard-detail-modal-close" type="button" class="btn-secondary">Schließen</button>
-              </div>
-              <div id="dashboard-detail-modal-body" class="dashboard-detail-modal-body"></div>
-            </div>
-          </div>
-
           <div class="hidden">
             <select id="notification-channel"></select>
             <select id="ha-user-select"></select>
@@ -986,6 +942,50 @@
       </section>
     </main>
 
-    <script src="/static/app.js?v=20260310b"></script>
+    <div id="ha-user-editor-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <h4>HA Nutzer bearbeiten</h4>
+        <p id="ha-user-modal-name" class="muted"></p>
+        <div class="form-grid compact">
+          <label>Gerät/Service
+            <input id="ha-user-service" type="text" placeholder="z. B. mobile_app_iphone_von_simon" />
+          </label>
+          <label>Aktiv
+            <select id="ha-user-enabled">
+              <option value="true">ja</option>
+              <option value="false">nein</option>
+            </select>
+          </label>
+        </div>
+        <div class="weekday-picker">
+          <span>Erlaubte Ereignisse</span>
+          <div class="weekday-options">
+            <label class="weekday-option"><input id="ha-user-child-new-task" type="checkbox" checked /> Kind: neue Aufgabe</label>
+            <label class="weekday-option"><input id="ha-user-manager-task-submitted" type="checkbox" checked /> Eltern: Aufgabe eingereicht</label>
+            <label class="weekday-option"><input id="ha-user-manager-reward-requested" type="checkbox" checked /> Eltern: Belohnung angefragt</label>
+            <label class="weekday-option"><input id="ha-user-task-due-reminder" type="checkbox" checked /> Erinnerung vor Fälligkeit</label>
+          </div>
+        </div>
+        <div class="row-wrap">
+          <button id="ha-user-save-btn" type="button">Speichern</button>
+          <button id="ha-user-modal-cancel-btn" type="button" class="btn-secondary">Abbrechen</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="dashboard-detail-modal" class="modal-overlay hidden">
+      <div class="modal-card dashboard-detail-modal-card">
+        <div class="modal-head">
+          <div>
+            <h4 id="dashboard-detail-modal-title">Details</h4>
+            <p id="dashboard-detail-modal-subtitle" class="muted"></p>
+          </div>
+          <button id="dashboard-detail-modal-close" type="button" class="btn-secondary">Schließen</button>
+        </div>
+        <div id="dashboard-detail-modal-body" class="dashboard-detail-modal-body"></div>
+      </div>
+    </div>
+
+    <script src="/static/app.js?v=20260310c"></script>
   </body>
 </html>

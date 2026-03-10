@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.10-03 (2026-03-10)
+
+- WebUI-Template: Modal-Container (`HA Nutzer bearbeiten`, `Dashboard-Details`) aus der verschachtelten Sektion auf Root-Ebene verschoben.
+- Frontend-Assets: Cache-Buster fuer `styles.css` und `app.js` auf `20260310c` angehoben.
+- Fokus: stabilere Modal-Darstellung und konsistente Layer-/Z-Index-Struktur im Dashboard.
+
 ## v2026.03.10-02 (2026-03-10)
 
 - WebUI: weiteres Rework von Aufgabenansicht, Filter-/Aktionsbereichen und Kartenstruktur.
