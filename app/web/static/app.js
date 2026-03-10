@@ -27,6 +27,7 @@ const state = {
   specialTaskEditorDirty: false,
   taskEditorInitialSnapshot: "",
   specialTaskEditorInitialSnapshot: "",
+  dashboardModalContext: null,
 };
 
 const authPanel = document.getElementById("auth-panel");
@@ -591,13 +592,14 @@ function childTaskDueText(task) {
 }
 
 function childTaskCardMarkup(task, { overdue = false, actionable = true } = {}) {
+  const toneClass = overdue ? "overdue" : (task.special_template_id ? "tone-green" : "tone-blue");
   if (!actionable) {
-    return `<article class="request-card ${overdue ? "overdue" : ""}">
+    return `<article class="request-card ${toneClass}">
       <span class="task-card-title">${safeHtmlText(task.title)}</span>
       <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
     </article>`;
   }
-  return `<article class="task-action-card ${overdue ? "overdue" : ""}">
+  return `<article class="task-action-card ${toneClass}">
     <span class="task-card-title">${safeHtmlText(task.title)}</span>
     <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
     <div class="request-card-actions">
@@ -620,7 +622,7 @@ function renderChildTaskCards(targetId, tasks, emptyText, { overdue = false, act
 }
 
 function openChildDashboardTodayList() {
-  openTasksTabWithSection("child-task-categories-section");
+  openChildDashboardModal("today");
 }
 
 function getTaskActivityDate(task) {
@@ -1245,7 +1247,7 @@ function mountInlineEditorSectionBelowTrigger(sectionId, triggerButton) {
 }
 
 function syncDashboardStatsCardOrder() {
-  const statsGrid = document.querySelector("#tab-dashboard .stats-grid");
+  const statsGrid = document.querySelector("#tab-dashboard .metrics-shell .stats-grid");
   const childPointsCard = byId("stat-card-child-points");
   if (!statsGrid || !childPointsCard) return;
 
@@ -1257,16 +1259,20 @@ function syncDashboardStatsCardOrder() {
 }
 
 function openTaskHistoryFromDashboard() {
-  if (isChildRole()) return;
+  if (isChildRole()) {
+    openChildDashboardModal("approved");
+    return;
+  }
   openTasksTabWithSection("task-history-section");
 }
 
-function openDashboardDetailModal(title, bodyHtml, subtitle = "") {
+function openDashboardDetailModal(title, bodyHtml, subtitle = "", context = null) {
   const overlay = byId("dashboard-detail-modal");
   const titleNode = byId("dashboard-detail-modal-title");
   const subtitleNode = byId("dashboard-detail-modal-subtitle");
   const bodyNode = byId("dashboard-detail-modal-body");
   if (!overlay || !titleNode || !subtitleNode || !bodyNode) return;
+  state.dashboardModalContext = context;
   titleNode.textContent = title;
   subtitleNode.textContent = subtitle || "";
   toggleHidden("dashboard-detail-modal-subtitle", !subtitle);
@@ -1275,6 +1281,7 @@ function openDashboardDetailModal(title, bodyHtml, subtitle = "") {
 }
 
 function closeDashboardDetailModal() {
+  state.dashboardModalContext = null;
   toggleHidden("dashboard-detail-modal", true);
   const bodyNode = byId("dashboard-detail-modal-body");
   if (bodyNode) bodyNode.innerHTML = "";
@@ -1314,14 +1321,37 @@ function getChildTaskBuckets(userId) {
   };
 }
 
+function getDashboardOverdueTasks(tasks = getVisibleTasksForDashboard()) {
+  const now = new Date();
+  return newestRecurringEntries(
+    tasks.filter((task) =>
+      (task.status === "open" || task.status === "rejected") &&
+      task.due_at &&
+      new Date(task.due_at) < now
+    ),
+    "earliest_due"
+  );
+}
+
+function dashboardTaskToneClass(task, options = {}) {
+  const { overdue = false, reviewMode = null } = options;
+  if (overdue) return "overdue";
+  if (reviewMode === "submitted" || task.status === "submitted") return "tone-orange";
+  if (reviewMode === "missed" || task.status === "missed_submitted") return "tone-pink";
+  if (task.special_template_id) return "tone-green";
+  if (task.status === "approved") return "tone-green";
+  return "tone-blue";
+}
+
 function renderDashboardTaskCards(tasks, emptyText, options = {}) {
   if (!Array.isArray(tasks) || tasks.length === 0) {
     return `<p class="muted">${emptyText}</p>`;
   }
   const { overdue = false, reviewMode = null } = options;
   return tasks.map((task) => {
+    const toneClass = dashboardTaskToneClass(task, { overdue, reviewMode });
     if (reviewMode === "submitted") {
-      return `<article class="request-card ${overdue ? "overdue" : ""}">
+      return `<article class="request-card ${toneClass}">
         <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als erledigt gemeldet</p>
         <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
         <div class="request-card-actions">
@@ -1335,7 +1365,7 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
       </article>`;
     }
     if (reviewMode === "missed") {
-      return `<article class="request-card ${overdue ? "overdue" : ""}">
+      return `<article class="request-card ${toneClass}">
         <p class="request-card-title">${memberNameHtml(task.assignee_id)}: "${safeHtmlText(task.title)}" verpasst</p>
         <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
         <div class="request-card-actions">
@@ -1345,7 +1375,7 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
         </div>
       </article>`;
     }
-    return `<article class="request-card ${overdue ? "overdue" : ""}">
+    return `<article class="request-card ${toneClass}">
       <p class="request-card-title">${safeHtmlText(task.title)}</p>
       <p class="request-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${taskDueText(task)} • ${task.points} Punkte</p>
       <p class="request-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
@@ -1353,18 +1383,176 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
   }).join("");
 }
 
+function renderDashboardRewardCards(entries, emptyText, { reviewMode = false } = {}) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return `<p class="muted">${emptyText}</p>`;
+  }
+  return entries.map((entry) => {
+    const reward = state.rewards.find((item) => item.id === entry.reward_id);
+    const title = reward ? reward.title : "Belohnung";
+    return `<article class="request-card tone-magenta">
+      <p class="request-card-title">${memberNameHtml(entry.requested_by_id)} hat "${safeHtmlText(title)}" angefragt</p>
+      <p class="request-card-meta">Angefragt am ${fmtDate(entry.requested_at)}</p>
+      ${reward?.description ? `<p class="request-card-meta">${safeHtmlText(reward.description)}</p>` : ""}
+      ${reviewMode ? `<div class="request-card-actions">
+        <button data-dashboard-reward-review-action="approved" data-redemption-id="${entry.id}">Bestätigen</button>
+        <button class="btn-secondary" data-dashboard-reward-review-action="rejected" data-redemption-id="${entry.id}">Ablehnen</button>
+      </div>` : ""}
+    </article>`;
+  }).join("");
+}
+
+function childDashboardSpecialCardsMarkup() {
+  const available = (state.availableSpecialTasks || []).filter((entry) => isSpecialTaskAvailableNow(entry));
+  if (!available.length) return "";
+  return `<section class="dashboard-modal-section">
+    <h5>Sonderaufgaben</h5>
+    <div class="dashboard-modal-grid">${available.map((entry) => {
+      const disabled = entry.remaining_count <= 0 ? "disabled" : "";
+      const buttonText = entry.remaining_count <= 0 ? "Limit erreicht" : "Annehmen";
+      const dailyMeta = entry.interval_type === "daily"
+        ? ` • Tage: ${weekdaysText((entry.active_weekdays && entry.active_weekdays.length) ? entry.active_weekdays : [0, 1, 2, 3, 4, 5, 6])}`
+        : "";
+      const dueMeta = entry.interval_type === "daily" && entry.due_time_hhmm
+        ? ` • heute bis ${entry.due_time_hhmm}`
+        : "";
+      return `<article class="request-card tone-green">
+        <p class="request-card-title">${safeHtmlText(entry.title)}</p>
+        <p class="request-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")} • ${entry.points} Punkte</p>
+        <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
+        <div class="request-card-actions">
+          <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
+        </div>
+      </article>`;
+    }).join("")}</div>
+  </section>`;
+}
+
+function renderChildDashboardTaskCards(tasks, emptyText, options = {}) {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return `<p class="muted">${emptyText}</p>`;
+  }
+  const { overdue = false, actionable = true } = options;
+  return tasks.map((task) => childTaskCardMarkup(task, { overdue, actionable })).join("");
+}
+
+function renderChildReadOnlyTaskCards(tasks, emptyText, toneClass, metaBuilder) {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return `<p class="muted">${emptyText}</p>`;
+  }
+  return tasks.map((task) => `<article class="request-card ${toneClass}">
+    <p class="request-card-title">${safeHtmlText(task.title)}</p>
+    <p class="request-card-meta">${metaBuilder(task)}</p>
+    ${task.description ? `<p class="request-card-meta">${safeHtmlText(task.description)}</p>` : ""}
+  </article>`).join("");
+}
+
+function openChildDashboardModal(view) {
+  if (!isChildRole() || !state.me) return;
+  const buckets = getChildTaskBuckets(state.me.id);
+  const sections = [];
+  let title = "Aufgaben";
+  let subtitle = "";
+
+  if (view === "today") {
+    title = "Heute fällig";
+    subtitle = "Überfällige und heute fällige Aufgaben";
+    if (buckets.overdueTasks.length) {
+      sections.push(`<section class="dashboard-modal-section">
+        <h5>Überfällig</h5>
+        <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.overdueTasks, "Keine überfälligen Aufgaben.", { overdue: true })}</div>
+      </section>`);
+    }
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Heute fällig</h5>
+      <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.todayTasks, "Heute keine fälligen Aufgaben.")}</div>
+    </section>`);
+  } else if (view === "open") {
+    title = "Offene Aufgaben";
+    subtitle = "Heute, demnächst und diese Woche";
+    if (buckets.overdueTasks.length) {
+      sections.push(`<section class="dashboard-modal-section">
+        <h5>Überfällig</h5>
+        <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.overdueTasks, "Keine überfälligen Aufgaben.", { overdue: true })}</div>
+      </section>`);
+    }
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Heute fällig</h5>
+      <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.todayTasks, "Heute keine fälligen Aufgaben.")}</div>
+    </section>`);
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Wochenaufgaben</h5>
+      <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.weekTasks, "Keine Wochenaufgaben.")}</div>
+    </section>`);
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Demnächst fällig</h5>
+      <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.upcomingTasks, "Keine Aufgaben für die nächsten Tage.", { actionable: false })}</div>
+    </section>`);
+    sections.push(childDashboardSpecialCardsMarkup());
+  } else if (view === "submitted") {
+    title = "Wartet auf Bestätigung";
+    subtitle = "Von dir eingereichte Aufgaben";
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>In Prüfung</h5>
+      <div class="dashboard-modal-grid">${renderChildReadOnlyTaskCards(
+        buckets.waitingTasks,
+        "Keine Aufgaben in Prüfung.",
+        "tone-orange",
+        (task) => `Eingereicht: ${fmtDate(task.updated_at || task.created_at)} • ${childTaskDueText(task)}`
+      )}</div>
+    </section>`);
+  } else if (view === "missed") {
+    title = "Verpasste Aufgaben";
+    subtitle = "Warten auf Entscheidung der Eltern";
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Verpasst</h5>
+      <div class="dashboard-modal-grid">${renderChildReadOnlyTaskCards(
+        buckets.missedTasks,
+        "Keine verpassten Aufgaben.",
+        "tone-pink",
+        (task) => `Verpasst • ${childTaskDueText(task)} • Entscheidung durch Eltern offen`
+      )}</div>
+    </section>`);
+  } else if (view === "approved") {
+    title = "Abgeschlossene Aufgaben";
+    subtitle = "Bestätigte Aufgaben";
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Abgeschlossen</h5>
+      <div class="dashboard-modal-grid">${renderChildReadOnlyTaskCards(
+        buckets.completedTasks,
+        "Noch keine bestätigten Aufgaben.",
+        "tone-green",
+        (task) => `Bestätigt • ${childTaskDueText(task)}`
+      )}</div>
+    </section>`);
+  }
+
+  openDashboardDetailModal(title, sections.filter(Boolean).join(""), subtitle, { type: "child", view });
+}
+
 function openManagerTaskModal(mode) {
   if (!isManagerRole()) return;
   const openTasks = state.tasks.filter((task) => task.status === "open");
   const submittedTasks = state.tasks.filter((task) => task.status === "submitted");
   const missedTasks = state.tasks.filter((task) => task.status === "missed_submitted");
+  const overdueTasks = getDashboardOverdueTasks(state.tasks);
   const weekOpenTasks = getOpenThisWeekTasks(state.tasks);
 
   if (mode === "open") {
     openDashboardDetailModal(
       "Offene Aufgaben",
       `<div class="dashboard-modal-grid">${renderDashboardTaskCards(openTasks, "Keine offenen Aufgaben.")}</div>`,
-      "Alle aktuell offenen Aufgaben"
+      "Alle aktuell offenen Aufgaben",
+      { type: "manager", view: "open" }
+    );
+    return;
+  }
+  if (mode === "overdue") {
+    openDashboardDetailModal(
+      "Überfällige Aufgaben",
+      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(overdueTasks, "Keine überfälligen Aufgaben.", { overdue: true })}</div>`,
+      "Offene Aufgaben mit überschrittener Fälligkeit",
+      { type: "manager", view: "overdue" }
     );
     return;
   }
@@ -1372,7 +1560,8 @@ function openManagerTaskModal(mode) {
     openDashboardDetailModal(
       "Aufgaben in Prüfung",
       `<div class="dashboard-modal-grid">${renderDashboardTaskCards(submittedTasks, "Keine Aufgaben in Prüfung.", { reviewMode: "submitted" })}</div>`,
-      "Freigaben direkt im Dashboard prüfen"
+      "Freigaben direkt im Dashboard prüfen",
+      { type: "manager", view: "submitted" }
     );
     return;
   }
@@ -1380,7 +1569,8 @@ function openManagerTaskModal(mode) {
     openDashboardDetailModal(
       "Verpasste Aufgaben",
       `<div class="dashboard-modal-grid">${renderDashboardTaskCards(missedTasks, "Keine verpassten Aufgaben.", { reviewMode: "missed", overdue: true })}</div>`,
-      "Entscheidung direkt im Dashboard treffen"
+      "Entscheidung direkt im Dashboard treffen",
+      { type: "manager", view: "missed" }
     );
     return;
   }
@@ -1388,9 +1578,21 @@ function openManagerTaskModal(mode) {
     openDashboardDetailModal(
       "Diese Woche offen",
       `<div class="dashboard-modal-grid">${renderDashboardTaskCards(weekOpenTasks, "Keine offenen Aufgaben mit Bezug zu dieser Woche.")}</div>`,
-      "Offene oder eingereichte Aufgaben, die diese Woche relevant sind"
+      "Offene oder eingereichte Aufgaben, die diese Woche relevant sind",
+      { type: "manager", view: "week-open" }
     );
   }
+}
+
+function openManagerRewardModal() {
+  if (!isManagerRole()) return;
+  const pendingRewards = getPendingRewardRequests();
+  openDashboardDetailModal(
+    "Belohnungsanfragen",
+    `<div class="dashboard-modal-grid">${renderDashboardRewardCards(pendingRewards, "Keine offenen Belohnungsanfragen.", { reviewMode: true })}</div>`,
+    "Belohnungen direkt im Dashboard prüfen",
+    { type: "manager", view: "rewards" }
+  );
 }
 
 function openManagerChildSummaryModal(userId, view) {
@@ -1421,8 +1623,29 @@ function openManagerChildSummaryModal(userId, view) {
   openDashboardDetailModal(
     member.display_name,
     sections.join(""),
-    view === "today" ? "Heute fällige Aufgaben dieses Kindes" : "Demnächst fällige Aufgaben dieses Kindes"
+    view === "today" ? "Heute fällige Aufgaben dieses Kindes" : "Demnächst fällige Aufgaben dieses Kindes",
+    { type: "manager-child-summary", userId, view }
   );
+}
+
+function refreshDashboardModalContext() {
+  const context = state.dashboardModalContext;
+  if (!context) return;
+  if (context.type === "manager") {
+    if (context.view === "rewards") {
+      openManagerRewardModal();
+      return;
+    }
+    openManagerTaskModal(context.view);
+    return;
+  }
+  if (context.type === "manager-child-summary") {
+    openManagerChildSummaryModal(context.userId, context.view);
+    return;
+  }
+  if (context.type === "child") {
+    openChildDashboardModal(context.view);
+  }
 }
 
 function openTasksTabWithSection(sectionId = null) {
@@ -1761,55 +1984,16 @@ function renderDashboardPendingRequests() {
   const submittedTasks = pendingTasks.filter((task) => task.status === "submitted");
   const missedTasks = pendingTasks.filter((task) => task.status === "missed_submitted");
   const pendingRewards = getPendingRewardRequests();
+  const overdueTasks = getDashboardOverdueTasks(state.tasks);
 
-  byId("dashboard-pending-task-cards").innerHTML = submittedTasks.length
-    ? submittedTasks
-      .map((task) => {
-        return `<article class="request-card">
-          <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als erledigt gemeldet</p>
-          <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
-          <div class="request-card-actions">
-            <button data-dashboard-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
-            ${
-              task.special_template_id
-                ? `<button class="btn-secondary" data-dashboard-task-review-action="rejected_delete" data-task-id="${task.id}">Ablehnen & löschen</button>`
-                : `<button class="btn-secondary" data-dashboard-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>`
-            }
-          </div>
-        </article>`;
-      })
-      .join("")
-    : "<p class=\"muted\">Keine Aufgaben in Prüfung</p>";
-
-  byId("dashboard-missed-task-cards").innerHTML = missedTasks.length
-    ? missedTasks
-      .map((task) => `<article class="request-card">
-          <p class="request-card-title">${memberNameHtml(task.assignee_id)}: "${safeHtmlText(task.title)}" verpasst</p>
-          <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
-          <div class="request-card-actions">
-            <button data-dashboard-missed-task-action="approve" data-task-id="${task.id}">Doch bestätigen</button>
-            <button data-dashboard-missed-task-action="delete" data-task-id="${task.id}">Löschen</button>
-            <button class="btn-secondary" data-dashboard-missed-task-action="penalty" data-task-id="${task.id}">Minuspunkte</button>
-          </div>
-        </article>`)
-      .join("")
-    : "<p class=\"muted\">Keine verpassten Aufgaben</p>";
-
-  byId("dashboard-pending-reward-cards").innerHTML = pendingRewards.length
-    ? pendingRewards
-      .map((entry) => {
-        const reward = state.rewards.find((r) => r.id === entry.reward_id);
-        return `<article class="request-card">
-          <p class="request-card-title">${memberNameHtml(entry.requested_by_id)} hat "${safeHtmlText(reward ? reward.title : "Belohnung")}" angefragt</p>
-          <p class="request-card-meta">Angefragt am ${fmtDate(entry.requested_at)}</p>
-          <div class="request-card-actions">
-            <button data-dashboard-reward-review-action="approved" data-redemption-id="${entry.id}">Bestätigen</button>
-            <button class="btn-secondary" data-dashboard-reward-review-action="rejected" data-redemption-id="${entry.id}">Ablehnen</button>
-          </div>
-        </article>`;
-      })
-      .join("")
-    : "<p class=\"muted\">Keine offenen Belohnungsanfragen</p>";
+  const pendingOverdueCount = byId("pending-overdue-count");
+  const pendingSubmittedCount = byId("pending-submitted-count");
+  const pendingMissedCount = byId("pending-missed-count");
+  const pendingRewardsCount = byId("pending-rewards-count");
+  if (pendingOverdueCount) pendingOverdueCount.textContent = String(overdueTasks.length);
+  if (pendingSubmittedCount) pendingSubmittedCount.textContent = String(submittedTasks.length);
+  if (pendingMissedCount) pendingMissedCount.textContent = String(missedTasks.length);
+  if (pendingRewardsCount) pendingRewardsCount.textContent = String(pendingRewards.length);
 }
 
 function renderTasks() {
@@ -1843,7 +2027,7 @@ function renderTasks() {
     ? managerTasks.length
       ? managerTasks
         .map(
-          (task) => `<article class="entity-card entity-card-list">
+          (task) => `<article class="entity-card entity-card-list ${task.special_template_id ? "entity-card-special" : "entity-card-task"}">
             <div class="entity-card-head">
               <p class="entity-card-title">${safeHtmlText(task.title)}</p>
               <span class="entity-tag">${task.is_active === false ? "deaktiviert" : statusLabel(task.status)}</span>
@@ -1869,7 +2053,7 @@ function renderTasks() {
     ? managerHistoryTasks.length
       ? managerHistoryTasks
         .map(
-          (task) => `<article class="entity-card">
+          (task) => `<article class="entity-card ${task.special_template_id ? "entity-card-special" : "entity-card-task"}">
             <div class="entity-card-head">
               <p class="entity-card-title">${safeHtmlText(task.title)}</p>
               <span class="entity-tag">bestätigt</span>
@@ -1888,10 +2072,10 @@ function renderTasks() {
   applyMobileLabelsToTableBodies(["dashboard-tasks-body"]);
 
   byId("stat-open").textContent = String(statusCounts.open);
-  byId("stat-submitted").textContent = String(statusCounts.submitted);
-  byId("stat-missed").textContent = String(statusCounts.missed);
-  byId("stat-approved").textContent = String(statusCounts.approved);
-  byId("stat-rejected").textContent = String(statusCounts.rejected);
+  if (byId("stat-submitted")) byId("stat-submitted").textContent = String(statusCounts.submitted);
+  if (byId("stat-missed")) byId("stat-missed").textContent = String(statusCounts.missed);
+  if (byId("stat-approved")) byId("stat-approved").textContent = String(statusCounts.approved);
+  if (byId("stat-rejected")) byId("stat-rejected").textContent = String(statusCounts.rejected);
 
   renderManagerChildOpenSummary();
   renderChildTaskLists();
@@ -2097,7 +2281,7 @@ function renderSpecialTaskTemplates() {
     ? sortedTemplates.length
       ? sortedTemplates
         .map(
-          (entry) => `<article class="entity-card entity-card-list">
+          (entry) => `<article class="entity-card entity-card-list entity-card-special">
             <div class="entity-card-head">
               <p class="entity-card-title">${safeHtmlText(entry.title)}</p>
               <span class="entity-tag">${entry.is_active ? "aktiv" : "deaktiviert"}</span>
@@ -2144,7 +2328,7 @@ function renderChildSpecialTaskCards() {
         const dueMeta = entry.interval_type === "daily" && entry.due_time_hhmm
           ? ` • heute bis ${entry.due_time_hhmm}`
           : "";
-        return `<article class="request-card">
+        return `<article class="request-card tone-green">
           <p class="request-card-title">${safeHtmlText(entry.title)}</p>
           <p class="request-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")} • ${entry.points} Punkte</p>
           <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
@@ -4074,7 +4258,7 @@ async function handleDashboardReviewClick(event) {
       } else {
         await reviewTaskRequest(taskId, decision);
       }
-      closeDashboardDetailModal();
+      refreshDashboardModalContext();
     } catch (error) {
       log("Aufgabe prüfen Fehler", { error: error.message });
     }
@@ -4088,7 +4272,7 @@ async function handleDashboardReviewClick(event) {
     if (!taskId || !action) return true;
     try {
       await reviewMissedTaskRequest(taskId, action);
-      closeDashboardDetailModal();
+      refreshDashboardModalContext();
     } catch (error) {
       log("Nicht-erledigt Prüfung Fehler", { error: error.message });
     }
@@ -4102,7 +4286,7 @@ async function handleDashboardReviewClick(event) {
     if (!redemptionId || !decision) return true;
     try {
       await reviewRedemptionRequest(redemptionId, decision);
-      closeDashboardDetailModal();
+      refreshDashboardModalContext();
     } catch (error) {
       log("Belohnung prüfen Fehler", { error: error.message });
     }
@@ -4110,6 +4294,33 @@ async function handleDashboardReviewClick(event) {
   }
 
   return false;
+}
+
+async function handleDashboardModalActionClick(event) {
+  if (await handleDashboardReviewClick(event)) return;
+
+  const childActionButton = event.target.closest("button[data-task-action]");
+  if (childActionButton) {
+    try {
+      await handleChildTaskActionButton(childActionButton);
+      refreshDashboardModalContext();
+    } catch (error) {
+      log("Kinder-Aufgabe im Popup Fehler", { error: error.message });
+    }
+    return;
+  }
+
+  const specialClaimButton = event.target.closest("button[data-special-task-claim-id]");
+  if (specialClaimButton) {
+    const templateId = Number(specialClaimButton.dataset.specialTaskClaimId);
+    if (!templateId) return;
+    try {
+      await claimSpecialTaskTemplate(templateId);
+      refreshDashboardModalContext();
+    } catch (error) {
+      log("Sonderaufgabe im Popup Fehler", { error: error.message });
+    }
+  }
 }
 
 if (familySelect) {
@@ -4135,7 +4346,7 @@ const statCardOpen = byId("stat-card-open");
 if (statCardOpen) {
   statCardOpen.addEventListener("click", () => {
     if (isChildRole()) {
-      openChildDashboardTodayList();
+      openChildDashboardModal("open");
       return;
     }
     openManagerTaskModal("open");
@@ -4145,7 +4356,7 @@ const statCardSubmitted = byId("stat-card-submitted");
 if (statCardSubmitted) {
   statCardSubmitted.addEventListener("click", () => {
     if (isChildRole()) {
-      openTasksTabWithSection("child-submitted-section");
+      openChildDashboardModal("submitted");
       return;
     }
     openManagerTaskModal("submitted");
@@ -4155,7 +4366,7 @@ const statCardMissed = byId("stat-card-missed");
 if (statCardMissed) {
   statCardMissed.addEventListener("click", () => {
     if (isChildRole()) {
-      openTasksTabWithSection("child-task-categories-section");
+      openChildDashboardModal("missed");
       return;
     }
     openManagerTaskModal("missed");
@@ -4175,11 +4386,27 @@ if (statCardWeekOpen) {
 }
 const childTodayFocusCard = byId("dashboard-child-today-focus");
 if (childTodayFocusCard) {
-  childTodayFocusCard.addEventListener("click", openChildDashboardTodayList);
+  childTodayFocusCard.addEventListener("click", () => openChildDashboardModal("today"));
 }
 const childMissedFocusCard = byId("dashboard-child-missed-focus");
 if (childMissedFocusCard) {
-  childMissedFocusCard.addEventListener("click", () => openTasksTabWithSection("child-task-categories-section"));
+  childMissedFocusCard.addEventListener("click", () => openChildDashboardModal("missed"));
+}
+const pendingCardOverdue = byId("pending-card-overdue");
+if (pendingCardOverdue) {
+  pendingCardOverdue.addEventListener("click", () => openManagerTaskModal("overdue"));
+}
+const pendingCardSubmitted = byId("pending-card-submitted");
+if (pendingCardSubmitted) {
+  pendingCardSubmitted.addEventListener("click", () => openManagerTaskModal("submitted"));
+}
+const pendingCardMissed = byId("pending-card-missed");
+if (pendingCardMissed) {
+  pendingCardMissed.addEventListener("click", () => openManagerTaskModal("missed"));
+}
+const pendingCardRewards = byId("pending-card-rewards");
+if (pendingCardRewards) {
+  pendingCardRewards.addEventListener("click", openManagerRewardModal);
 }
 const dashboardDetailModal = byId("dashboard-detail-modal");
 if (dashboardDetailModal) {
@@ -4350,7 +4577,7 @@ byId("dashboard-pending-section").addEventListener("click", async (event) => {
 });
 
 byId("dashboard-detail-modal-body").addEventListener("click", async (event) => {
-  await handleDashboardReviewClick(event);
+  await handleDashboardModalActionClick(event);
 });
 
 byId("manager-task-review-cards").addEventListener("click", async (event) => {
