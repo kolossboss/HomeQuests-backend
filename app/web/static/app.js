@@ -765,6 +765,15 @@ function renderWeeklyTrend(tasks) {
   }
 }
 
+function getOpenThisWeekTasks(tasks = getVisibleTasksForDashboard()) {
+  const { start, end } = getWeekRange(new Date());
+  return tasks.filter((task) => {
+    if (task.status !== "open" && task.status !== "submitted") return false;
+    if (task.recurrence_type === "weekly") return true;
+    return isDateInRange(parseDateSafe(task.due_at), start, end);
+  });
+}
+
 function renderDashboardAnalytics(tasks, statusCounts = getTaskStatusCounts(tasks)) {
   const totalStatusCount = statusCounts.open + statusCounts.submitted + statusCounts.missed + statusCounts.approved + statusCounts.rejected;
   const completionRate = totalStatusCount > 0 ? Math.round((statusCounts.approved / totalStatusCount) * 100) : 0;
@@ -773,11 +782,7 @@ function renderDashboardAnalytics(tasks, statusCounts = getTaskStatusCounts(task
   const approvedThisWeek = tasks.filter(
     (task) => task.status === "approved" && isDateInRange(getTaskActivityDate(task), start, end)
   );
-  const openThisWeek = tasks.filter((task) => {
-    if (task.status !== "open" && task.status !== "submitted") return false;
-    if (task.recurrence_type === "weekly") return true;
-    return isDateInRange(parseDateSafe(task.due_at), start, end);
-  }).length;
+  const openThisWeek = getOpenThisWeekTasks(tasks).length;
   const pointsThisWeek = approvedThisWeek.reduce((sum, task) => sum + Number(task.points || 0), 0);
 
   const statApprovedWeek = byId("stat-approved-week");
@@ -1256,6 +1261,170 @@ function openTaskHistoryFromDashboard() {
   openTasksTabWithSection("task-history-section");
 }
 
+function openDashboardDetailModal(title, bodyHtml, subtitle = "") {
+  const overlay = byId("dashboard-detail-modal");
+  const titleNode = byId("dashboard-detail-modal-title");
+  const subtitleNode = byId("dashboard-detail-modal-subtitle");
+  const bodyNode = byId("dashboard-detail-modal-body");
+  if (!overlay || !titleNode || !subtitleNode || !bodyNode) return;
+  titleNode.textContent = title;
+  subtitleNode.textContent = subtitle || "";
+  toggleHidden("dashboard-detail-modal-subtitle", !subtitle);
+  bodyNode.innerHTML = bodyHtml || "<p class=\"muted\">Keine Einträge vorhanden.</p>";
+  toggleHidden("dashboard-detail-modal", false);
+}
+
+function closeDashboardDetailModal() {
+  toggleHidden("dashboard-detail-modal", true);
+  const bodyNode = byId("dashboard-detail-modal-body");
+  if (bodyNode) bodyNode.innerHTML = "";
+}
+
+function getChildTaskBuckets(userId) {
+  const ownTasks = state.tasks.filter((task) => task.assignee_id === userId);
+  const ownVisibleTasks = ownTasks.filter((task) => task.is_active !== false || task.status === "approved");
+  const now = new Date();
+  const tomorrowStart = startOfDay(now);
+  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+  const actionableTasks = newestRecurringEntries(ownVisibleTasks
+    .filter((task) => task.status === "open" || task.status === "rejected")
+    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)), "earliest_due");
+
+  return {
+    overdueTasks: actionableTasks.filter((task) => task.due_at && new Date(task.due_at) < now),
+    weekTasks: actionableTasks.filter(
+      (task) => task.recurrence_type === "weekly" && !(task.due_at && new Date(task.due_at) < now)
+    ),
+    todayTasks: actionableTasks.filter((task) => {
+      if (task.recurrence_type === "weekly") return false;
+      if (task.special_template_id) return true;
+      const due = parseDateSafe(task.due_at);
+      return Boolean(due) && due >= now && due < tomorrowStart;
+    }),
+    upcomingTasks: actionableTasks.filter((task) => {
+      if (task.recurrence_type === "weekly") return false;
+      if (task.special_template_id) return false;
+      const due = parseDateSafe(task.due_at);
+      if (!due) return true;
+      return due >= tomorrowStart;
+    }),
+    waitingTasks: newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "submitted")),
+    missedTasks: newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "missed_submitted")),
+    completedTasks: ownVisibleTasks.filter((task) => task.status === "approved" && task.recurrence_type === "none"),
+  };
+}
+
+function renderDashboardTaskCards(tasks, emptyText, options = {}) {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    return `<p class="muted">${emptyText}</p>`;
+  }
+  const { overdue = false, reviewMode = null } = options;
+  return tasks.map((task) => {
+    if (reviewMode === "submitted") {
+      return `<article class="request-card ${overdue ? "overdue" : ""}">
+        <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als erledigt gemeldet</p>
+        <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
+        <div class="request-card-actions">
+          <button data-dashboard-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
+          ${
+            task.special_template_id
+              ? `<button class="btn-secondary" data-dashboard-task-review-action="rejected_delete" data-task-id="${task.id}">Ablehnen & löschen</button>`
+              : `<button class="btn-secondary" data-dashboard-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>`
+          }
+        </div>
+      </article>`;
+    }
+    if (reviewMode === "missed") {
+      return `<article class="request-card ${overdue ? "overdue" : ""}">
+        <p class="request-card-title">${memberNameHtml(task.assignee_id)}: "${safeHtmlText(task.title)}" verpasst</p>
+        <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
+        <div class="request-card-actions">
+          <button data-dashboard-missed-task-action="approve" data-task-id="${task.id}">Doch bestätigen</button>
+          <button data-dashboard-missed-task-action="delete" data-task-id="${task.id}">Löschen</button>
+          <button class="btn-secondary" data-dashboard-missed-task-action="penalty" data-task-id="${task.id}">Minuspunkte</button>
+        </div>
+      </article>`;
+    }
+    return `<article class="request-card ${overdue ? "overdue" : ""}">
+      <p class="request-card-title">${safeHtmlText(task.title)}</p>
+      <p class="request-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${taskDueText(task)} • ${task.points} Punkte</p>
+      <p class="request-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
+    </article>`;
+  }).join("");
+}
+
+function openManagerTaskModal(mode) {
+  if (!isManagerRole()) return;
+  const openTasks = state.tasks.filter((task) => task.status === "open");
+  const submittedTasks = state.tasks.filter((task) => task.status === "submitted");
+  const missedTasks = state.tasks.filter((task) => task.status === "missed_submitted");
+  const weekOpenTasks = getOpenThisWeekTasks(state.tasks);
+
+  if (mode === "open") {
+    openDashboardDetailModal(
+      "Offene Aufgaben",
+      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(openTasks, "Keine offenen Aufgaben.")}</div>`,
+      "Alle aktuell offenen Aufgaben"
+    );
+    return;
+  }
+  if (mode === "submitted") {
+    openDashboardDetailModal(
+      "Aufgaben in Prüfung",
+      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(submittedTasks, "Keine Aufgaben in Prüfung.", { reviewMode: "submitted" })}</div>`,
+      "Freigaben direkt im Dashboard prüfen"
+    );
+    return;
+  }
+  if (mode === "missed") {
+    openDashboardDetailModal(
+      "Verpasste Aufgaben",
+      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(missedTasks, "Keine verpassten Aufgaben.", { reviewMode: "missed", overdue: true })}</div>`,
+      "Entscheidung direkt im Dashboard treffen"
+    );
+    return;
+  }
+  if (mode === "week-open") {
+    openDashboardDetailModal(
+      "Diese Woche offen",
+      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(weekOpenTasks, "Keine offenen Aufgaben mit Bezug zu dieser Woche.")}</div>`,
+      "Offene oder eingereichte Aufgaben, die diese Woche relevant sind"
+    );
+  }
+}
+
+function openManagerChildSummaryModal(userId, view) {
+  if (!isManagerRole()) return;
+  const member = state.members.find((entry) => entry.user_id === userId);
+  if (!member) return;
+  const buckets = getChildTaskBuckets(userId);
+  const sections = [];
+
+  if (view === "today") {
+    if (buckets.overdueTasks.length) {
+      sections.push(`<section class="dashboard-modal-section">
+        <h5>Überfällig</h5>
+        <div class="dashboard-modal-grid">${renderDashboardTaskCards(buckets.overdueTasks, "Keine überfälligen Aufgaben.", { overdue: true })}</div>
+      </section>`);
+    }
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Heute fällig</h5>
+      <div class="dashboard-modal-grid">${renderDashboardTaskCards(buckets.todayTasks, "Heute keine fälligen Aufgaben.")}</div>
+    </section>`);
+  } else {
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Demnächst fällig</h5>
+      <div class="dashboard-modal-grid">${renderDashboardTaskCards(buckets.upcomingTasks, "Keine demnächst fälligen Aufgaben.")}</div>
+    </section>`);
+  }
+
+  openDashboardDetailModal(
+    member.display_name,
+    sections.join(""),
+    view === "today" ? "Heute fällige Aufgaben dieses Kindes" : "Demnächst fällige Aufgaben dieses Kindes"
+  );
+}
+
 function openTasksTabWithSection(sectionId = null) {
   switchTab("tasks");
   if (!sectionId) return;
@@ -1277,8 +1446,9 @@ function applyRoleVisibility() {
     setSectionOpen("member-create-section", "toggle-member-create-btn", false, "Neues Mitglied", "Eingabe schließen");
   }
   closeMemberEditor();
-  toggleHidden("dashboard-members-section", child);
+  toggleHidden("dashboard-members-section", true);
   toggleHidden("dashboard-pending-section", child);
+  toggleHidden("dashboard-parent-open-summary-section", child);
   toggleHidden("dashboard-child-focus-section", !child);
   toggleHidden("dashboard-missed-card", child);
   toggleHidden("stat-card-child-points", !child);
@@ -1484,7 +1654,8 @@ function renderMembers() {
   fillSelect("event-responsible", memberOptions, true, "keiner");
   populateChannelTestRecipients();
 
-  byId("stat-members").textContent = String(state.members.length);
+  const statMembers = byId("stat-members");
+  if (statMembers) statMembers.textContent = String(state.members.length);
 }
 
 function fillMemberEditorForm() {
@@ -1523,6 +1694,58 @@ function renderDashboardPoints() {
     )
     .join("");
   applyMobileLabelsToTableBodies(["dashboard-points-body"]);
+}
+
+function renderManagerChildOpenSummary() {
+  const section = byId("dashboard-parent-open-summary-section");
+  const target = byId("dashboard-parent-open-summary-cards");
+  if (!section || !target) return;
+  if (!isManagerRole()) {
+    toggleHidden("dashboard-parent-open-summary-section", true);
+    target.innerHTML = "";
+    return;
+  }
+
+  const childMembers = state.members
+    .filter((entry) => entry.role === "child" && entry.is_active !== false)
+    .sort((a, b) => a.display_name.localeCompare(b.display_name, "de"));
+
+  toggleHidden("dashboard-parent-open-summary-section", false);
+  if (!childMembers.length) {
+    target.innerHTML = "<p class=\"muted\">Keine Kinder in dieser Familie vorhanden.</p>";
+    return;
+  }
+
+  target.innerHTML = childMembers.map((member) => {
+    const buckets = getChildTaskBuckets(member.user_id);
+    const todayCount = buckets.todayTasks.length + buckets.overdueTasks.length;
+    return `<article class="child-open-summary-card ${buckets.overdueTasks.length ? "has-overdue" : ""}">
+      <div class="child-open-summary-head">
+        <h5>${safeHtmlText(member.display_name)}</h5>
+        ${buckets.overdueTasks.length ? `<span class="child-open-summary-badge">Überfällig: ${buckets.overdueTasks.length}</span>` : ""}
+      </div>
+      <div class="child-open-summary-actions">
+        <button
+          class="child-open-summary-action btn-warning"
+          data-dashboard-child-open-action="today"
+          data-user-id="${member.user_id}"
+        >
+          <strong>${todayCount}</strong>
+          <span>Heute fällig</span>
+          <small>${buckets.overdueTasks.length ? `${buckets.overdueTasks.length} überfällig` : "Heutige Aufgaben anzeigen"}</small>
+        </button>
+        <button
+          class="child-open-summary-action btn-primary"
+          data-dashboard-child-open-action="upcoming"
+          data-user-id="${member.user_id}"
+        >
+          <strong>${buckets.upcomingTasks.length}</strong>
+          <span>Demnächst fällig</span>
+          <small>Später anstehende Aufgaben</small>
+        </button>
+      </div>
+    </article>`;
+  }).join("");
 }
 
 function getPendingTaskRequests() {
@@ -1670,6 +1893,7 @@ function renderTasks() {
   byId("stat-approved").textContent = String(statusCounts.approved);
   byId("stat-rejected").textContent = String(statusCounts.rejected);
 
+  renderManagerChildOpenSummary();
   renderChildTaskLists();
   renderManagerTaskReviewCards();
   renderDashboardPendingRequests();
@@ -1678,39 +1902,15 @@ function renderTasks() {
 
 function renderChildTaskLists() {
   if (!state.me) return;
-
-  const ownTasks = state.tasks.filter((task) => task.assignee_id === state.me.id);
-  const ownVisibleTasks = ownTasks.filter((task) => task.is_active !== false || task.status === "approved");
-  const now = new Date();
-  const tomorrowStart = startOfDay(now);
-  tomorrowStart.setDate(tomorrowStart.getDate() + 1);
-  const actionableTasks = newestRecurringEntries(ownVisibleTasks
-    .filter((task) => task.status === "open" || task.status === "rejected")
-    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)), "earliest_due");
-
-  const overdueTasks = actionableTasks.filter((task) => task.due_at && new Date(task.due_at) < now);
-  const weekTasks = actionableTasks.filter(
-    (task) => task.recurrence_type === "weekly" && !(task.due_at && new Date(task.due_at) < now)
-  );
-  const todayTasks = actionableTasks.filter((task) => {
-    if (task.recurrence_type === "weekly") return false;
-    if (task.special_template_id) return true;
-    const due = parseDateSafe(task.due_at);
-    return Boolean(due) && due >= now && due < tomorrowStart;
-  });
-  const upcomingTasks = actionableTasks.filter((task) => {
-    if (task.recurrence_type === "weekly") return false;
-    if (task.special_template_id) return false;
-    const due = parseDateSafe(task.due_at);
-    if (!due) return true;
-    return due >= tomorrowStart;
-  });
-
-  const waitingTasks = newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "submitted"));
-  const missedTasks = newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "missed_submitted"));
-  const completedTasks = ownVisibleTasks.filter(
-    (task) => task.status === "approved" && task.recurrence_type === "none"
-  );
+  const {
+    overdueTasks,
+    weekTasks,
+    todayTasks,
+    upcomingTasks,
+    waitingTasks,
+    missedTasks,
+    completedTasks,
+  } = getChildTaskBuckets(state.me.id);
 
   renderChildTaskCards("child-today-task-cards", todayTasks, "Heute keine fälligen Aufgaben");
   renderChildTaskCards("child-upcoming-task-cards", upcomingTasks, "Keine Aufgaben für die nächsten Tage", { actionable: false });
@@ -3862,6 +4062,56 @@ async function savePointsAdjust() {
   await refreshFamilyData();
 }
 
+async function handleDashboardReviewClick(event) {
+  const taskReviewButton = event.target.closest("button[data-dashboard-task-review-action]");
+  if (taskReviewButton) {
+    const taskId = Number(taskReviewButton.dataset.taskId);
+    const decision = taskReviewButton.dataset.dashboardTaskReviewAction;
+    if (!taskId || !decision) return true;
+    try {
+      if (decision === "rejected_delete") {
+        await rejectAndDeleteSpecialTaskRequest(taskId);
+      } else {
+        await reviewTaskRequest(taskId, decision);
+      }
+      closeDashboardDetailModal();
+    } catch (error) {
+      log("Aufgabe prüfen Fehler", { error: error.message });
+    }
+    return true;
+  }
+
+  const missedTaskButton = event.target.closest("button[data-dashboard-missed-task-action]");
+  if (missedTaskButton) {
+    const taskId = Number(missedTaskButton.dataset.taskId);
+    const action = missedTaskButton.dataset.dashboardMissedTaskAction;
+    if (!taskId || !action) return true;
+    try {
+      await reviewMissedTaskRequest(taskId, action);
+      closeDashboardDetailModal();
+    } catch (error) {
+      log("Nicht-erledigt Prüfung Fehler", { error: error.message });
+    }
+    return true;
+  }
+
+  const rewardReviewButton = event.target.closest("button[data-dashboard-reward-review-action]");
+  if (rewardReviewButton) {
+    const redemptionId = Number(rewardReviewButton.dataset.redemptionId);
+    const decision = rewardReviewButton.dataset.dashboardRewardReviewAction;
+    if (!redemptionId || !decision) return true;
+    try {
+      await reviewRedemptionRequest(redemptionId, decision);
+      closeDashboardDetailModal();
+    } catch (error) {
+      log("Belohnung prüfen Fehler", { error: error.message });
+    }
+    return true;
+  }
+
+  return false;
+}
+
 if (familySelect) {
   familySelect.addEventListener("change", async (event) => {
     stopLiveUpdates();
@@ -3888,20 +4138,40 @@ if (statCardOpen) {
       openChildDashboardTodayList();
       return;
     }
-    openTasksTabWithSection("tasks-table-section");
+    openManagerTaskModal("open");
   });
 }
 const statCardSubmitted = byId("stat-card-submitted");
 if (statCardSubmitted) {
-  statCardSubmitted.addEventListener("click", () => openTasksTabWithSection(isChildRole() ? "child-submitted-section" : "task-review-cards-section"));
+  statCardSubmitted.addEventListener("click", () => {
+    if (isChildRole()) {
+      openTasksTabWithSection("child-submitted-section");
+      return;
+    }
+    openManagerTaskModal("submitted");
+  });
 }
 const statCardMissed = byId("stat-card-missed");
 if (statCardMissed) {
-  statCardMissed.addEventListener("click", () => openTasksTabWithSection(isChildRole() ? "child-task-categories-section" : "task-review-cards-section"));
+  statCardMissed.addEventListener("click", () => {
+    if (isChildRole()) {
+      openTasksTabWithSection("child-task-categories-section");
+      return;
+    }
+    openManagerTaskModal("missed");
+  });
 }
 const statCardChildPoints = byId("stat-card-child-points");
 if (statCardChildPoints) {
   statCardChildPoints.addEventListener("click", () => switchTab("points"));
+}
+const statCardWeekOpen = byId("stat-card-week-open");
+if (statCardWeekOpen) {
+  statCardWeekOpen.addEventListener("click", () => {
+    if (!isChildRole()) {
+      openManagerTaskModal("week-open");
+    }
+  });
 }
 const childTodayFocusCard = byId("dashboard-child-today-focus");
 if (childTodayFocusCard) {
@@ -3910,6 +4180,16 @@ if (childTodayFocusCard) {
 const childMissedFocusCard = byId("dashboard-child-missed-focus");
 if (childMissedFocusCard) {
   childMissedFocusCard.addEventListener("click", () => openTasksTabWithSection("child-task-categories-section"));
+}
+const dashboardDetailModal = byId("dashboard-detail-modal");
+if (dashboardDetailModal) {
+  dashboardDetailModal.addEventListener("click", (event) => {
+    if (event.target === dashboardDetailModal) closeDashboardDetailModal();
+  });
+}
+const dashboardDetailModalClose = byId("dashboard-detail-modal-close");
+if (dashboardDetailModalClose) {
+  dashboardDetailModalClose.addEventListener("click", closeDashboardDetailModal);
 }
 
 byId("tasks-manager-cards").addEventListener("click", async (event) => {
@@ -3963,6 +4243,15 @@ byId("tasks-manager-cards").addEventListener("click", async (event) => {
       log("Aufgabe aktiv/deaktivieren fehlgeschlagen", { error: error.message });
     }
   }
+});
+
+byId("dashboard-parent-open-summary-section").addEventListener("click", (event) => {
+  const actionButton = event.target.closest("button[data-dashboard-child-open-action]");
+  if (!actionButton) return;
+  const userId = Number(actionButton.dataset.userId);
+  const view = actionButton.dataset.dashboardChildOpenAction;
+  if (!userId || !view) return;
+  openManagerChildSummaryModal(userId, view);
 });
 
 byId("special-task-manager-cards").addEventListener("click", async (event) => {
@@ -4057,47 +4346,11 @@ byId("rewards-body").addEventListener("click", async (event) => {
 });
 
 byId("dashboard-pending-section").addEventListener("click", async (event) => {
-  const taskReviewButton = event.target.closest("button[data-dashboard-task-review-action]");
-  if (taskReviewButton) {
-    const taskId = Number(taskReviewButton.dataset.taskId);
-    const decision = taskReviewButton.dataset.dashboardTaskReviewAction;
-    if (!taskId || !decision) return;
-    try {
-      if (decision === "rejected_delete") {
-        await rejectAndDeleteSpecialTaskRequest(taskId);
-      } else {
-        await reviewTaskRequest(taskId, decision);
-      }
-    } catch (error) {
-      log("Aufgabe prüfen Fehler", { error: error.message });
-    }
-    return;
-  }
+  await handleDashboardReviewClick(event);
+});
 
-  const missedTaskButton = event.target.closest("button[data-dashboard-missed-task-action]");
-  if (missedTaskButton) {
-    const taskId = Number(missedTaskButton.dataset.taskId);
-    const action = missedTaskButton.dataset.dashboardMissedTaskAction;
-    if (!taskId || !action) return;
-    try {
-      await reviewMissedTaskRequest(taskId, action);
-    } catch (error) {
-      log("Nicht-erledigt Prüfung Fehler", { error: error.message });
-    }
-    return;
-  }
-
-  const rewardReviewButton = event.target.closest("button[data-dashboard-reward-review-action]");
-  if (rewardReviewButton) {
-    const redemptionId = Number(rewardReviewButton.dataset.redemptionId);
-    const decision = rewardReviewButton.dataset.dashboardRewardReviewAction;
-    if (!redemptionId || !decision) return;
-    try {
-      await reviewRedemptionRequest(redemptionId, decision);
-    } catch (error) {
-      log("Belohnung prüfen Fehler", { error: error.message });
-    }
-  }
+byId("dashboard-detail-modal-body").addEventListener("click", async (event) => {
+  await handleDashboardReviewClick(event);
 });
 
 byId("manager-task-review-cards").addEventListener("click", async (event) => {
