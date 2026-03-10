@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260310c" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260310d" />
   </head>
   <body>
     <main class="container">
@@ -91,6 +91,35 @@
             <div id="dashboard-parent-open-summary-cards" class="child-open-summary-grid"></div>
           </div>
 
+          <div id="dashboard-pending-section" class="section-block">
+            <div class="section-copy">
+              <h4>Neue Anfragen</h4>
+              <p class="muted">Direkt prüfen, was jetzt entschieden werden muss.</p>
+            </div>
+            <div class="stats-grid request-metrics-grid">
+              <article id="pending-card-overdue" class="stat-card metric-red is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-overdue-count">0</strong></div>
+                <span>Überfällig</span>
+                <small class="stat-caption">Offene Aufgaben mit Handlungsbedarf</small>
+              </article>
+              <article id="pending-card-submitted" class="stat-card metric-orange is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-submitted-count">0</strong></div>
+                <span>In Prüfung</span>
+                <small class="stat-caption">Erledigt gemeldet, wartet auf Freigabe</small>
+              </article>
+              <article id="pending-card-missed" class="stat-card metric-pink is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-missed-count">0</strong></div>
+                <span>Verpasst</span>
+                <small class="stat-caption">Eltern müssen entscheiden</small>
+              </article>
+              <article id="pending-card-rewards" class="stat-card metric-magenta is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-rewards-count">0</strong></div>
+                <span>Belohnungen</span>
+                <small class="stat-caption">Offene Belohnungsanfragen</small>
+              </article>
+            </div>
+          </div>
+
           <div id="dashboard-child-focus-section" class="section-block hidden">
             <h4>Dein Tagesüberblick</h4>
             <div class="child-focus-grid">
@@ -117,21 +146,6 @@
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-open">0</strong></div>
                 <span>Offene Aufgaben</span>
                 <small class="stat-caption">Alle aktuell offenen Aufgaben</small>
-              </article>
-              <article id="stat-card-submitted" class="stat-card metric-orange is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-submitted">0</strong></div>
-                <span>In Prüfung</span>
-                <small class="stat-caption">Warten auf Freigabe</small>
-              </article>
-              <article id="stat-card-approved" class="stat-card metric-green is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-approved">0</strong></div>
-                <span>Abgeschlossen</span>
-                <small class="stat-caption">Historie öffnen</small>
-              </article>
-              <article id="stat-card-missed" class="stat-card metric-red is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-missed">0</strong></div>
-                <span>Verpasst</span>
-                <small class="stat-caption">Handlungsbedarf</small>
               </article>
               <article id="stat-card-child-points" class="stat-card metric-gold is-clickable hidden">
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-child-points-value">-</strong></div>
@@ -162,6 +176,11 @@
                 <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-completion-rate">0%</strong></div>
                 <span>Erfolgsquote</span>
                 <small class="stat-caption">Bestätigt vs. offen</small>
+              </article>
+              <article id="stat-card-approved" class="stat-card metric-green is-clickable">
+                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-approved">0</strong></div>
+                <span>Abgeschlossen</span>
+                <small class="stat-caption">Historie öffnen</small>
               </article>
             </div>
           </div>
@@ -202,24 +221,6 @@
               <p id="dashboard-weekly-caption" class="muted">Erledigte Aufgaben pro Tag</p>
               <div id="weekly-trend-bars" class="trend-bars"></div>
             </article>
-          </div>
-
-          <div id="dashboard-pending-section" class="section-block">
-            <h4>Neue Anfragen</h4>
-            <div class="request-cards-grid">
-              <article class="task-category-card">
-                <h5>Aufgaben warten auf Prüfung</h5>
-                <div id="dashboard-pending-task-cards" class="request-card-list"></div>
-              </article>
-              <article id="dashboard-missed-card" class="task-category-card">
-                <h5>Verpasste Aufgaben</h5>
-                <div id="dashboard-missed-task-cards" class="request-card-list"></div>
-              </article>
-              <article class="task-category-card">
-                <h5>Belohnungen warten auf Prüfung</h5>
-                <div id="dashboard-pending-reward-cards" class="request-card-list"></div>
-              </article>
-            </div>
           </div>
 
           <div id="dashboard-members-section" class="section-block hidden">
@@ -986,6 +987,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260310c"></script>
+    <script src="/static/app.js?v=20260310d"></script>
   </body>
 </html>

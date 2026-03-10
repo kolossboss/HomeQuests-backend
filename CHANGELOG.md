@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.10-04 (2026-03-10)
+
+- Dashboard/WebUI: neue Modal-Ansichten fuer Kinder- und Eltern-Dashboard weiter ausgebaut.
+- Frontend-Logik: Aufgaben-, Belohnungs- und Detailkarten im Dashboard differenzierter nach Status/Farbton gerendert.
+- UX: bessere Trennung von offenen, ueberfaelligen, verpassten und eingereichten Aufgaben direkt in der UI.
+
 ## v2026.03.10-03 (2026-03-10)
 
 - WebUI-Template: Modal-Container (`HA Nutzer bearbeiten`, `Dashboard-Details`) aus der verschachtelten Sektion auf Root-Ebene verschoben.

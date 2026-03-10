@@ -374,6 +374,16 @@ p {
   background: linear-gradient(135deg, rgba(255, 69, 58, 0.15) 0%, rgba(17, 19, 25, 0.98) 72%);
 }
 
+.metric-pink {
+  border-color: rgba(255, 55, 95, 0.34);
+  background: linear-gradient(135deg, rgba(255, 55, 95, 0.16) 0%, rgba(17, 19, 25, 0.98) 72%);
+}
+
+.metric-magenta {
+  border-color: rgba(191, 90, 242, 0.34);
+  background: linear-gradient(135deg, rgba(191, 90, 242, 0.16) 0%, rgba(17, 19, 25, 0.98) 72%);
+}
+
 .metric-gold {
   border-color: rgba(255, 214, 10, 0.34);
   background: linear-gradient(135deg, rgba(255, 214, 10, 0.16) 0%, rgba(17, 19, 25, 0.98) 72%);
@@ -402,6 +412,14 @@ p {
 
 .metric-red .stat-dot {
   background: var(--danger);
+}
+
+.metric-pink .stat-dot {
+  background: #ff375f;
+}
+
+.metric-magenta .stat-dot {
+  background: #bf5af2;
 }
 
 .metric-gold .stat-dot {
@@ -1092,6 +1110,10 @@ tr:last-child td {
   gap: 12px;
 }
 
+.request-metrics-grid {
+  align-items: stretch;
+}
+
 .task-button-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -1178,6 +1200,16 @@ tr:last-child td {
   border-radius: 22px;
   background: linear-gradient(180deg, rgba(22, 25, 31, 0.98) 0%, rgba(13, 16, 21, 0.98) 100%);
   padding: 16px 18px;
+}
+
+.entity-card.entity-card-task {
+  border-color: rgba(10, 132, 255, 0.22);
+  background: linear-gradient(135deg, rgba(10, 132, 255, 0.1) 0%, rgba(13, 16, 21, 0.98) 72%);
+}
+
+.entity-card.entity-card-special {
+  border-color: rgba(48, 176, 199, 0.22);
+  background: linear-gradient(135deg, rgba(48, 176, 199, 0.12) 0%, rgba(13, 16, 21, 0.98) 72%);
 }
 
 .entity-card.entity-card-list {
@@ -1284,6 +1316,36 @@ tr:last-child td {
 .request-card.overdue {
   border-color: rgba(255, 69, 58, 0.22);
   background: linear-gradient(135deg, rgba(255, 69, 58, 0.14) 0%, rgba(15, 17, 22, 0.98) 72%);
+}
+
+.request-card.tone-blue,
+.task-action-card.tone-blue {
+  border-color: rgba(10, 132, 255, 0.24);
+  background: linear-gradient(135deg, rgba(10, 132, 255, 0.12) 0%, rgba(15, 17, 22, 0.98) 72%);
+}
+
+.request-card.tone-orange,
+.task-action-card.tone-orange {
+  border-color: rgba(255, 159, 10, 0.24);
+  background: linear-gradient(135deg, rgba(255, 159, 10, 0.12) 0%, rgba(15, 17, 22, 0.98) 72%);
+}
+
+.request-card.tone-green,
+.task-action-card.tone-green {
+  border-color: rgba(48, 176, 199, 0.26);
+  background: linear-gradient(135deg, rgba(48, 176, 199, 0.14) 0%, rgba(15, 17, 22, 0.98) 72%);
+}
+
+.request-card.tone-pink,
+.task-action-card.tone-pink {
+  border-color: rgba(255, 55, 95, 0.24);
+  background: linear-gradient(135deg, rgba(255, 55, 95, 0.14) 0%, rgba(15, 17, 22, 0.98) 72%);
+}
+
+.request-card.tone-magenta,
+.task-action-card.tone-magenta {
+  border-color: rgba(191, 90, 242, 0.24);
+  background: linear-gradient(135deg, rgba(191, 90, 242, 0.14) 0%, rgba(15, 17, 22, 0.98) 72%);
 }
 
 .request-card-title {
