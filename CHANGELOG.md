@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.11-03 (2026-03-11)
+
+- Frontend-Refresh: `refreshFamilyData` gegen parallele Läufe abgesichert (`dataRefreshInFlight`), um doppelte Updates zu vermeiden.
+- Live-Updates: ausstehende Live-Refreshes werden während offener Editor/Modal-Interaktionen zurückgestellt und danach sauber nachgezogen.
+- WebUI-Assets: Cache-Buster für `styles.css`/`app.js` auf `20260311c` angehoben.
+
 ## v2026.03.11-02 (2026-03-11)
 
 - Aufgaben/Sonderaufgaben: neue Duplizieren-Aktion im Manager-UI fuer schnellere Erstellung aehnlicher Eintraege.

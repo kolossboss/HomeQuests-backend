@@ -70,6 +70,7 @@ let liveConnected = false;
 let liveFamilyId = null;
 let liveCursor = 0;
 let specialTaskRefreshTimer = null;
+let dataRefreshInFlight = false;
 
 function byId(id) {
   return document.getElementById(id);
@@ -928,6 +929,24 @@ function clearLiveRefreshTimer() {
   }
 }
 
+function isElementVisible(id) {
+  const element = byId(id);
+  return Boolean(element) && !element.classList.contains("hidden");
+}
+
+function isUiInteractionLocked() {
+  if (inlineEditorSectionIds.some((sectionId) => isElementVisible(sectionId))) {
+    return true;
+  }
+  return isElementVisible("dashboard-detail-modal") || isElementVisible("ha-user-editor-modal");
+}
+
+function flushDeferredLiveRefresh(reason = "ui_unlocked") {
+  if (!liveRefreshPending || !liveShouldRun || dataRefreshInFlight || isUiInteractionLocked()) return;
+  liveRefreshPending = false;
+  queueLiveRefresh(reason);
+}
+
 function closeLiveSource() {
   if (!liveEventSource) return;
   liveEventSource.close();
@@ -942,10 +961,14 @@ function buildLiveStreamUrl(familyId) {
 
 function queueLiveRefresh(reason = "live_update") {
   if (!liveShouldRun || !state.me || !getSelectedFamilyId()) return;
+  if (isUiInteractionLocked() || dataRefreshInFlight) {
+    liveRefreshPending = true;
+    return;
+  }
   if (liveRefreshTimer) return;
   liveRefreshTimer = window.setTimeout(async () => {
     liveRefreshTimer = null;
-    if (liveRefreshInFlight) {
+    if (liveRefreshInFlight || dataRefreshInFlight || isUiInteractionLocked()) {
       liveRefreshPending = true;
       return;
     }
@@ -1285,6 +1308,7 @@ function closeDashboardDetailModal() {
   toggleHidden("dashboard-detail-modal", true);
   const bodyNode = byId("dashboard-detail-modal-body");
   if (bodyNode) bodyNode.innerHTML = "";
+  flushDeferredLiveRefresh("dashboard_modal_closed");
 }
 
 function getChildTaskBuckets(userId) {
@@ -1904,6 +1928,7 @@ function closeMemberEditor() {
   state.selectedMemberId = null;
   toggleHidden("member-editor-section", true);
   restoreInlineEditorSection("member-editor-section");
+  flushDeferredLiveRefresh("member_editor_closed");
 }
 
 function renderDashboardPoints() {
@@ -2268,6 +2293,7 @@ function closeSpecialTaskEditor() {
   toggleHidden("special-task-editor-section", true);
   restoreInlineEditorSection("special-task-editor-section");
   updateSpecialTaskEditButtons();
+  flushDeferredLiveRefresh("special_task_editor_closed");
 }
 
 async function duplicateSpecialTaskTemplate(templateId) {
@@ -2423,6 +2449,7 @@ function closeTaskEditor() {
   toggleHidden("task-editor-section", true);
   restoreInlineEditorSection("task-editor-section");
   updateTaskEditButtons();
+  flushDeferredLiveRefresh("task_editor_closed");
 }
 
 async function duplicateTask(taskId) {
@@ -2657,6 +2684,7 @@ function closeRewardEditor() {
   state.selectedRewardId = null;
   toggleHidden("reward-editor-section", true);
   restoreInlineEditorSection("reward-editor-section");
+  flushDeferredLiveRefresh("reward_editor_closed");
 }
 
 function renderRedemptions() {
@@ -2885,6 +2913,7 @@ function openChannelPanel(channel) {
 
 function closeHomeAssistantUserModal() {
   toggleHidden("ha-user-editor-modal", true);
+  flushDeferredLiveRefresh("ha_user_modal_closed");
 }
 
 function openHomeAssistantUserModal(userId) {
@@ -3262,60 +3291,67 @@ async function sendHomeAssistantUserTest(userIdOverride = null) {
 }
 
 async function refreshFamilyData() {
-  restoreAllInlineEditorSections();
-  await loadMembers();
-  await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances()]);
-  if (isManagerRole()) {
-    await loadNotificationChannelStatus().catch((error) =>
-      log("Kanalstatus laden Fehler", { error: error.message })
-    );
-    await loadHomeAssistantSettings({ showStatus: false }).catch((error) =>
-      log("HA Einstellungen laden Fehler", { error: error.message })
-    );
-    await loadHomeAssistantUserConfigs({ showStatus: false }).catch((error) =>
-      log("HA Nutzer laden Fehler", { error: error.message })
-    );
-  } else {
-    resetHomeAssistantSettingsForm();
-  }
-
-  if (isChildRole() && state.me) {
-    const own = state.pointsBalances.find((entry) => entry.user_id === state.me.id);
-    const ownBalance = own ? own.balance : null;
-    byId("child-reward-points").textContent = ownBalance ?? "-";
-    byId("stat-child-points-value").textContent = ownBalance ?? "-";
-    state.selectedPointsUserId = state.me.id;
-    byId("points-history-title").textContent = "Deine Punkte-Historie";
-    await loadPointsHistory(state.me.id);
-    toggleHidden("points-adjust-section", true);
-  } else {
-    byId("child-reward-points").textContent = "-";
-    byId("stat-child-points-value").textContent = "-";
-    state.selectedRewardContribution = null;
-    if (
-      state.selectedPointsUserId &&
-      !state.pointsBalances.some((entry) => entry.user_id === state.selectedPointsUserId)
-    ) {
-      state.selectedPointsUserId = null;
-    }
-    if (!state.selectedPointsUserId && state.pointsBalances.length > 0) {
-      state.selectedPointsUserId = state.pointsBalances[0].user_id;
-    }
-    if (state.selectedPointsUserId) {
-      byId("points-history-title").textContent = `Punkte-Historie: ${getPointsUserDisplayName(state.selectedPointsUserId)}`;
-      await loadPointsHistory(state.selectedPointsUserId);
+  if (dataRefreshInFlight) return;
+  dataRefreshInFlight = true;
+  try {
+    restoreAllInlineEditorSections();
+    await loadMembers();
+    await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances()]);
+    if (isManagerRole()) {
+      await loadNotificationChannelStatus().catch((error) =>
+        log("Kanalstatus laden Fehler", { error: error.message })
+      );
+      await loadHomeAssistantSettings({ showStatus: false }).catch((error) =>
+        log("HA Einstellungen laden Fehler", { error: error.message })
+      );
+      await loadHomeAssistantUserConfigs({ showStatus: false }).catch((error) =>
+        log("HA Nutzer laden Fehler", { error: error.message })
+      );
     } else {
-      state.pointsHistory = [];
-      byId("points-history-title").textContent = "Punkte-Historie";
-      byId("points-history-info").textContent = "Keine Nutzer vorhanden.";
-      renderPointsHistory();
+      resetHomeAssistantSettingsForm();
     }
+
+    if (isChildRole() && state.me) {
+      const own = state.pointsBalances.find((entry) => entry.user_id === state.me.id);
+      const ownBalance = own ? own.balance : null;
+      byId("child-reward-points").textContent = ownBalance ?? "-";
+      byId("stat-child-points-value").textContent = ownBalance ?? "-";
+      state.selectedPointsUserId = state.me.id;
+      byId("points-history-title").textContent = "Deine Punkte-Historie";
+      await loadPointsHistory(state.me.id);
+      toggleHidden("points-adjust-section", true);
+    } else {
+      byId("child-reward-points").textContent = "-";
+      byId("stat-child-points-value").textContent = "-";
+      state.selectedRewardContribution = null;
+      if (
+        state.selectedPointsUserId &&
+        !state.pointsBalances.some((entry) => entry.user_id === state.selectedPointsUserId)
+      ) {
+        state.selectedPointsUserId = null;
+      }
+      if (!state.selectedPointsUserId && state.pointsBalances.length > 0) {
+        state.selectedPointsUserId = state.pointsBalances[0].user_id;
+      }
+      if (state.selectedPointsUserId) {
+        byId("points-history-title").textContent = `Punkte-Historie: ${getPointsUserDisplayName(state.selectedPointsUserId)}`;
+        await loadPointsHistory(state.selectedPointsUserId);
+      } else {
+        state.pointsHistory = [];
+        byId("points-history-title").textContent = "Punkte-Historie";
+        byId("points-history-info").textContent = "Keine Nutzer vorhanden.";
+        renderPointsHistory();
+      }
+    }
+
+    renderSelectedRewardContribution();
+
+    const emailPart = state.me.email ? ` (${state.me.email})` : "";
+    userInfo.textContent = `Angemeldet als ${state.me.display_name}${emailPart} | Rolle: ${roleLabel(state.currentRole)}`;
+  } finally {
+    dataRefreshInFlight = false;
+    flushDeferredLiveRefresh("post_refresh");
   }
-
-  renderSelectedRewardContribution();
-
-  const emailPart = state.me.email ? ` (${state.me.email})` : "";
-  userInfo.textContent = `Angemeldet als ${state.me.display_name}${emailPart} | Rolle: ${roleLabel(state.currentRole)}`;
 }
 
 async function refreshSession() {
@@ -4272,6 +4308,7 @@ function openPointsAdjust(userId, triggerButton = null) {
 function closePointsAdjust() {
   toggleHidden("points-adjust-section", true);
   restoreInlineEditorSection("points-adjust-section");
+  flushDeferredLiveRefresh("points_editor_closed");
 }
 
 async function savePointsAdjust() {
