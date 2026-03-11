@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260310d" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260311b" />
   </head>
   <body>
     <main class="container">
@@ -407,25 +407,25 @@
           <div id="child-task-categories-section" class="section-block hidden">
             <h4>Deine Aufgaben</h4>
             <div class="child-task-primary">
-              <article class="task-category-card today-due-card">
+              <article class="task-category-card task-card-blue today-due-card">
                 <h5>Heute fällig</h5>
                 <div id="child-today-task-cards" class="task-card-list"></div>
               </article>
             </div>
             <div class="child-task-columns child-task-secondary-columns">
-              <article class="task-category-card">
+              <article class="task-category-card task-card-blue">
                 <h5>Demnächst fällig</h5>
                 <div id="child-upcoming-task-cards" class="task-card-list"></div>
               </article>
-              <article class="task-category-card">
+              <article class="task-category-card task-card-blue">
                 <h5>Wochenaufgaben</h5>
                 <div id="child-week-task-cards" class="task-card-list"></div>
               </article>
-              <article class="task-category-card">
+              <article class="task-category-card task-card-blue">
                 <h5>Überfällige Aufgaben</h5>
                 <div id="child-overdue-task-cards" class="task-card-list"></div>
               </article>
-              <article class="task-category-card">
+              <article class="task-category-card task-card-blue">
                 <h5>Verpasste Aufgaben</h5>
                 <div id="child-missed-task-cards" class="task-card-list"></div>
               </article>
@@ -567,7 +567,7 @@
         <section id="tab-special-tasks" class="tab-panel">
           <h3>Sonderaufgaben</h3>
 
-          <div id="manager-special-task-section" class="section-block">
+          <div id="manager-special-task-section" class="section-block special-section-shell">
             <h4>Sonderaufgaben verwalten</h4>
             <div class="row-wrap">
               <button id="toggle-special-task-create-btn" type="button">Neue Sonderaufgabe</button>
@@ -670,7 +670,7 @@
             </div>
           </div>
 
-          <div id="child-special-task-section" class="section-block hidden">
+          <div id="child-special-task-section" class="section-block hidden special-section-shell">
             <h4>Sonderaufgaben zum Annehmen</h4>
             <div id="child-special-task-cards" class="request-card-list"></div>
           </div>
@@ -987,6 +987,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260310d"></script>
+    <script src="/static/app.js?v=20260311b"></script>
   </body>
 </html>

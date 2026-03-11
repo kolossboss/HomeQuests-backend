@@ -2040,6 +2040,7 @@ function renderTasks() {
             <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
             <div class="request-card-actions">
               <button data-task-action="edit" data-task-id="${task.id}">Bearbeiten</button>
+              <button class="btn-copy" data-task-action="duplicate" data-task-id="${task.id}">Duplizieren</button>
               <button class="${task.is_active === false ? "btn-success" : "btn-danger"}" data-task-action="toggle-active" data-task-id="${task.id}">${task.is_active === false ? "Aktivieren" : "Deaktivieren"}</button>
               <button class="btn-secondary" data-task-action="delete" data-task-id="${task.id}">Löschen</button>
             </div>
@@ -2269,6 +2270,35 @@ function closeSpecialTaskEditor() {
   updateSpecialTaskEditButtons();
 }
 
+async function duplicateSpecialTaskTemplate(templateId) {
+  if (!isManagerRole()) return;
+  const template = state.specialTaskTemplates.find((entry) => entry.id === templateId);
+  if (!template) {
+    log("Sonderaufgabe duplizieren Fehler", { error: "Vorlage nicht gefunden" });
+    return;
+  }
+
+  const createdTemplate = await api(`/families/${getSelectedFamilyId()}/special-tasks/templates`, {
+    method: "POST",
+    body: {
+      title: `${template.title} (Kopie)`,
+      description: template.description || null,
+      points: template.points,
+      interval_type: template.interval_type,
+      max_claims_per_interval: template.max_claims_per_interval,
+      active_weekdays: template.active_weekdays || [],
+      due_time_hhmm: template.due_time_hhmm || null,
+      is_active: template.is_active !== false,
+    },
+  });
+
+  await refreshFamilyData();
+  const editButton = document.querySelector(
+    `#special-task-manager-cards button[data-special-task-action="edit"][data-special-task-id="${createdTemplate.id}"]`
+  );
+  openSpecialTaskEditor(createdTemplate.id, editButton);
+}
+
 function renderSpecialTaskTemplates() {
   const manager = isManagerRole();
   const sortedTemplates = sortSpecialTaskTemplates(state.specialTaskTemplates);
@@ -2293,6 +2323,7 @@ function renderSpecialTaskTemplates() {
             <p class="entity-card-meta">Zuletzt geändert: ${fmtDate(entry.updated_at || entry.created_at)}</p>
             <div class="request-card-actions">
               <button data-special-task-action="edit" data-special-task-id="${entry.id}">Bearbeiten</button>
+              <button class="btn-copy" data-special-task-action="duplicate" data-special-task-id="${entry.id}">Duplizieren</button>
               <button class="btn-danger" data-special-task-action="delete" data-special-task-id="${entry.id}">Löschen</button>
             </div>
           </article>`
@@ -2392,6 +2423,43 @@ function closeTaskEditor() {
   toggleHidden("task-editor-section", true);
   restoreInlineEditorSection("task-editor-section");
   updateTaskEditButtons();
+}
+
+async function duplicateTask(taskId) {
+  if (!isManagerRole()) return;
+  const task = state.tasks.find((entry) => entry.id === taskId);
+  if (!task) {
+    log("Aufgabe duplizieren Fehler", { error: "Aufgabe nicht gefunden" });
+    return;
+  }
+
+  const createdTask = await api(`/families/${getSelectedFamilyId()}/tasks`, {
+    method: "POST",
+    body: {
+      title: `${task.title} (Kopie)`,
+      description: task.description || null,
+      assignee_id: task.assignee_id,
+      due_at: task.due_at,
+      points: task.points,
+      reminder_offsets_minutes: task.reminder_offsets_minutes || [],
+      active_weekdays: task.active_weekdays || [],
+      recurrence_type: task.recurrence_type,
+      always_submittable: Boolean(task.always_submittable),
+      penalty_enabled: Boolean(task.penalty_enabled),
+      penalty_points: Number(task.penalty_points || 0),
+    },
+  });
+
+  if (task.is_active === false) {
+    await api(`/tasks/${createdTask.id}/active`, {
+      method: "POST",
+      body: { is_active: false },
+    });
+  }
+
+  await refreshFamilyData();
+  const editButton = document.querySelector(`#tasks-manager-cards button[data-task-action="edit"][data-task-id="${createdTask.id}"]`);
+  openTaskEditor(createdTask.id, editButton);
 }
 
 function renderEvents() {
@@ -4455,6 +4523,16 @@ byId("tasks-manager-cards").addEventListener("click", async (event) => {
     } catch (error) {
       log("Aufgabe löschen fehlgeschlagen", { error: error.message });
     }
+    return;
+  }
+
+  if (action === "duplicate") {
+    try {
+      await duplicateTask(taskId);
+    } catch (error) {
+      log("Aufgabe duplizieren fehlgeschlagen", { error: error.message });
+    }
+    return;
   }
 
   if (action === "toggle-active") {
@@ -4516,6 +4594,15 @@ byId("special-task-manager-cards").addEventListener("click", async (event) => {
       await deleteSpecialTaskTemplate(templateId);
     } catch (error) {
       log("Sonderaufgabe löschen fehlgeschlagen", { error: error.message });
+    }
+    return;
+  }
+
+  if (action === "duplicate") {
+    try {
+      await duplicateSpecialTaskTemplate(templateId);
+    } catch (error) {
+      log("Sonderaufgabe duplizieren fehlgeschlagen", { error: error.message });
     }
   }
 });

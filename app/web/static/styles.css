@@ -894,6 +894,16 @@ button[data-task-missed-review-action="penalty"]:hover {
   background: rgba(255, 159, 10, 0.22);
 }
 
+.btn-copy {
+  background: rgba(10, 132, 255, 0.16);
+  border-color: rgba(10, 132, 255, 0.36);
+  color: #d9ecff;
+}
+
+.btn-copy:hover {
+  background: rgba(10, 132, 255, 0.22);
+}
+
 .btn-danger,
 button[data-task-action="delete"],
 button[data-special-task-action="delete"],
@@ -1143,6 +1153,16 @@ tr:last-child td {
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(22, 25, 31, 0.98) 0%, rgba(14, 16, 21, 0.98) 100%);
   padding: 16px;
+}
+
+.task-category-card.task-card-blue {
+  border-color: rgba(10, 132, 255, 0.22);
+  background: linear-gradient(135deg, rgba(10, 132, 255, 0.1) 0%, rgba(14, 16, 21, 0.98) 72%);
+}
+
+.special-section-shell {
+  border-color: rgba(48, 176, 199, 0.24);
+  background: linear-gradient(135deg, rgba(48, 176, 199, 0.08) 0%, rgba(14, 16, 21, 0.98) 72%);
 }
 
 .today-due-card {
