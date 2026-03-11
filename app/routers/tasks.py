@@ -197,7 +197,6 @@ def _special_task_is_available_now(
 def _special_task_usage_count(
     db: Session,
     template_id: int,
-    assignee_id: int,
     interval_type: SpecialTaskIntervalEnum,
 ) -> int:
     start = _interval_start(interval_type)
@@ -205,7 +204,6 @@ def _special_task_usage_count(
         db.query(Task)
         .filter(
             Task.special_template_id == template_id,
-            Task.assignee_id == assignee_id,
             Task.created_at >= start,
         )
         .count()
@@ -907,7 +905,7 @@ def list_available_special_tasks(
         available_now, _ = _special_task_is_available_now(template, now)
         if not available_now:
             continue
-        used = _special_task_usage_count(db, template.id, current_user.id, template.interval_type)
+        used = _special_task_usage_count(db, template.id, template.interval_type)
         remaining = max(template.max_claims_per_interval - used, 0)
         result.append(
             SpecialTaskAvailabilityOut(
@@ -949,7 +947,7 @@ def claim_special_task(
     if not available_now:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unavailability_reason or "Sonderaufgabe ist aktuell nicht verfügbar")
 
-    used = _special_task_usage_count(db, template.id, current_user.id, template.interval_type)
+    used = _special_task_usage_count(db, template.id, template.interval_type)
     if used >= template.max_claims_per_interval:
         if template.interval_type == SpecialTaskIntervalEnum.daily:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tageslimit für diese Sonderaufgabe erreicht")

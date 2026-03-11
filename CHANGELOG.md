@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.11-02 (2026-03-11)
+
+- Aufgaben/Sonderaufgaben: neue Duplizieren-Aktion im Manager-UI fuer schnellere Erstellung aehnlicher Eintraege.
+- Sonderaufgaben-Limit: Verbrauchszaehler zaehlt jetzt template-weit pro Intervall (nicht mehr pro Kind), damit Limits konsistent greifen.
+- WebUI: weitere visuelle Feinanpassungen bei Task-Karten und Sonderaufgaben-Bereich sowie Asset-Cache-Buster-Update.
+
 ## v2026.03.11-01 (2026-03-11)
 
 - Aufgabenlogik: flexible Wochenaufgaben ohne festes Fälligkeitsdatum werden nun automatisch pro Woche weitergeführt.
