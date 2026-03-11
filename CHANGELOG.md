@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.11-01 (2026-03-11)
+
+- Aufgabenlogik: flexible Wochenaufgaben ohne festes Fälligkeitsdatum werden nun automatisch pro Woche weitergeführt.
+- Wartung/Worker: Wochen-Rollover läuft zusätzlich im Maintenance-Flow, inklusive automatischem Verpasst-Markieren offener Altaufgaben.
+- Aufgaben-API: beim Laden der Aufgabenliste werden fällige Wochenfortschritte direkt nachgezogen, damit die Ansicht aktuell bleibt.
+
 ## v2026.03.10-04 (2026-03-10)
 
 - Dashboard/WebUI: neue Modal-Ansichten fuer Kinder- und Eltern-Dashboard weiter ausgebaut.

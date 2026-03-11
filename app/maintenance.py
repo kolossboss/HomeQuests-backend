@@ -12,7 +12,7 @@ from .config import settings
 from .database import SessionLocal, engine
 from .models import RecurrenceTypeEnum, Task, TaskStatusEnum
 from .push_notifications import run_push_reminder_sweep_once
-from .routers.tasks import _apply_penalties_for_family, _rollover_missed_tasks_for_family
+from .routers.tasks import _advance_weekly_flexible_tasks_for_family, _apply_penalties_for_family, _rollover_missed_tasks_for_family
 
 logger = logging.getLogger(__name__)
 PENALTY_LOCK_KEY = 860031
@@ -78,11 +78,26 @@ def run_penalty_sweep_once() -> bool:
                     .all()
                 )
             ]
-            family_ids = sorted(set(rollover_family_ids + penalty_family_ids))
+            weekly_flexible_family_ids = [
+                int(row[0])
+                for row in (
+                    db.query(Task.family_id)
+                    .filter(
+                        Task.is_active == True,  # noqa: E712
+                        Task.recurrence_type == RecurrenceTypeEnum.weekly.value,
+                        Task.due_at.is_(None),
+                        Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.approved]),
+                    )
+                    .distinct()
+                    .all()
+                )
+            ]
+            family_ids = sorted(set(rollover_family_ids + penalty_family_ids + weekly_flexible_family_ids))
 
             changed = False
             for family_id in family_ids:
                 changed = _rollover_missed_tasks_for_family(db, family_id) or changed
+                changed = _advance_weekly_flexible_tasks_for_family(db, family_id) or changed
                 changed = _apply_penalties_for_family(db, family_id) or changed
 
             if changed:

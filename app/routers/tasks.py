@@ -88,6 +88,15 @@ def _next_due(due_at: datetime | None, recurrence_type: str, active_weekdays: li
     return None
 
 
+def _start_of_week(value: datetime) -> datetime:
+    normalized = _as_utc_naive(value) or datetime.utcnow()
+    return normalized.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=normalized.weekday())
+
+
+def _is_weekly_flexible_task(task: Task) -> bool:
+    return task.recurrence_type == RecurrenceTypeEnum.weekly.value and _as_utc_naive(task.due_at) is None
+
+
 def _align_due_for_active_task(
     due_at: datetime | None,
     recurrence_type: str,
@@ -422,8 +431,10 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
     return changed
 
 
-def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int) -> Task | None:
+def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int, *, force: bool = False) -> Task | None:
     if source_task.recurrence_type == RecurrenceTypeEnum.none.value:
+        return None
+    if _is_weekly_flexible_task(source_task) and not force:
         return None
     if _existing_open_recurring_successor(db, source_task):
         return None
@@ -458,6 +469,88 @@ def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: i
     return next_task
 
 
+def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bool:
+    now_week_start = _start_of_week(datetime.utcnow())
+    raw_tasks = (
+        db.query(Task)
+        .filter(
+            Task.family_id == family_id,
+            Task.is_active == True,  # noqa: E712
+            Task.recurrence_type == RecurrenceTypeEnum.weekly.value,
+            Task.due_at.is_(None),
+            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.approved]),
+        )
+        .order_by(Task.created_at.asc(), Task.id.asc())
+        .all()
+    )
+
+    grouped_by_key: dict[tuple, list[Task]] = {}
+    for task in raw_tasks:
+        key = _recurring_task_identity_key(task)
+        if key is None:
+            continue
+        grouped_by_key.setdefault(key, []).append(task)
+
+    changed = False
+    latest_by_key: dict[tuple, Task] = {}
+    for key, tasks in grouped_by_key.items():
+        tasks.sort(key=lambda entry: (entry.created_at, entry.id))
+        if len(tasks) >= 2:
+            latest = tasks[-1]
+            previous = tasks[-2]
+            same_cycle = _start_of_week(latest.created_at) == _start_of_week(previous.created_at)
+            approval_gap = _as_utc_naive(latest.created_at) - _as_utc_naive(previous.updated_at)
+            if (
+                same_cycle
+                and previous.status == TaskStatusEnum.approved
+                and latest.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}
+                and timedelta(0) <= approval_gap <= timedelta(minutes=10)
+            ):
+                latest.is_active = False
+                db.flush()
+                emit_live_event(
+                    db,
+                    family_id=latest.family_id,
+                    event_type="task.updated",
+                    payload={"task_id": latest.id, "status": latest.status.value, "is_active": latest.is_active, "assignee_id": latest.assignee_id},
+                )
+                changed = True
+                tasks = tasks[:-1]
+
+        if tasks:
+            latest_by_key[key] = tasks[-1]
+
+    for task in latest_by_key.values():
+        cycle_start = _start_of_week(task.created_at)
+        if cycle_start >= now_week_start:
+            continue
+
+        if task.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+            db.add(
+                TaskSubmission(
+                    task_id=task.id,
+                    submitted_by_id=task.assignee_id,
+                    note="Automatisch als verpasst markiert (Wochenaufgabe)",
+                )
+            )
+            task.status = TaskStatusEnum.missed_submitted
+            db.flush()
+            emit_live_event(
+                db,
+                family_id=task.family_id,
+                event_type="task.missed_reported",
+                payload={"task_id": task.id, "assignee_id": task.assignee_id, "auto": True},
+            )
+            _create_next_recurring_task(db, task, task.created_by_id, force=True)
+            changed = True
+            continue
+
+        if task.status == TaskStatusEnum.approved:
+            changed = _create_next_recurring_task(db, task, task.created_by_id, force=True) is not None or changed
+
+    return changed
+
+
 @router.get("/families/{family_id}/tasks", response_model=list[TaskOut])
 def list_tasks(
     family_id: int,
@@ -465,6 +558,8 @@ def list_tasks(
     db: Session = Depends(get_db),
 ):
     context = get_membership_or_403(db, family_id, current_user.id)
+    if _advance_weekly_flexible_tasks_for_family(db, family_id):
+        db.commit()
     query = db.query(Task).filter(Task.family_id == family_id)
     if context.role == RoleEnum.child:
         query = query.filter(Task.assignee_id == current_user.id)
