@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.14-03 (2026-03-14)
+
+- WebUI-Design: Kartenhintergruende von Verlauf auf klare iOS-nahe Farbflächen umgestellt (Dashboard, Fokus-/Metrik-Karten, Detailbereiche).
+- Dashboard-Modal: einheitlicher Card-Stil fuer Aufgaben-/Anfragekarten inklusive abgestufter Farbtoene je Status.
+- WebUI-Assets: Cache-Buster fuer `styles.css`/`app.js` auf `20260314b` angehoben.
+
 ## v2026.03.14-02 (2026-03-14)
 
 - Dashboard-Modal (Manager): offene/überfällige Kinderaufgaben können direkt aus der Detailansicht gelöscht werden.
