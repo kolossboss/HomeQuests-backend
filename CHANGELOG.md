@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.14-01 (2026-03-14)
+
+- Task-Submit-Logik für tägliche Aufgaben präzisiert: ohne `always_submittable` ist nur der aktuell fällige Kalendertag zulässig.
+- Validierung verbessert: klare Fehler für „noch nicht fällig“, „nicht mehr für heute einreichbar“ und ungültige tägliche Aufgaben ohne `due_at`.
+- Wochentag-Check für tägliche Aufgaben gehärtet (Fälligkeitstag + aktueller Tag müssen zu `active_weekdays` passen).
+
 ## v2026.03.11-03 (2026-03-11)
 
 - Frontend-Refresh: `refreshFamilyData` gegen parallele Läufe abgesichert (`dataRefreshInFlight`), um doppelte Updates zu vermeiden.
