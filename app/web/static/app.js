@@ -1371,7 +1371,7 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
   if (!Array.isArray(tasks) || tasks.length === 0) {
     return `<p class="muted">${emptyText}</p>`;
   }
-  const { overdue = false, reviewMode = null } = options;
+  const { overdue = false, reviewMode = null, allowManagerDelete = false } = options;
   return tasks.map((task) => {
     const toneClass = dashboardTaskToneClass(task, { overdue, reviewMode });
     if (reviewMode === "submitted") {
@@ -1403,6 +1403,9 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
       <p class="request-card-title">${safeHtmlText(task.title)}</p>
       <p class="request-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${taskDueText(task)} • ${task.points} Punkte</p>
       <p class="request-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
+      ${allowManagerDelete ? `<div class="request-card-actions">
+        <button class="btn-danger" data-dashboard-task-manage-action="delete" data-task-id="${task.id}">Löschen</button>
+      </div>` : ""}
     </article>`;
   }).join("");
 }
@@ -1630,17 +1633,29 @@ function openManagerChildSummaryModal(userId, view) {
     if (buckets.overdueTasks.length) {
       sections.push(`<section class="dashboard-modal-section">
         <h5>Überfällig</h5>
-        <div class="dashboard-modal-grid">${renderDashboardTaskCards(buckets.overdueTasks, "Keine überfälligen Aufgaben.", { overdue: true })}</div>
+        <div class="dashboard-modal-grid">${renderDashboardTaskCards(
+          buckets.overdueTasks,
+          "Keine überfälligen Aufgaben.",
+          { overdue: true, allowManagerDelete: true }
+        )}</div>
       </section>`);
     }
     sections.push(`<section class="dashboard-modal-section">
       <h5>Heute fällig</h5>
-      <div class="dashboard-modal-grid">${renderDashboardTaskCards(buckets.todayTasks, "Heute keine fälligen Aufgaben.")}</div>
+      <div class="dashboard-modal-grid">${renderDashboardTaskCards(
+        buckets.todayTasks,
+        "Heute keine fälligen Aufgaben.",
+        { allowManagerDelete: true }
+      )}</div>
     </section>`);
   } else {
     sections.push(`<section class="dashboard-modal-section">
       <h5>Demnächst fällig</h5>
-      <div class="dashboard-modal-grid">${renderDashboardTaskCards(buckets.upcomingTasks, "Keine demnächst fälligen Aufgaben.")}</div>
+      <div class="dashboard-modal-grid">${renderDashboardTaskCards(
+        buckets.upcomingTasks,
+        "Keine demnächst fälligen Aufgaben.",
+        { allowManagerDelete: true }
+      )}</div>
     </section>`);
   }
 
@@ -4403,6 +4418,30 @@ async function handleDashboardReviewClick(event) {
 
 async function handleDashboardModalActionClick(event) {
   if (await handleDashboardReviewClick(event)) return;
+
+  const managerActionButton = event.target.closest("button[data-dashboard-task-manage-action]");
+  if (managerActionButton) {
+    const action = managerActionButton.dataset.dashboardTaskManageAction;
+    const taskId = Number(managerActionButton.dataset.taskId);
+    if (!taskId || action !== "delete") return;
+
+    const task = state.tasks.find((entry) => entry.id === taskId);
+    const taskTitle = task ? task.title : "diese Aufgabe";
+    const confirmed = window.confirm(
+      `Aufgabe "${taskTitle}" wirklich löschen?\n\n` +
+      "Die Aufgabe wird sofort entfernt. Es gibt keine Punkte oder Minuspunkte. " +
+      "Bei wiederkehrenden Aufgaben erscheint sie beim nächsten Zyklus wieder."
+    );
+    if (!confirmed) return;
+
+    try {
+      await deleteTask(taskId);
+      refreshDashboardModalContext();
+    } catch (error) {
+      log("Aufgabe im Kinder-Popup löschen Fehler", { error: error.message });
+    }
+    return;
+  }
 
   const childActionButton = event.target.closest("button[data-task-action]");
   if (childActionButton) {

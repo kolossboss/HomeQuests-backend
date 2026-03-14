@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.14-02 (2026-03-14)
+
+- Dashboard-Modal (Manager): offene/überfällige Kinderaufgaben können direkt aus der Detailansicht gelöscht werden.
+- UI-Flow: zusätzliche Delete-Aktion mit Bestätigungsdialog im Modal-Context.
+- WebUI-Assets: Cache-Buster für `styles.css`/`app.js` auf `20260314a` angehoben.
+
 ## v2026.03.14-01 (2026-03-14)
 
 - Task-Submit-Logik für tägliche Aufgaben präzisiert: ohne `always_submittable` ist nur der aktuell fällige Kalendertag zulässig.
