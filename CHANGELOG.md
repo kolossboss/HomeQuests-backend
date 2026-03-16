@@ -1,5 +1,15 @@
 # Changelog
 
+## v2026.03.16-03 (2026-03-16)
+
+- Aufgabenserien erweitert: `tasks.series_id` eingefuehrt (Migration + Indizes), damit wiederkehrende Aufgaben stabil ueber eine feste Serien-ID verfolgt werden.
+- Task-Engine verbessert: taegliche Aufgaben werden im Maintenance-Loop bei klarer 1-Tages-Verschiebung automatisch auf den korrekten Tag ausgerichtet (`auto_daily_realign`).
+- Sonderaufgaben-Claim gehaertet: Postgres-Advisory-Lock verhindert parallele Claim-Races pro Vorlage.
+- Event-Payloads vereinheitlicht: `task.created`/`task.updated` enthalten jetzt umfassendere Task-Metadaten (inkl. `series_id`, Schedule, Zeitstempel, Reason).
+- WebUI/System-Log verbessert: Payload wird vollstaendig als formatierter `pre`-Block angezeigt; Cache-Buster auf `styles.css?v=20260316b` und `app.js?v=20260316b` angehoben.
+- Validierung erweitert: monatliche Aufgaben erfordern eine Faelligkeit; Erinnerungen ohne Faelligkeit werden bei `none`/`monthly` klar abgefangen.
+- Tests: neuer Logik-Test `tests/test_task_logic.py` fuer zentrale Recurrence- und Validierungsfaelle.
+
 ## v2026.03.16-02 (2026-03-16)
 
 - Wochenaufgaben-Serienlogik erweitert: zentrale Upsert-Helferfunktion fuer `task_generation_blocks` eingefuehrt.

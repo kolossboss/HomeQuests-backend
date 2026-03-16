@@ -243,14 +243,24 @@ class TaskCreate(BaseModel):
             invalid_daily = [entry for entry in self.reminder_offsets_minutes if entry not in ALLOWED_DAILY_REMINDER_MINUTES]
             if invalid_daily:
                 raise ValueError("Bei täglicher Wiederholung sind nur Erinnerungen bis 2 Stunden erlaubt")
+        elif self.recurrence_type == RecurrenceTypeEnum.monthly:
+            if self.due_at is None:
+                raise ValueError("Bei monatlicher Wiederholung ist eine Fälligkeit erforderlich")
+            if self.reminder_offsets_minutes and self.due_at is None:
+                raise ValueError("Erinnerungen benötigen eine Fälligkeit")
+            self.active_weekdays = []
         elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
             if self.reminder_offsets_minutes:
                 raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
             if self.penalty_enabled:
                 raise ValueError("Minuspunkte benötigen bei wöchentlichen Aufgaben einen festen Zeitpunkt")
+            self.always_submittable = False
             self.active_weekdays = []
         else:
             self.active_weekdays = []
+
+        if self.recurrence_type == RecurrenceTypeEnum.none and self.reminder_offsets_minutes and self.due_at is None:
+            raise ValueError("Erinnerungen benötigen eine Fälligkeit")
 
         if self.recurrence_type not in {RecurrenceTypeEnum.daily, RecurrenceTypeEnum.weekly}:
             self.penalty_enabled = False
@@ -295,14 +305,24 @@ class TaskUpdate(BaseModel):
             invalid_daily = [entry for entry in self.reminder_offsets_minutes if entry not in ALLOWED_DAILY_REMINDER_MINUTES]
             if invalid_daily:
                 raise ValueError("Bei täglicher Wiederholung sind nur Erinnerungen bis 2 Stunden erlaubt")
+        elif self.recurrence_type == RecurrenceTypeEnum.monthly:
+            if self.due_at is None:
+                raise ValueError("Bei monatlicher Wiederholung ist eine Fälligkeit erforderlich")
+            if self.reminder_offsets_minutes and self.due_at is None:
+                raise ValueError("Erinnerungen benötigen eine Fälligkeit")
+            self.active_weekdays = []
         elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
             if self.reminder_offsets_minutes:
                 raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
             if self.penalty_enabled:
                 raise ValueError("Minuspunkte benötigen bei wöchentlichen Aufgaben einen festen Zeitpunkt")
+            self.always_submittable = False
             self.active_weekdays = []
         else:
             self.active_weekdays = []
+
+        if self.recurrence_type == RecurrenceTypeEnum.none and self.reminder_offsets_minutes and self.due_at is None:
+            raise ValueError("Erinnerungen benötigen eine Fälligkeit")
 
         if self.recurrence_type not in {RecurrenceTypeEnum.daily, RecurrenceTypeEnum.weekly}:
             self.penalty_enabled = False
@@ -323,6 +343,7 @@ class TaskOut(BaseModel):
     reminder_offsets_minutes: list[int]
     active_weekdays: list[int]
     recurrence_type: RecurrenceTypeEnum
+    series_id: str | None
     always_submittable: bool
     penalty_enabled: bool
     penalty_points: int

@@ -125,6 +125,7 @@ class Task(Base):
     reminder_offsets_minutes: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
     active_weekdays: Mapped[list[int]] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6], nullable=False)
     recurrence_type: Mapped[str] = mapped_column(String(16), default=RecurrenceTypeEnum.none.value, nullable=False)
+    series_id: Mapped[str | None] = mapped_column(String(64), index=True)
     always_submittable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     penalty_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     penalty_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
