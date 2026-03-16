@@ -631,6 +631,20 @@ class SystemTestNotificationOut(BaseModel):
     home_assistant_delivery: dict[str, object] | None = None
 
 
+class SystemRuntimeOut(BaseModel):
+    app_name: str
+    app_version: str
+    app_build_ref: str | None = None
+    server_time_utc: datetime
+
+
+class SystemEventOut(BaseModel):
+    id: int
+    event_type: str
+    payload: dict[str, object] | None = None
+    created_at: datetime
+
+
 class HomeAssistantSettingsUpdateRequest(BaseModel):
     ha_enabled: bool = False
     notification_channel: NotificationChannelEnum = NotificationChannelEnum.sse

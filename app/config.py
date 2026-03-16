@@ -4,6 +4,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "HomeQuests API"
+    app_version: str = "0.1.0"
+    app_build_ref: str | None = None
     secret_key: str = "change-me-in-production"
     access_token_expire_minutes: int = 60 * 24 * 30
     algorithm: str = "HS256"

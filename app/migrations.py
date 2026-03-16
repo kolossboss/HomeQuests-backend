@@ -294,6 +294,62 @@ def _create_home_assistant_delivery_logs_table(engine: Engine) -> None:
             )
 
 
+def _create_task_generation_blocks_table(engine: Engine) -> None:
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS task_generation_blocks ("
+                    "id SERIAL PRIMARY KEY, "
+                    "family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE, "
+                    "key_hash VARCHAR(64) NOT NULL, "
+                    "block_until TIMESTAMP NOT NULL, "
+                    "reason VARCHAR(120) NULL, "
+                    "created_by_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL, "
+                    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_generation_block_family_key "
+                    "ON task_generation_blocks (family_id, key_hash)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_task_generation_blocks_family_until "
+                    "ON task_generation_blocks (family_id, block_until)"
+                )
+            )
+        else:
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS task_generation_blocks ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "family_id INTEGER NOT NULL, "
+                    "key_hash VARCHAR(64) NOT NULL, "
+                    "block_until TIMESTAMP NOT NULL, "
+                    "reason VARCHAR(120) NULL, "
+                    "created_by_id INTEGER NULL, "
+                    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_task_generation_block_family_key "
+                    "ON task_generation_blocks (family_id, key_hash)"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_task_generation_blocks_family_until "
+                    "ON task_generation_blocks (family_id, block_until)"
+                )
+            )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
@@ -301,6 +357,7 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260307_home_assistant_settings", _create_home_assistant_settings_table),
     ("20260307_home_assistant_channel_and_user_prefs", _add_home_assistant_channel_and_user_prefs),
     ("20260307_home_assistant_delivery_logs", _create_home_assistant_delivery_logs_table),
+    ("20260316_task_generation_blocks", _create_task_generation_blocks_table),
 ]
 
 
