@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.16-05 (2026-03-16)
+
+- System-Event-Ansicht in der WebUI vereinfacht: statt Tabelle + separatem Textfeld jetzt ein einheitlicher Log-Container (`system-events-view`) mit Scroll und Copy-Button.
+- Copy-Funktion robust gemacht: Fallback kopiert jetzt direkt den sichtbaren Event-Container per Selection-Range, auch ohne Clipboard-API.
+- System-Tab aufgeraeumt: Diagnose-Block steht wieder direkt vor dem Ereignis-Log; doppelte Export-UI entfernt.
+
 ## v2026.03.16-04 (2026-03-16)
 
 - Daily-Realign abgesichert: frisch erzeugte Tages-Folgetasks werden am selben Tag nicht mehr automatisch auf heute zurueckgezogen.
