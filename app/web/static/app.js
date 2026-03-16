@@ -3030,8 +3030,8 @@ function buildSystemEventsExportText() {
 }
 
 async function copySystemEventsExport() {
-  const exportField = byId("system-events-export");
-  const text = exportField ? exportField.value : buildSystemEventsExportText();
+  const eventsView = byId("system-events-view");
+  const text = eventsView ? String(eventsView.textContent || "").trim() : buildSystemEventsExportText();
   if (!text) {
     log("Ereignis-Log: Keine Einträge zum Kopieren");
     return;
@@ -3040,22 +3040,28 @@ async function copySystemEventsExport() {
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(text);
-    } else if (exportField) {
-      exportField.focus();
-      exportField.select();
+    } else if (eventsView) {
+      const range = document.createRange();
+      range.selectNodeContents(eventsView);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
       document.execCommand("copy");
-      exportField.setSelectionRange(0, 0);
+      selection.removeAllRanges();
     } else {
       throw new Error("Clipboard API nicht verfügbar");
     }
     log("Ereignis-Log in Zwischenablage kopiert", { lines: text.split("\n").length });
   } catch (error) {
-    if (exportField) {
+    if (eventsView) {
       try {
-        exportField.focus();
-        exportField.select();
+        const range = document.createRange();
+        range.selectNodeContents(eventsView);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
         document.execCommand("copy");
-        exportField.setSelectionRange(0, 0);
+        selection.removeAllRanges();
         log("Ereignis-Log in Zwischenablage kopiert", { lines: text.split("\n").length, mode: "fallback" });
         return;
       } catch (_) {
@@ -3082,27 +3088,17 @@ function renderSystemRuntime() {
 }
 
 function renderSystemEvents() {
-  const body = byId("system-events-body");
-  const exportField = byId("system-events-export");
-  if (!body) return;
+  const eventsView = byId("system-events-view");
+  if (!eventsView) return;
 
   if (!Array.isArray(state.systemEvents) || state.systemEvents.length === 0) {
-    body.innerHTML = "<tr><td colspan=\"3\" class=\"muted\">Keine Ereignisse vorhanden.</td></tr>";
-    if (exportField) exportField.value = "";
+    eventsView.textContent = "Keine Ereignisse vorhanden.";
+    eventsView.classList.add("muted");
     return;
   }
 
-  body.innerHTML = state.systemEvents
-    .map(
-      (entry) => `<tr>
-        <td>${safeHtmlText(fmtDate(entry.created_at), "-")}</td>
-        <td>${safeHtmlText(entry.event_type, "-")}</td>
-        <td><pre class="system-payload-pre">${safeHtmlText(eventPayloadText(entry.payload), "-")}</pre></td>
-      </tr>`
-    )
-    .join("");
-  if (exportField) exportField.value = buildSystemEventsExportText();
-  applyMobileLabelsToTableBodies(["system-events-body"]);
+  eventsView.textContent = buildSystemEventsExportText();
+  eventsView.classList.remove("muted");
 }
 
 async function loadSystemRuntime() {

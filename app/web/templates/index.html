@@ -938,6 +938,9 @@
             <select id="ha-user-select"></select>
           </div>
 
+          <h4>Diagnose</h4>
+          <pre id="log-output"></pre>
+
           <div class="section-block">
             <div class="section-head-row">
               <h4>Ereignis-Log (Server)</h4>
@@ -954,19 +957,8 @@
                 <button id="system-events-copy-btn" type="button" class="btn-secondary">Alles kopieren</button>
               </div>
             </div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>Zeit</th><th>Event</th><th>Payload</th></tr></thead>
-                <tbody id="system-events-body"></tbody>
-              </table>
-            </div>
-            <label class="compact-filter">Kopieransicht
-              <textarea id="system-events-export" class="system-events-export" readonly></textarea>
-            </label>
+            <div id="system-events-view" class="system-events-view muted">Keine Ereignisse vorhanden.</div>
           </div>
-
-          <h4>Diagnose</h4>
-          <pre id="log-output"></pre>
         </section>
       </section>
     </main>
