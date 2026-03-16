@@ -350,6 +350,34 @@ def _create_task_generation_blocks_table(engine: Engine) -> None:
             )
 
 
+def _add_task_series_id_and_indexes(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE tasks "
+                "ADD COLUMN IF NOT EXISTS series_id VARCHAR(64) NULL"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_tasks_series_family_status "
+                "ON tasks (family_id, series_id, is_active, status)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_tasks_family_active_recurrence_due "
+                "ON tasks (family_id, is_active, recurrence_type, status, due_at)"
+            )
+        )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_tasks_special_template_created_at "
+                "ON tasks (special_template_id, created_at)"
+            )
+        )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
@@ -358,6 +386,7 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260307_home_assistant_channel_and_user_prefs", _add_home_assistant_channel_and_user_prefs),
     ("20260307_home_assistant_delivery_logs", _create_home_assistant_delivery_logs_table),
     ("20260316_task_generation_blocks", _create_task_generation_blocks_table),
+    ("20260316_task_series_id_and_indexes", _add_task_series_id_and_indexes),
 ]
 
 

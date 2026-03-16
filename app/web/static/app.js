@@ -634,12 +634,34 @@ function getTaskActivityDate(task) {
 
 function recurringTaskKey(task) {
   if (task.recurrence_type === "none") return null;
+  if (task.series_id) return `series:${task.series_id}`;
+
+  const due = parseDateSafe(task.due_at);
+  let schedule = "no_due";
+  if (due) {
+    if (task.recurrence_type === "daily") {
+      schedule = `daily:${String(due.getHours()).padStart(2, "0")}:${String(due.getMinutes()).padStart(2, "0")}`;
+    } else if (task.recurrence_type === "weekly") {
+      schedule = `weekly:${weekdayFromDate(due)}:${String(due.getHours()).padStart(2, "0")}:${String(due.getMinutes()).padStart(2, "0")}`;
+    } else if (task.recurrence_type === "monthly") {
+      schedule = `monthly:${due.getDate()}:${String(due.getHours()).padStart(2, "0")}:${String(due.getMinutes()).padStart(2, "0")}`;
+    } else {
+      schedule = `once:${due.toISOString()}`;
+    }
+  }
+  const weekdays = (Array.isArray(task.active_weekdays) ? task.active_weekdays : [])
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 6)
+    .sort((a, b) => a - b)
+    .join(",");
   return [
     task.assignee_id,
     task.title || "",
     task.description || "",
     task.recurrence_type || "",
     task.special_template_id || 0,
+    weekdays,
+    schedule,
   ].join("|");
 }
 
@@ -2101,6 +2123,17 @@ function renderTasks() {
         .join("")
       : "<p class=\"muted\">Keine offenen oder wartenden Aufgaben.</p>"
     : "";
+
+  if (state.selectedTaskId) {
+    const exists = state.tasks.some((entry) => entry.id === state.selectedTaskId);
+    if (!exists) {
+      closeTaskEditor();
+    } else if (isSectionOpen("task-editor-section") && !state.taskEditorDirty) {
+      fillTaskEditorForm();
+      state.taskEditorInitialSnapshot = taskEditorSnapshot();
+      state.taskEditorDirty = false;
+    }
+  }
   updateTaskEditButtons();
   byId("task-history-cards").innerHTML = manager
     ? managerHistoryTasks.length
@@ -2389,7 +2422,7 @@ function renderSpecialTaskTemplates() {
   if (state.selectedSpecialTaskTemplateId) {
     const exists = state.specialTaskTemplates.some((entry) => entry.id === state.selectedSpecialTaskTemplateId);
     if (!exists) closeSpecialTaskEditor();
-    else {
+    else if (!isSectionOpen("special-task-editor-section") || !state.specialTaskEditorDirty) {
       fillSpecialTaskEditorForm();
       state.specialTaskEditorInitialSnapshot = specialTaskEditorSnapshot();
       state.specialTaskEditorDirty = false;
@@ -2979,9 +3012,9 @@ function boolLabel(value) {
 
 function eventPayloadText(payload) {
   if (!payload || typeof payload !== "object") return "-";
-  const raw = JSON.stringify(payload);
+  const raw = JSON.stringify(payload, null, 2);
   if (!raw) return "-";
-  return raw.length > 220 ? `${raw.slice(0, 217)}...` : raw;
+  return raw;
 }
 
 function renderSystemRuntime() {
@@ -3013,7 +3046,7 @@ function renderSystemEvents() {
       (entry) => `<tr>
         <td>${safeHtmlText(fmtDate(entry.created_at), "-")}</td>
         <td>${safeHtmlText(entry.event_type, "-")}</td>
-        <td>${safeHtmlText(eventPayloadText(entry.payload), "-")}</td>
+        <td><pre class="system-payload-pre">${safeHtmlText(eventPayloadText(entry.payload), "-")}</pre></td>
       </tr>`
     )
     .join("");
@@ -3388,7 +3421,6 @@ async function refreshFamilyData() {
   if (dataRefreshInFlight) return;
   dataRefreshInFlight = true;
   try {
-    restoreAllInlineEditorSections();
     await loadMembers();
     await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances()]);
     if (isManagerRole()) {
@@ -3927,6 +3959,10 @@ async function createTask() {
     setInvalid(dueInput, true);
     invalid = true;
   }
+  if (recurrence_type === "monthly" && !dueRaw) {
+    setInvalid(dueInput, true);
+    invalid = true;
+  }
   if (penalty_enabled && (Number.isNaN(penalty_points) || penalty_points < 1)) {
     setInvalid(penaltyPointsInput, true);
     invalid = true;
@@ -4054,6 +4090,10 @@ async function updateTask() {
     setInvalid(byId("task-editor-weekdays-row"), false);
   }
   if ((recurrence_type === "none" || recurrence_type === "monthly") && reminder_offsets_minutes.length > 0 && !dueRaw) {
+    setInvalid(dueInput, true);
+    invalid = true;
+  }
+  if (recurrence_type === "monthly" && !dueRaw) {
     setInvalid(dueInput, true);
     invalid = true;
   }

@@ -1511,6 +1511,17 @@ pre {
   font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+.system-payload-pre {
+  margin: 0;
+  min-height: auto;
+  max-height: 220px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .hidden {
   display: none !important;
 }

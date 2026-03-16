@@ -1,11 +1,13 @@
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..database import get_db
+from ..database import engine, get_db
 from ..deps import get_current_user
 from ..models import (
     ApprovalDecisionEnum,
@@ -50,6 +52,30 @@ def _as_utc_naive(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _new_series_id() -> str:
+    return uuid4().hex
+
+
+def _task_event_payload(task: Task, **extra) -> dict:
+    due = _as_utc_naive(task.due_at)
+    updated = _as_utc_naive(task.updated_at)
+    payload = {
+        "task_id": task.id,
+        "title": task.title,
+        "status": task.status.value if hasattr(task.status, "value") else str(task.status),
+        "is_active": bool(task.is_active),
+        "assignee_id": task.assignee_id,
+        "due_at": due.isoformat() if due else None,
+        "recurrence_type": task.recurrence_type,
+        "series_id": task.series_id,
+        "active_weekdays": list(task.active_weekdays or []),
+        "reminder_offsets_minutes": list(task.reminder_offsets_minutes or []),
+        "updated_at": updated.isoformat() if updated else None,
+    }
+    payload.update(extra)
+    return payload
 
 
 def _add_months(value: datetime, months: int) -> datetime:
@@ -213,6 +239,14 @@ def _special_task_usage_count(
     )
 
 
+def _lock_special_task_claim_window(db: Session, template_id: int) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+    # Verhindert parallele Claim-Races pro Vorlage über mehrere Worker/Instanzen.
+    lock_key = 870000000 + int(template_id)
+    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+
+
 def _apply_penalty_for_task(db: Session, task: Task) -> bool:
     if not task.is_active:
         return False
@@ -284,9 +318,31 @@ def _apply_penalties_for_family(db: Session, family_id: int) -> bool:
     return changed
 
 
+def _task_schedule_signature(task: Task) -> tuple:
+    due = _as_utc_naive(task.due_at)
+    if task.recurrence_type == RecurrenceTypeEnum.daily.value:
+        weekdays = tuple(sorted(int(value) for value in (task.active_weekdays or []) if isinstance(value, int)))
+        if due is None:
+            return ("daily", weekdays, "no_due")
+        return ("daily", weekdays, due.hour, due.minute)
+    if task.recurrence_type == RecurrenceTypeEnum.weekly.value:
+        if due is None:
+            return ("weekly_flexible",)
+        return ("weekly_exact", due.weekday(), due.hour, due.minute)
+    if task.recurrence_type == RecurrenceTypeEnum.monthly.value:
+        if due is None:
+            return ("monthly", "no_due")
+        return ("monthly", due.day, due.hour, due.minute)
+    if due is None:
+        return ("no_due",)
+    return ("once", due.year, due.month, due.day, due.hour, due.minute)
+
+
 def _recurring_task_identity_key(task: Task) -> tuple | None:
     if task.recurrence_type == RecurrenceTypeEnum.none.value:
         return None
+    if task.series_id:
+        return ("series", str(task.series_id))
     if _is_weekly_flexible_task(task):
         # Für "ganze Woche verfügbar" darf eine reine Textanpassung
         # (z. B. Beschreibung) keine neue Wiederholungsserie erzeugen.
@@ -305,6 +361,7 @@ def _recurring_task_identity_key(task: Task) -> tuple | None:
         task.recurrence_type,
         weekdays,
         int(task.special_template_id or 0),
+        _task_schedule_signature(task),
     )
 
 
@@ -426,15 +483,67 @@ def _deactivate_current_cycle_weekly_flexible_tasks_by_key_hash(
             db,
             family_id=task.family_id,
             event_type="task.updated",
-            payload={
-                "task_id": task.id,
-                "status": task.status.value,
-                "is_active": task.is_active,
-                "assignee_id": task.assignee_id,
-                "reason": "series_replaced",
-            },
+            payload=_task_event_payload(task, reason="series_replaced"),
         )
         changed = True
+    return changed
+
+
+def _next_daily_due_from_now(reference_due: datetime, active_weekdays: list[int] | None, now: datetime) -> datetime | None:
+    due = _as_utc_naive(reference_due)
+    if due is None:
+        return None
+    allowed = sorted(set(int(value) for value in (active_weekdays or FULL_WEEKDAYS) if isinstance(value, int)))
+    if not allowed:
+        allowed = FULL_WEEKDAYS.copy()
+
+    for offset in range(0, 14):
+        day = now + timedelta(days=offset)
+        candidate = day.replace(hour=due.hour, minute=due.minute, second=due.second, microsecond=0)
+        if candidate.weekday() not in allowed:
+            continue
+        if candidate > now:
+            return candidate
+    return None
+
+
+def _realign_daily_tasks_for_family(db: Session, family_id: int) -> bool:
+    now = datetime.utcnow()
+    today = now.date()
+    tomorrow = (now + timedelta(days=1)).date()
+    tasks = (
+        db.query(Task)
+        .filter(
+            Task.family_id == family_id,
+            Task.is_active == True,  # noqa: E712
+            Task.recurrence_type == RecurrenceTypeEnum.daily.value,
+            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
+            Task.due_at.is_not(None),
+        )
+        .all()
+    )
+    changed = False
+    for task in tasks:
+        due = _as_utc_naive(task.due_at)
+        if due is None:
+            continue
+        expected = _next_daily_due_from_now(due, task.active_weekdays, now)
+        if expected is None:
+            continue
+
+        # Auto-Heal nur bei klarer 1-Tages-Verschiebung:
+        # steht aktuell auf "morgen", obwohl heute (mit gleicher Uhrzeit) noch möglich ist.
+        if due.date() == tomorrow and expected.date() == today and (due.hour, due.minute) == (expected.hour, expected.minute):
+            task.due_at = expected
+            db.flush()
+            emit_live_event(
+                db,
+                family_id=task.family_id,
+                event_type="task.updated",
+                payload=_task_event_payload(task, reason="auto_daily_realign"),
+            )
+            changed = True
+
     return changed
 
 
@@ -465,6 +574,26 @@ def _dedupe_recurring_tasks_for_reminders(tasks: list[Task]) -> list[Task]:
 
 
 def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task | None:
+    if source_task.series_id:
+        return (
+            db.query(Task)
+            .filter(
+                Task.id != source_task.id,
+                Task.family_id == source_task.family_id,
+                Task.series_id == source_task.series_id,
+                Task.is_active == True,  # noqa: E712
+                Task.status.in_(
+                    [
+                        TaskStatusEnum.open,
+                        TaskStatusEnum.rejected,
+                        TaskStatusEnum.submitted,
+                    ]
+                ),
+            )
+            .order_by(Task.created_at.desc(), Task.id.desc())
+            .first()
+        )
+
     key = _recurring_task_identity_key(source_task)
     if key is None:
         return None
@@ -502,7 +631,7 @@ def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task |
 
     # active_weekdays liegt als JSON vor; serverseitiger JSON-Vergleich ist je nach DB-Typ
     # nicht überall stabil. Daher finale Identitätsprüfung in Python.
-    for candidate in query.limit(200).all():
+    for candidate in query.all():
         if _recurring_task_identity_key(candidate) == key:
             return candidate
     return None
@@ -512,19 +641,7 @@ def _next_cycle_boundary(task: Task) -> datetime | None:
     due = _as_utc_naive(task.due_at)
     if due is None:
         return None
-
-    if task.recurrence_type == RecurrenceTypeEnum.daily.value:
-        return due.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-
-    if task.recurrence_type == RecurrenceTypeEnum.weekly.value:
-        week_start = due.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=due.weekday())
-        return week_start + timedelta(days=7)
-
-    if task.recurrence_type == RecurrenceTypeEnum.monthly.value:
-        month_start = due.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        return _add_months(month_start, 1)
-
-    return None
+    return _next_due(due, task.recurrence_type, task.active_weekdays)
 
 
 def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
@@ -583,6 +700,9 @@ def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: i
         return None
     if _is_weekly_flexible_task(source_task) and not force:
         return None
+    if not source_task.series_id:
+        source_task.series_id = _new_series_id()
+        db.flush()
     if _existing_open_recurring_successor(db, source_task):
         return None
     next_due = _next_due(source_task.due_at, source_task.recurrence_type, source_task.active_weekdays)
@@ -596,6 +716,7 @@ def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: i
         reminder_offsets_minutes=source_task.reminder_offsets_minutes,
         active_weekdays=source_task.active_weekdays,
         recurrence_type=source_task.recurrence_type,
+        series_id=source_task.series_id,
         always_submittable=source_task.always_submittable,
         penalty_enabled=source_task.penalty_enabled,
         penalty_points=source_task.penalty_points,
@@ -611,12 +732,12 @@ def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: i
         db,
         family_id=source_task.family_id,
         event_type="task.created",
-        payload={
-            "task_id": next_task.id,
-            "assignee_id": next_task.assignee_id,
-            "source_task_id": source_task.id,
-            "source_recurrence_type": source_task.recurrence_type,
-        },
+        payload=_task_event_payload(
+            next_task,
+            source_task_id=source_task.id,
+            source_recurrence_type=source_task.recurrence_type,
+            reason="recurring_next_created",
+        ),
     )
     return next_task
 
@@ -667,12 +788,7 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
                     db,
                     family_id=duplicate.family_id,
                     event_type="task.updated",
-                    payload={
-                        "task_id": duplicate.id,
-                        "status": duplicate.status.value,
-                        "is_active": duplicate.is_active,
-                        "assignee_id": duplicate.assignee_id,
-                    },
+                    payload=_task_event_payload(duplicate, reason="weekly_duplicate_cleanup"),
                 )
                 changed = True
             tasks = [entry for entry in tasks if entry.id == keeper.id or entry not in current_cycle_open]
@@ -694,7 +810,7 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
                     db,
                     family_id=latest.family_id,
                     event_type="task.updated",
-                    payload={"task_id": latest.id, "status": latest.status.value, "is_active": latest.is_active, "assignee_id": latest.assignee_id},
+                    payload=_task_event_payload(latest, reason="weekly_duplicate_cleanup"),
                 )
                 changed = True
                 tasks = tasks[:-1]
@@ -743,8 +859,6 @@ def list_tasks(
     db: Session = Depends(get_db),
 ):
     context = get_membership_or_403(db, family_id, current_user.id)
-    if _advance_weekly_flexible_tasks_for_family(db, family_id):
-        db.commit()
     query = db.query(Task).filter(Task.family_id == family_id)
     if context.role == RoleEnum.child:
         query = query.filter(Task.assignee_id == current_user.id)
@@ -834,6 +948,7 @@ def create_task(
         reminder_offsets_minutes=payload.reminder_offsets_minutes,
         active_weekdays=payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else [],
         recurrence_type=payload.recurrence_type.value,
+        series_id=_new_series_id() if payload.recurrence_type != RecurrenceTypeEnum.none else None,
         always_submittable=payload.always_submittable,
         penalty_enabled=payload.penalty_enabled,
         penalty_points=payload.penalty_points if payload.penalty_enabled else 0,
@@ -848,7 +963,7 @@ def create_task(
         db,
         family_id=family_id,
         event_type="task.created",
-        payload={"task_id": task.id, "assignee_id": task.assignee_id},
+        payload=_task_event_payload(task, reason="manual_create"),
     )
     db.commit()
     db.refresh(task)
@@ -894,6 +1009,10 @@ def update_task(
     task.reminder_offsets_minutes = payload.reminder_offsets_minutes
     task.active_weekdays = payload.active_weekdays if payload.recurrence_type == RecurrenceTypeEnum.daily else []
     task.recurrence_type = payload.recurrence_type.value
+    if payload.recurrence_type == RecurrenceTypeEnum.none:
+        task.series_id = None
+    elif not task.series_id:
+        task.series_id = _new_series_id()
     task.always_submittable = payload.always_submittable
     task.penalty_enabled = payload.penalty_enabled
     task.penalty_points = payload.penalty_points if payload.penalty_enabled else 0
@@ -978,7 +1097,7 @@ def update_task(
         db,
         family_id=task.family_id,
         event_type="task.updated",
-        payload={"task_id": task.id, "status": task.status.value, "is_active": task.is_active, "assignee_id": task.assignee_id},
+        payload=_task_event_payload(task, reason="manual_edit"),
     )
     db.commit()
     db.refresh(task)
@@ -1160,6 +1279,9 @@ def claim_special_task(
     if not available_now:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unavailability_reason or "Sonderaufgabe ist aktuell nicht verfügbar")
 
+    _lock_special_task_claim_window(db, template.id)
+    db.refresh(template)
+
     used = _special_task_usage_count(db, template.id, template.interval_type)
     if used >= template.max_claims_per_interval:
         if template.interval_type == SpecialTaskIntervalEnum.daily:
@@ -1196,7 +1318,7 @@ def claim_special_task(
         db,
         family_id=template.family_id,
         event_type="task.created",
-        payload={"task_id": task.id, "assignee_id": task.assignee_id, "source": "special_task"},
+        payload=_task_event_payload(task, source="special_task", reason="special_claim"),
     )
     db.commit()
     db.refresh(task)
@@ -1530,6 +1652,8 @@ def set_task_active(
 
     task.is_active = payload.is_active
     if task.is_active:
+        if task.recurrence_type != RecurrenceTypeEnum.none.value and not task.series_id:
+            task.series_id = _new_series_id()
         task.due_at = _align_due_for_active_task(task.due_at, task.recurrence_type, task.active_weekdays)
 
     db.flush()
@@ -1537,7 +1661,7 @@ def set_task_active(
         db,
         family_id=task.family_id,
         event_type="task.updated",
-        payload={"task_id": task.id, "status": task.status.value, "is_active": task.is_active, "assignee_id": task.assignee_id},
+        payload=_task_event_payload(task, reason="active_toggle"),
     )
     db.commit()
     db.refresh(task)
