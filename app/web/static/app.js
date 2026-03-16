@@ -3017,6 +3017,55 @@ function eventPayloadText(payload) {
   return raw;
 }
 
+function systemEventEntryText(entry) {
+  const timestamp = fmtDate(entry.created_at);
+  const eventType = entry.event_type || "-";
+  const payloadText = eventPayloadText(entry.payload);
+  return `${timestamp}\t${eventType}\n${payloadText}`;
+}
+
+function buildSystemEventsExportText() {
+  if (!Array.isArray(state.systemEvents) || state.systemEvents.length === 0) return "";
+  return state.systemEvents.map((entry) => systemEventEntryText(entry)).join("\n\n");
+}
+
+async function copySystemEventsExport() {
+  const exportField = byId("system-events-export");
+  const text = exportField ? exportField.value : buildSystemEventsExportText();
+  if (!text) {
+    log("Ereignis-Log: Keine Einträge zum Kopieren");
+    return;
+  }
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else if (exportField) {
+      exportField.focus();
+      exportField.select();
+      document.execCommand("copy");
+      exportField.setSelectionRange(0, 0);
+    } else {
+      throw new Error("Clipboard API nicht verfügbar");
+    }
+    log("Ereignis-Log in Zwischenablage kopiert", { lines: text.split("\n").length });
+  } catch (error) {
+    if (exportField) {
+      try {
+        exportField.focus();
+        exportField.select();
+        document.execCommand("copy");
+        exportField.setSelectionRange(0, 0);
+        log("Ereignis-Log in Zwischenablage kopiert", { lines: text.split("\n").length, mode: "fallback" });
+        return;
+      } catch (_) {
+        // continue to error log below
+      }
+    }
+    log("Ereignis-Log kopieren fehlgeschlagen", { error: error.message });
+  }
+}
+
 function renderSystemRuntime() {
   const versionTarget = byId("system-version-value");
   const buildTarget = byId("system-build-value");
@@ -3034,10 +3083,12 @@ function renderSystemRuntime() {
 
 function renderSystemEvents() {
   const body = byId("system-events-body");
+  const exportField = byId("system-events-export");
   if (!body) return;
 
   if (!Array.isArray(state.systemEvents) || state.systemEvents.length === 0) {
     body.innerHTML = "<tr><td colspan=\"3\" class=\"muted\">Keine Ereignisse vorhanden.</td></tr>";
+    if (exportField) exportField.value = "";
     return;
   }
 
@@ -3050,6 +3101,7 @@ function renderSystemEvents() {
       </tr>`
     )
     .join("");
+  if (exportField) exportField.value = buildSystemEventsExportText();
   applyMobileLabelsToTableBodies(["system-events-body"]);
 }
 
@@ -5084,6 +5136,9 @@ byId("sse-test-send-btn").addEventListener("click", () =>
 );
 byId("system-events-refresh-btn").addEventListener("click", () =>
   loadSystemEvents().catch((error) => log("Ereignis-Log laden Fehler", { error: error.message }))
+);
+byId("system-events-copy-btn").addEventListener("click", () =>
+  copySystemEventsExport().catch((error) => log("Ereignis-Log kopieren Fehler", { error: error.message }))
 );
 byId("system-events-limit").addEventListener("change", () =>
   loadSystemEvents().catch((error) => log("Ereignis-Log laden Fehler", { error: error.message }))

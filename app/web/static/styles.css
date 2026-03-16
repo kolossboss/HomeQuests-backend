@@ -1522,6 +1522,21 @@ pre {
   line-height: 1.35;
 }
 
+.system-events-export {
+  width: 100%;
+  min-height: 260px;
+  max-height: 50vh;
+  resize: vertical;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: #0b101a;
+  color: #cbffe9;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
 .hidden {
   display: none !important;
 }

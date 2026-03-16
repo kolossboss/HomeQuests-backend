@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.16-04 (2026-03-16)
+
+- Daily-Realign abgesichert: frisch erzeugte Tages-Folgetasks werden am selben Tag nicht mehr automatisch auf heute zurueckgezogen.
+- System-Tab erweitert: Ereignis-Log hat jetzt eine Kopieransicht (`textarea`) und einen Button „Alles kopieren“ fuer Export/Support-Zwecke.
+- Event-Export verbessert: Eintraege werden als strukturierter Text mit Zeitstempel, Event-Typ und vollstaendiger Payload bereitgestellt.
+
 ## v2026.03.16-03 (2026-03-16)
 
 - Aufgabenserien erweitert: `tasks.series_id` eingefuehrt (Migration + Indizes), damit wiederkehrende Aufgaben stabil ueber eine feste Serien-ID verfolgt werden.
