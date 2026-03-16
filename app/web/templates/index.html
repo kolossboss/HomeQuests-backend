@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260314b" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260315a" />
   </head>
   <body>
     <main class="container">
@@ -373,7 +373,7 @@
               <label id="task-weekly-time-row" class="hidden">Wöchentliche Uhrzeit<input id="task-weekly-time" type="time" value="09:00" /></label>
               <label id="task-due-row">Fälligkeit<input id="task-due" type="datetime-local" /></label>
               <label>Punkte<input id="task-points" type="number" min="0" value="10" /></label>
-              <label>Immer erledigbar
+              <label id="task-always-submittable-row">Immer erledigbar
                 <select id="task-always-submittable">
                   <option value="false">nein</option>
                   <option value="true">ja</option>
@@ -529,7 +529,7 @@
                   <option value="false">nein</option>
                 </select>
               </label>
-              <label>Immer erledigbar
+              <label id="task-editor-always-submittable-row">Immer erledigbar
                 <select id="task-editor-always-submittable">
                   <option value="false">nein</option>
                   <option value="true">ja</option>
@@ -836,6 +836,7 @@
         <section id="tab-system" class="tab-panel">
           <h3>System</h3>
           <p class="muted">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></p>
+          <p class="muted">Installierte Version: <strong id="system-version-value">-</strong> <span id="system-build-value"></span></p>
 
           <div class="section-block">
             <h4>Benachrichtigungskanäle</h4>
@@ -937,6 +938,29 @@
             <select id="ha-user-select"></select>
           </div>
 
+          <div class="section-block">
+            <div class="section-head-row">
+              <h4>Ereignis-Log (Server)</h4>
+              <div class="row-wrap">
+                <label class="compact-filter">Zeilen
+                  <select id="system-events-limit">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                  </select>
+                </label>
+                <button id="system-events-refresh-btn" type="button" class="btn-secondary">Neu laden</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Zeit</th><th>Event</th><th>Payload</th></tr></thead>
+                <tbody id="system-events-body"></tbody>
+              </table>
+            </div>
+          </div>
+
           <h4>Diagnose</h4>
           <pre id="log-output"></pre>
         </section>
@@ -987,6 +1011,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260314b"></script>
+    <script src="/static/app.js?v=20260316a"></script>
   </body>
 </html>

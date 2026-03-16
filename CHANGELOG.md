@@ -1,5 +1,13 @@
 # Changelog
 
+## v2026.03.16-01 (2026-03-16)
+
+- Wiederkehrende Wochenaufgaben (flexibel): neue Generierungs-Sperre (`task_generation_blocks`), damit nach manuellem Loeschen im laufenden Zyklus keine sofortige Neuerzeugung erfolgt.
+- Aufgabenlogik stabilisiert: Duplikat-Bereinigung bei offenen Wochenaufgaben im aktuellen Zyklus und robustere Nachfolger-Erkennung fuer flexible Wochenaufgaben.
+- System-API erweitert: neue Endpunkte fuer Runtime-Infos (`/system/runtime`) und Event-Log (`/system/events`) inklusive Anzeige im System-Tab der WebUI.
+- App-Metadaten: `app_version`/`app_build_ref` in den Settings nutzbar; `/health` liefert jetzt auch die Version.
+- WebUI: Task-Formulare blenden „Immer erledigbar“ bei Wochenmodus „ganze Woche“ automatisch aus; Asset-Cache-Buster auf `styles.css?v=20260315a` und `app.js?v=20260316a`.
+
 ## v2026.03.14-03 (2026-03-14)
 
 - WebUI-Design: Kartenhintergruende von Verlauf auf klare iOS-nahe Farbflächen umgestellt (Dashboard, Fokus-/Metrik-Karten, Detailbereiche).

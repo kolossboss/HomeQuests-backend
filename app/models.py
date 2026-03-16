@@ -140,6 +140,20 @@ class Task(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class TaskGenerationBlock(Base):
+    __tablename__ = "task_generation_blocks"
+    __table_args__ = (UniqueConstraint("family_id", "key_hash", name="uq_task_generation_block_family_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    block_until: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    reason: Mapped[str | None] = mapped_column(String(120))
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class TaskSubmission(Base):
     __tablename__ = "task_submissions"
 

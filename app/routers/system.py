@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 from ..config import settings as app_settings
 from ..database import get_db
 from ..deps import get_current_user
-from ..models import FamilyMembership, HomeAssistantSettings, NotificationChannelEnum, PushDevice, RecurrenceTypeEnum, RoleEnum, Task, TaskStatusEnum, TaskSubmission, User
+from ..models import FamilyMembership, HomeAssistantSettings, LiveUpdateEvent, NotificationChannelEnum, PushDevice, RecurrenceTypeEnum, RoleEnum, Task, TaskStatusEnum, TaskSubmission, User
 from ..push_notifications import dispatch_home_assistant_notification, dispatch_remote_pushes_for_event
 from ..rbac import get_membership_or_403, require_roles
 from ..schemas import (
@@ -17,8 +18,10 @@ from ..schemas import (
     HomeAssistantSettingsUpdateRequest,
     HomeAssistantUserTestRequest,
     NotificationChannelUpdateRequest,
+    SystemEventOut,
     SystemPracticalTestOut,
     SystemPracticalTestRequest,
+    SystemRuntimeOut,
     SystemTestNotificationOut,
     SystemTestNotificationRequest,
 )
@@ -76,6 +79,63 @@ def _apns_configured() -> bool:
     if app_settings.apns_private_key_path and Path(app_settings.apns_private_key_path).exists():
         return True
     return False
+
+
+def _decode_event_payload(raw_payload: str | None) -> dict[str, object] | None:
+    if not raw_payload:
+        return None
+    try:
+        parsed = json.loads(raw_payload)
+    except Exception:
+        return {"raw": raw_payload}
+    if isinstance(parsed, dict):
+        return parsed
+    return {"value": parsed}
+
+
+@router.get("/families/{family_id}/system/runtime", response_model=SystemRuntimeOut)
+def get_system_runtime(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+    return SystemRuntimeOut(
+        app_name=app_settings.app_name,
+        app_version=app_settings.app_version,
+        app_build_ref=app_settings.app_build_ref,
+        server_time_utc=datetime.utcnow(),
+    )
+
+
+@router.get("/families/{family_id}/system/events", response_model=list[SystemEventOut])
+def list_system_events(
+    family_id: int,
+    limit: int = 100,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    safe_limit = max(10, min(int(limit), 500))
+    rows = (
+        db.query(LiveUpdateEvent)
+        .filter(LiveUpdateEvent.family_id == family_id)
+        .order_by(LiveUpdateEvent.id.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    return [
+        SystemEventOut(
+            id=entry.id,
+            event_type=entry.event_type,
+            payload=_decode_event_payload(entry.payload_json),
+            created_at=entry.created_at,
+        )
+        for entry in rows
+    ]
 
 
 @router.get("/families/{family_id}/system/home-assistant-settings", response_model=HomeAssistantSettingsOut)

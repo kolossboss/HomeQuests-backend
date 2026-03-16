@@ -67,7 +67,7 @@ async def lifespan(_: FastAPI):
                 await push_task
 
 
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
 
 cors_allow_origins = settings.cors_allow_origins or []
 app.add_middleware(
@@ -98,7 +98,7 @@ app.include_router(push.router)
 
 @app.get("/health")
 def healthcheck():
-    return {"status": "ok"}
+    return {"status": "ok", "version": settings.app_version}
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -21,6 +21,8 @@ const state = {
   haSettings: null,
   haUserConfigs: [],
   channelStatus: null,
+  systemRuntime: null,
+  systemEvents: [],
   tasksSort: "updated_desc",
   specialTasksSort: "updated_desc",
   taskEditorDirty: false,
@@ -1791,6 +1793,7 @@ function syncTaskCreateTimingUI() {
   const weekly = recurrence === "weekly";
   const dueMode = byId("task-due-mode").value;
   const weeklyExact = weekly && dueMode === "exact";
+  const weeklyFlexible = weekly && dueMode === "week_flexible";
 
   if (!weekly) {
     byId("task-due-mode").value = "exact";
@@ -1809,6 +1812,10 @@ function syncTaskCreateTimingUI() {
     setInvalid(byId("task-weekly-time"), false);
   }
   toggleHidden("task-due-mode-row", !weekly);
+  toggleHidden("task-always-submittable-row", weeklyFlexible);
+  if (weeklyFlexible) {
+    byId("task-always-submittable").value = "false";
+  }
   const hideDue = daily || weekly;
   toggleHidden("task-due-row", hideDue);
   if (hideDue) byId("task-due").value = "";
@@ -1835,6 +1842,7 @@ function syncTaskEditorTimingUI() {
   const weekly = recurrence === "weekly";
   const dueMode = byId("task-editor-due-mode").value;
   const weeklyExact = weekly && dueMode === "exact";
+  const weeklyFlexible = weekly && dueMode === "week_flexible";
 
   if (!weekly) {
     byId("task-editor-due-mode").value = "exact";
@@ -1853,6 +1861,10 @@ function syncTaskEditorTimingUI() {
     setInvalid(byId("task-editor-weekly-time"), false);
   }
   toggleHidden("task-editor-due-mode-row", !weekly);
+  toggleHidden("task-editor-always-submittable-row", weeklyFlexible);
+  if (weeklyFlexible) {
+    byId("task-editor-always-submittable").value = "false";
+  }
   const hideDue = daily || weekly;
   toggleHidden("task-editor-due-row", hideDue);
   if (hideDue) byId("task-editor-due").value = "";
@@ -2965,6 +2977,73 @@ function boolLabel(value) {
   return value ? "ja" : "nein";
 }
 
+function eventPayloadText(payload) {
+  if (!payload || typeof payload !== "object") return "-";
+  const raw = JSON.stringify(payload);
+  if (!raw) return "-";
+  return raw.length > 220 ? `${raw.slice(0, 217)}...` : raw;
+}
+
+function renderSystemRuntime() {
+  const versionTarget = byId("system-version-value");
+  const buildTarget = byId("system-build-value");
+  if (!versionTarget || !buildTarget) return;
+
+  if (!state.systemRuntime) {
+    versionTarget.textContent = "-";
+    buildTarget.textContent = "";
+    return;
+  }
+
+  versionTarget.textContent = state.systemRuntime.app_version || "-";
+  buildTarget.textContent = state.systemRuntime.app_build_ref ? `(Build: ${state.systemRuntime.app_build_ref})` : "";
+}
+
+function renderSystemEvents() {
+  const body = byId("system-events-body");
+  if (!body) return;
+
+  if (!Array.isArray(state.systemEvents) || state.systemEvents.length === 0) {
+    body.innerHTML = "<tr><td colspan=\"3\" class=\"muted\">Keine Ereignisse vorhanden.</td></tr>";
+    return;
+  }
+
+  body.innerHTML = state.systemEvents
+    .map(
+      (entry) => `<tr>
+        <td>${safeHtmlText(fmtDate(entry.created_at), "-")}</td>
+        <td>${safeHtmlText(entry.event_type, "-")}</td>
+        <td>${safeHtmlText(eventPayloadText(entry.payload), "-")}</td>
+      </tr>`
+    )
+    .join("");
+  applyMobileLabelsToTableBodies(["system-events-body"]);
+}
+
+async function loadSystemRuntime() {
+  const familyId = getSelectedFamilyId();
+  if (!familyId || !isManagerRole()) {
+    state.systemRuntime = null;
+    renderSystemRuntime();
+    return;
+  }
+  state.systemRuntime = await api(`/families/${familyId}/system/runtime`);
+  renderSystemRuntime();
+}
+
+async function loadSystemEvents() {
+  const familyId = getSelectedFamilyId();
+  const limitInput = byId("system-events-limit");
+  const limit = Number(limitInput ? limitInput.value : 100) || 100;
+  if (!familyId || !isManagerRole()) {
+    state.systemEvents = [];
+    renderSystemEvents();
+    return;
+  }
+  state.systemEvents = await api(`/families/${familyId}/system/events?limit=${limit}`);
+  renderSystemEvents();
+}
+
 function summarizeChannelStatus(channel, channelData, activeChannel) {
   const active = activeChannel === channel;
   const configured = channelData.configured !== false;
@@ -3322,8 +3401,18 @@ async function refreshFamilyData() {
       await loadHomeAssistantUserConfigs({ showStatus: false }).catch((error) =>
         log("HA Nutzer laden Fehler", { error: error.message })
       );
+      await loadSystemRuntime().catch((error) =>
+        log("Systeminfo laden Fehler", { error: error.message })
+      );
+      await loadSystemEvents().catch((error) =>
+        log("Ereignis-Log laden Fehler", { error: error.message })
+      );
     } else {
       resetHomeAssistantSettingsForm();
+      state.systemRuntime = null;
+      state.systemEvents = [];
+      renderSystemRuntime();
+      renderSystemEvents();
     }
 
     if (isChildRole() && state.me) {
@@ -4952,6 +5041,12 @@ byId("sse-test-send-btn").addEventListener("click", () =>
     byId("sse-test-message").value,
     "sse-test-result"
   ).catch((error) => log("SSE Test Fehler", { error: error.message }))
+);
+byId("system-events-refresh-btn").addEventListener("click", () =>
+  loadSystemEvents().catch((error) => log("Ereignis-Log laden Fehler", { error: error.message }))
+);
+byId("system-events-limit").addEventListener("change", () =>
+  loadSystemEvents().catch((error) => log("Ereignis-Log laden Fehler", { error: error.message }))
 );
 ["apns", "home_assistant", "sse"].forEach((channel) => {
   byId(`channel-edit-${channel}-btn`).addEventListener("click", async (event) => {
