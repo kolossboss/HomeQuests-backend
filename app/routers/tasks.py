@@ -509,6 +509,7 @@ def _next_daily_due_from_now(reference_due: datetime, active_weekdays: list[int]
 
 def _realign_daily_tasks_for_family(db: Session, family_id: int) -> bool:
     now = datetime.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today = now.date()
     tomorrow = (now + timedelta(days=1)).date()
     tasks = (
@@ -526,6 +527,10 @@ def _realign_daily_tasks_for_family(db: Session, family_id: int) -> bool:
     for task in tasks:
         due = _as_utc_naive(task.due_at)
         if due is None:
+            continue
+        created_at = _as_utc_naive(task.created_at)
+        # Keine frisch erzeugten Tages-Folgetasks auf heute zurückziehen.
+        if created_at and created_at >= today_start:
             continue
         expected = _next_daily_due_from_now(due, task.active_weekdays, now)
         if expected is None:
