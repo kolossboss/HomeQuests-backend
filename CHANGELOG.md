@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.16-02 (2026-03-16)
+
+- Wochenaufgaben-Serienlogik erweitert: zentrale Upsert-Helferfunktion fuer `task_generation_blocks` eingefuehrt.
+- Serienwechsel bei flexiblen Wochenaufgaben abgesichert: alte Serien werden langfristig geblockt (`series_replaced`) und offene Aufgaben derselben Serie im aktuellen Zyklus automatisch deaktiviert.
+- Wiederkehrende Aufgaben-Events angereichert: `task.created` enthaelt jetzt auch `source_task_id` und `source_recurrence_type` fuer bessere Nachvollziehbarkeit.
+
 ## v2026.03.16-01 (2026-03-16)
 
 - Wiederkehrende Wochenaufgaben (flexibel): neue Generierungs-Sperre (`task_generation_blocks`), damit nach manuellem Loeschen im laufenden Zyklus keine sofortige Neuerzeugung erfolgt.

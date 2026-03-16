@@ -328,10 +328,28 @@ def _block_weekly_flexible_generation_for_current_cycle(
 
     now = datetime.utcnow()
     block_until = _start_of_week(now) + timedelta(days=7)
+    _upsert_generation_block(
+        db,
+        family_id=task.family_id,
+        key_hash=key_hash,
+        block_until=block_until,
+        reason="manual_delete",
+        created_by_id=blocked_by_user_id,
+    )
+
+
+def _upsert_generation_block(
+    db: Session,
+    family_id: int,
+    key_hash: str,
+    block_until: datetime,
+    reason: str,
+    created_by_id: int | None,
+) -> None:
     block = (
         db.query(TaskGenerationBlock)
         .filter(
-            TaskGenerationBlock.family_id == task.family_id,
+            TaskGenerationBlock.family_id == family_id,
             TaskGenerationBlock.key_hash == key_hash,
         )
         .first()
@@ -339,17 +357,17 @@ def _block_weekly_flexible_generation_for_current_cycle(
     if block:
         if block.block_until < block_until:
             block.block_until = block_until
-        block.reason = "manual_delete"
-        block.created_by_id = blocked_by_user_id
+        block.reason = reason
+        block.created_by_id = created_by_id
         return
 
     db.add(
         TaskGenerationBlock(
-            family_id=task.family_id,
+            family_id=family_id,
             key_hash=key_hash,
             block_until=block_until,
-            reason="manual_delete",
-            created_by_id=blocked_by_user_id,
+            reason=reason,
+            created_by_id=created_by_id,
         )
     )
 
@@ -370,6 +388,54 @@ def _active_generation_block_hashes(db: Session, family_id: int, now: datetime) 
         .all()
     )
     return {str(row[0]) for row in rows if row and row[0]}
+
+
+def _deactivate_current_cycle_weekly_flexible_tasks_by_key_hash(
+    db: Session,
+    family_id: int,
+    key_hash: str,
+    exclude_task_id: int | None = None,
+) -> bool:
+    now = datetime.utcnow()
+    week_start = _start_of_week(now)
+    week_end = week_start + timedelta(days=7)
+    query = (
+        db.query(Task)
+        .filter(
+            Task.family_id == family_id,
+            Task.is_active == True,  # noqa: E712
+            Task.recurrence_type == RecurrenceTypeEnum.weekly.value,
+            Task.due_at.is_(None),
+            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
+            Task.created_at >= week_start,
+            Task.created_at < week_end,
+        )
+        .order_by(Task.created_at.desc(), Task.id.desc())
+    )
+    if exclude_task_id is not None:
+        query = query.filter(Task.id != exclude_task_id)
+
+    changed = False
+    for task in query.all():
+        task_hash = _recurring_identity_hash(_recurring_task_identity_key(task))
+        if task_hash != key_hash:
+            continue
+        task.is_active = False
+        db.flush()
+        emit_live_event(
+            db,
+            family_id=task.family_id,
+            event_type="task.updated",
+            payload={
+                "task_id": task.id,
+                "status": task.status.value,
+                "is_active": task.is_active,
+                "assignee_id": task.assignee_id,
+                "reason": "series_replaced",
+            },
+        )
+        changed = True
+    return changed
 
 
 def _task_due_sort_value(task: Task) -> datetime:
@@ -545,7 +611,12 @@ def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: i
         db,
         family_id=source_task.family_id,
         event_type="task.created",
-        payload={"task_id": next_task.id, "assignee_id": next_task.assignee_id},
+        payload={
+            "task_id": next_task.id,
+            "assignee_id": next_task.assignee_id,
+            "source_task_id": source_task.id,
+            "source_recurrence_type": source_task.recurrence_type,
+        },
     )
     return next_task
 
@@ -807,6 +878,10 @@ def update_task(
     _ensure_assignee_in_family(db, task.family_id, payload.assignee_id)
 
     old_status = task.status
+    old_weekly_flexible_hash = None
+    if _is_weekly_flexible_task(task):
+        old_weekly_flexible_hash = _recurring_identity_hash(_recurring_task_identity_key(task))
+
     task.title = payload.title
     task.description = payload.description
     task.assignee_id = payload.assignee_id
@@ -826,6 +901,28 @@ def update_task(
         task.penalty_last_applied_at = None
     task.is_active = payload.is_active
     task.status = payload.status
+
+    new_weekly_flexible_hash = None
+    if _is_weekly_flexible_task(task):
+        new_weekly_flexible_hash = _recurring_identity_hash(_recurring_task_identity_key(task))
+
+    if old_weekly_flexible_hash and old_weekly_flexible_hash != new_weekly_flexible_hash:
+        # Beim Umbenennen/Umhängen einer flexiblen Wochenserie die alte Serie stilllegen,
+        # damit keine zusätzliche Aufgabe aus der alten Konfiguration erzeugt wird.
+        _upsert_generation_block(
+            db,
+            family_id=task.family_id,
+            key_hash=old_weekly_flexible_hash,
+            block_until=datetime.utcnow() + timedelta(days=3650),
+            reason="series_replaced",
+            created_by_id=current_user.id,
+        )
+        _deactivate_current_cycle_weekly_flexible_tasks_by_key_hash(
+            db,
+            family_id=task.family_id,
+            key_hash=old_weekly_flexible_hash,
+            exclude_task_id=task.id,
+        )
 
     if old_status != TaskStatusEnum.submitted and task.status == TaskStatusEnum.submitted:
         db.add(
