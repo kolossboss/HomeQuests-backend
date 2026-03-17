@@ -1,5 +1,14 @@
 # Changelog
 
+## v2026.03.17-02 (2026-03-17)
+
+- WebUI weiter ausgebaut: neues Meta-Card-System fuer kompakte Key/Value-Infos in Karten (`entity-card-kv`, `request-card-kv`) und konsistentere Aktionsdarstellung.
+- Responsive Tabellen verbessert: mobile Aktionen/Buttons wurden vereinheitlicht (besseres Wrapping, klare Breakpoints, stabilere Lesbarkeit).
+- Design-Refresh vertieft: zusaetzliche „Unified Premium Redesign“-Styles mit aktualisierten Tokens, Panels, Abstaenden und Typografie.
+- Render-Helper im Frontend erweitert (`renderCardMetaGrid`, `renderTableActionGroup`) und in mehreren Listen-/Card-Renderpfaden integriert.
+- Markup im UI aufgeraeumt: Events-, Einloesungen- und Diagnosebereiche als `section-block` vereinheitlicht.
+- WebUI-Assets: Cache-Buster fuer `styles.css`/`app.js` auf `20260317i` angehoben.
+
 ## v2026.03.17-01 (2026-03-17)
 
 - WebUI-Redesign: umfangreiche visuelle Ueberarbeitung mit neuem Premium-Theme (Sora + Manrope), modernisierten Panels, Tabs, Karten und Dashboard-Flows.
