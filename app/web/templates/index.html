@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260317i" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260317j" />
   </head>
   <body>
     <main class="container">
@@ -71,14 +71,13 @@
             <p class="sidebar-kicker">HomeQuests</p>
             <strong>Control Center</strong>
           </div>
-          <button id="tab-btn-dashboard" data-tab="dashboard" class="tab active"><span class="tab-icon">01</span><span>Dashboard</span></button>
-          <button id="tab-btn-members" data-tab="members" class="tab"><span class="tab-icon">02</span><span>Mitglieder</span></button>
-          <button id="tab-btn-tasks" data-tab="tasks" class="tab"><span class="tab-icon">03</span><span>Aufgaben</span></button>
-          <button id="tab-btn-special-tasks" data-tab="special-tasks" class="tab"><span class="tab-icon">04</span><span>Sonderaufgaben</span></button>
-          <button id="tab-btn-events" data-tab="events" class="tab"><span class="tab-icon">05</span><span>Kalender</span></button>
-          <button id="tab-btn-rewards" data-tab="rewards" class="tab"><span class="tab-icon">06</span><span>Belohnungen</span></button>
-          <button id="tab-btn-points" data-tab="points" class="tab"><span class="tab-icon">07</span><span>Punkte</span></button>
-          <button id="tab-btn-system" data-tab="system" class="tab"><span class="tab-icon">08</span><span>System</span></button>
+          <button id="tab-btn-dashboard" data-tab="dashboard" class="tab active"><span>Dashboard</span></button>
+          <button id="tab-btn-tasks" data-tab="tasks" class="tab"><span>Aufgaben</span></button>
+          <button id="tab-btn-special-tasks" data-tab="special-tasks" class="tab"><span>Sonderaufgaben</span></button>
+          <button id="tab-btn-events" data-tab="events" class="tab"><span>Kalender</span></button>
+          <button id="tab-btn-rewards" data-tab="rewards" class="tab"><span>Belohnungen</span></button>
+          <button id="tab-btn-points" data-tab="points" class="tab"><span>Punkte</span></button>
+          <button id="tab-btn-system" data-tab="system" class="tab"><span>System</span></button>
         </nav>
 
         <section id="tab-dashboard" class="tab-panel active">
@@ -106,22 +105,22 @@
             </div>
             <div class="stats-grid request-metrics-grid">
               <article id="pending-card-overdue" class="stat-card metric-red is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-overdue-count">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="alert" aria-hidden="true"></span><strong id="pending-overdue-count">0</strong></div>
                 <span>Überfällig</span>
                 <small class="stat-caption">Offene Aufgaben mit Handlungsbedarf</small>
               </article>
               <article id="pending-card-submitted" class="stat-card metric-orange is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-submitted-count">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="hourglass" aria-hidden="true"></span><strong id="pending-submitted-count">0</strong></div>
                 <span>In Prüfung</span>
                 <small class="stat-caption">Erledigt gemeldet, wartet auf Freigabe</small>
               </article>
               <article id="pending-card-missed" class="stat-card metric-pink is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-missed-count">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="missed" aria-hidden="true"></span><strong id="pending-missed-count">0</strong></div>
                 <span>Verpasst</span>
                 <small class="stat-caption">Eltern müssen entscheiden</small>
               </article>
               <article id="pending-card-rewards" class="stat-card metric-magenta is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="pending-rewards-count">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="gift" aria-hidden="true"></span><strong id="pending-rewards-count">0</strong></div>
                 <span>Belohnungen</span>
                 <small class="stat-caption">Offene Belohnungsanfragen</small>
               </article>
@@ -151,42 +150,42 @@
             </div>
             <div class="stats-grid">
               <article id="stat-card-open" class="stat-card metric-blue is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-open">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="tasks" aria-hidden="true"></span><strong id="stat-open">0</strong></div>
                 <span>Offene Aufgaben</span>
                 <small class="stat-caption">Alle aktuell offenen Aufgaben</small>
               </article>
               <article id="stat-card-child-points" class="stat-card metric-gold is-clickable hidden">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-child-points-value">-</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="points" aria-hidden="true"></span><strong id="stat-child-points-value">-</strong></div>
                 <span>Meine Punkte</span>
                 <small class="stat-caption">Punkteverlauf</small>
               </article>
               <article class="stat-card metric-red">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-rejected">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="cross" aria-hidden="true"></span><strong id="stat-rejected">0</strong></div>
                 <span>Abgelehnt</span>
                 <small class="stat-caption">Erneut prüfen</small>
               </article>
               <article class="stat-card metric-slate">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-approved-week">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="check" aria-hidden="true"></span><strong id="stat-approved-week">0</strong></div>
                 <span>Diese Woche erledigt</span>
                 <small class="stat-caption">Bestätigte Aufgaben</small>
               </article>
               <article id="stat-card-week-open" class="stat-card metric-slate is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-week-open">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="calendar" aria-hidden="true"></span><strong id="stat-week-open">0</strong></div>
                 <span>Diese Woche offen</span>
                 <small class="stat-caption">Fällig in dieser Woche</small>
               </article>
               <article class="stat-card metric-slate">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-week-points">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="trend" aria-hidden="true"></span><strong id="stat-week-points">0</strong></div>
                 <span>Punkte diese Woche</span>
                 <small class="stat-caption">Aktueller Trend</small>
               </article>
               <article class="stat-card metric-slate">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-completion-rate">0%</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="ratio" aria-hidden="true"></span><strong id="stat-completion-rate">0%</strong></div>
                 <span>Erfolgsquote</span>
                 <small class="stat-caption">Bestätigt vs. offen</small>
               </article>
               <article id="stat-card-approved" class="stat-card metric-green is-clickable">
-                <div class="stat-card-top"><span class="stat-dot"></span><strong id="stat-approved">0</strong></div>
+                <div class="stat-card-top"><span class="stat-dot" data-icon="done" aria-hidden="true"></span><strong id="stat-approved">0</strong></div>
                 <span>Abgeschlossen</span>
                 <small class="stat-caption">Historie öffnen</small>
               </article>
@@ -458,6 +457,9 @@
           <div id="tasks-table-section" class="section-block">
             <div class="section-head-row">
               <h4>Alle Aufgaben</h4>
+              <label class="compact-filter">Suche
+                <input id="tasks-search-input" type="search" placeholder="Titel, Beschreibung oder zuständige Person" />
+              </label>
               <label class="compact-filter">Sortierung
                 <select id="tasks-sort-select">
                   <option value="updated_desc">Änderungsdatum (neueste zuerst)</option>
@@ -623,6 +625,9 @@
 
             <div class="section-head-row">
               <h5>Vorhandene Sonderaufgaben</h5>
+              <label class="compact-filter">Suche
+                <input id="special-tasks-search-input" type="search" placeholder="Titel, Beschreibung oder Intervall" />
+              </label>
               <label class="compact-filter">Sortierung
                 <select id="special-tasks-sort-select">
                   <option value="updated_desc">Änderungsdatum (neueste zuerst)</option>
@@ -821,11 +826,15 @@
             <p id="points-adjust-user-label" class="muted"></p>
             <div class="form-grid compact">
               <label>Punkte Delta (+/-)
-                <input id="points-adjust-delta" type="number" />
+                <input id="points-adjust-delta" type="number" step="5" />
               </label>
               <label>Beschreibung
                 <input id="points-adjust-description" type="text" />
               </label>
+            </div>
+            <div class="row-wrap points-step-buttons">
+              <button id="points-step-minus-btn" type="button" class="btn-secondary">-5</button>
+              <button id="points-step-plus-btn" type="button" class="btn-secondary">+5</button>
             </div>
             <div class="row-wrap">
               <button id="points-adjust-save-btn">Speichern</button>
@@ -849,6 +858,14 @@
           <h3>System</h3>
           <p class="muted">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></p>
           <p class="muted">Installierte Version: <strong id="system-version-value">-</strong> <span id="system-build-value"></span></p>
+
+          <div id="system-members-section" class="section-block">
+            <div class="section-head-row">
+              <h4>Mitglieder</h4>
+              <button id="open-members-system-modal-btn" type="button">Mitgliederverwaltung öffnen</button>
+            </div>
+            <p class="muted">Mitglieder anzeigen, bearbeiten und verwalten in einem eigenen Fenster.</p>
+          </div>
 
           <div class="section-block">
             <h4>Benachrichtigungskanäle</h4>
@@ -1021,6 +1038,19 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260317i"></script>
+    <div id="members-system-modal" class="modal-overlay hidden">
+      <div class="modal-card members-system-modal-card">
+        <div class="modal-head">
+          <div>
+            <h4>Mitgliederverwaltung</h4>
+            <p class="muted">Mitglieder ansehen, bearbeiten und verwalten.</p>
+          </div>
+          <button id="members-system-modal-close-btn" type="button" class="btn-secondary">Schließen</button>
+        </div>
+        <div id="members-system-modal-content"></div>
+      </div>
+    </div>
+
+    <script src="/static/app.js?v=20260317j"></script>
   </body>
 </html>
