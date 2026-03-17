@@ -166,6 +166,30 @@ function renderTableEmptyRow(colspan, title, message = "") {
   </tr>`;
 }
 
+function renderCardMetaGrid(entries, { className = "card-meta-grid" } = {}) {
+  const rows = (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      if (!entry || !entry.label) return "";
+      const rawValue = entry.value;
+      const hasValue = rawValue !== null && rawValue !== undefined && String(rawValue).trim() !== "";
+      const valueHtml = hasValue
+        ? (entry.html ? String(rawValue) : safeHtmlText(rawValue))
+        : safeHtmlText(entry.fallback || "-");
+      return `<div class="${className}-row"><dt>${safeHtmlText(entry.label)}</dt><dd>${valueHtml}</dd></div>`;
+    })
+    .filter(Boolean);
+  if (!rows.length) return "";
+  return `<dl class="${className}">${rows.join("")}</dl>`;
+}
+
+function renderTableActionGroup(actions) {
+  const buttons = (Array.isArray(actions) ? actions : [])
+    .map((entry) => String(entry || "").trim())
+    .filter(Boolean);
+  if (!buttons.length) return "-";
+  return `<div class="table-action-group">${buttons.join("")}</div>`;
+}
+
 function hideUiStatus() {
   const banner = byId("ui-status-banner");
   if (!banner) return;
@@ -1590,7 +1614,10 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
     if (reviewMode === "submitted") {
       return `<article class="request-card ${toneClass}">
         <p class="request-card-title">${memberNameHtml(task.assignee_id)} hat "${safeHtmlText(task.title)}" als erledigt gemeldet</p>
-        <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
+        ${renderCardMetaGrid([
+    { label: "Fällig", value: taskDueText(task) },
+    { label: "Punkte", value: `${task.points}` },
+  ], { className: "request-card-kv" })}
         <div class="request-card-actions">
           <button data-dashboard-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
           ${
@@ -1604,7 +1631,10 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
     if (reviewMode === "missed") {
       return `<article class="request-card ${toneClass}">
         <p class="request-card-title">${memberNameHtml(task.assignee_id)}: "${safeHtmlText(task.title)}" verpasst</p>
-        <p class="request-card-meta">${taskDueText(task)} • Entscheidung erforderlich</p>
+        ${renderCardMetaGrid([
+    { label: "Fällig", value: taskDueText(task) },
+    { label: "Status", value: "Entscheidung erforderlich" },
+  ], { className: "request-card-kv" })}
         <div class="request-card-actions">
           <button data-dashboard-missed-task-action="approve" data-task-id="${task.id}">Doch bestätigen</button>
           <button data-dashboard-missed-task-action="delete" data-task-id="${task.id}">Löschen</button>
@@ -1614,8 +1644,12 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
     }
     return `<article class="request-card ${toneClass}">
       <p class="request-card-title">${safeHtmlText(task.title)}</p>
-      <p class="request-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${taskDueText(task)} • ${task.points} Punkte</p>
-      <p class="request-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
+      ${renderCardMetaGrid([
+    { label: "Zuständig", value: memberNameHtml(task.assignee_id), html: true },
+    { label: "Fällig", value: taskDueText(task) },
+    { label: "Punkte", value: `${task.points}` },
+  ], { className: "request-card-kv" })}
+      <p class="request-card-note">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
       ${allowManagerDelete ? `<div class="request-card-actions">
         <button class="btn-danger" data-dashboard-task-manage-action="delete" data-task-id="${task.id}">Löschen</button>
       </div>` : ""}
@@ -1632,8 +1666,11 @@ function renderDashboardRewardCards(entries, emptyText, { reviewMode = false } =
     const title = reward ? reward.title : "Belohnung";
     return `<article class="request-card tone-magenta">
       <p class="request-card-title">${memberNameHtml(entry.requested_by_id)} hat "${safeHtmlText(title)}" angefragt</p>
-      <p class="request-card-meta">Angefragt am ${fmtDate(entry.requested_at)}</p>
-      ${reward?.description ? `<p class="request-card-meta">${safeHtmlText(reward.description)}</p>` : ""}
+      ${renderCardMetaGrid([
+    { label: "Angefragt", value: fmtDate(entry.requested_at) },
+    { label: "Status", value: reviewMode ? "Wartet auf Entscheidung" : "Offen" },
+  ], { className: "request-card-kv" })}
+      ${reward?.description ? `<p class="request-card-note">${safeHtmlText(reward.description)}</p>` : ""}
       ${reviewMode ? `<div class="request-card-actions">
         <button data-dashboard-reward-review-action="approved" data-redemption-id="${entry.id}">Bestätigen</button>
         <button class="btn-secondary" data-dashboard-reward-review-action="rejected" data-redemption-id="${entry.id}">Ablehnen</button>
@@ -1658,8 +1695,12 @@ function childDashboardSpecialCardsMarkup() {
         : "";
       return `<article class="request-card tone-green">
         <p class="request-card-title">${safeHtmlText(entry.title)}</p>
-        <p class="request-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")} • ${entry.points} Punkte</p>
-        <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
+        ${renderCardMetaGrid([
+    { label: "Punkte", value: `${entry.points}` },
+    { label: "Intervall", value: `${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta}` },
+    { label: "Verfügbar", value: `${entry.remaining_count}/${entry.max_claims_per_interval}` },
+  ], { className: "request-card-kv" })}
+        <p class="request-card-note">${safeHtmlText(entry.description, "Ohne Beschreibung")}</p>
         <div class="request-card-actions">
           <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
         </div>
@@ -2107,7 +2148,10 @@ function renderMembers() {
     ? state.members
     .map((member) => {
       const actions = manageMembers
-        ? `<button data-member-action="edit" data-member-id="${member.user_id}">Bearbeiten</button> <button data-member-action="delete" data-member-id="${member.user_id}">Löschen</button>`
+        ? renderTableActionGroup([
+          `<button data-member-action="edit" data-member-id="${member.user_id}">Bearbeiten</button>`,
+          `<button data-member-action="delete" data-member-id="${member.user_id}">Löschen</button>`,
+        ])
         : "-";
       return `<tr>
         <td>${safeHtmlText(member.display_name)}</td>
@@ -2308,12 +2352,15 @@ function renderTasks() {
               <p class="entity-card-title">${safeHtmlText(task.title)}</p>
               <span class="entity-tag">${task.is_active === false ? "deaktiviert" : statusLabel(task.status)}</span>
             </div>
-            <p class="entity-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
-            <p class="entity-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${task.points} Punkte</p>
-            <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
-            <p class="entity-card-meta">Zuletzt geändert: ${fmtDate(task.updated_at || task.created_at)}</p>
-            <p class="entity-card-meta">${taskPenaltyText(task)}</p>
-            <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
+            <p class="entity-card-note">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
+            ${renderCardMetaGrid([
+          { label: "Zuständig", value: memberNameHtml(task.assignee_id), html: true },
+          { label: "Punkte", value: `${task.points}` },
+          { label: "Rhythmus", value: taskScheduleMeta(task) },
+          { label: "Aktualisiert", value: fmtDate(task.updated_at || task.created_at) },
+          { label: "Verpasst", value: taskPenaltyText(task) },
+          { label: "Erinnerung", value: reminderOffsetsText(task.reminder_offsets_minutes) },
+        ], { className: "entity-card-kv" })}
             <div class="request-card-actions">
               <button data-task-action="edit" data-task-id="${task.id}">Bearbeiten</button>
               <button class="btn-copy" data-task-action="duplicate" data-task-id="${task.id}">Duplizieren</button>
@@ -2346,12 +2393,15 @@ function renderTasks() {
               <p class="entity-card-title">${safeHtmlText(task.title)}</p>
               <span class="entity-tag">bestätigt</span>
             </div>
-            <p class="entity-card-meta">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
-            <p class="entity-card-meta">Zuständig: ${memberNameHtml(task.assignee_id)} • ${task.points} Punkte</p>
-            <p class="entity-card-meta">Abgeschlossen am: ${fmtDate(task.updated_at || task.created_at)}</p>
-            <p class="entity-card-meta">${taskScheduleMeta(task)}</p>
-            <p class="entity-card-meta">${taskPenaltyText(task)}</p>
-            <p class="entity-card-meta">Erinnerung: ${reminderOffsetsText(task.reminder_offsets_minutes)}</p>
+            <p class="entity-card-note">${safeHtmlText(task.description, "Ohne Beschreibung")}</p>
+            ${renderCardMetaGrid([
+          { label: "Zuständig", value: memberNameHtml(task.assignee_id), html: true },
+          { label: "Punkte", value: `${task.points}` },
+          { label: "Abgeschlossen", value: fmtDate(task.updated_at || task.created_at) },
+          { label: "Rhythmus", value: taskScheduleMeta(task) },
+          { label: "Verpasst", value: taskPenaltyText(task) },
+          { label: "Erinnerung", value: reminderOffsetsText(task.reminder_offsets_minutes) },
+        ], { className: "entity-card-kv" })}
           </article>`
         )
         .join("")
@@ -2494,7 +2544,10 @@ function renderManagerTaskReviewCards() {
         if (task.status === "missed_submitted") {
           return `<article class="request-card">
           <p class="request-card-title">${memberNameHtml(task.assignee_id)}: ${safeHtmlText(task.title)}</p>
-          <p class="request-card-meta">Verpasst • ${taskDueText(task)}</p>
+          ${renderCardMetaGrid([
+        { label: "Status", value: "Verpasst" },
+        { label: "Fällig", value: taskDueText(task) },
+      ], { className: "request-card-kv" })}
           <div class="request-card-actions">
             <button data-task-missed-review-action="approve" data-task-id="${task.id}">Doch bestätigen</button>
             <button data-task-missed-review-action="delete" data-task-id="${task.id}">Löschen</button>
@@ -2504,7 +2557,10 @@ function renderManagerTaskReviewCards() {
         }
         return `<article class="request-card">
           <p class="request-card-title">${memberNameHtml(task.assignee_id)}: ${safeHtmlText(task.title)}</p>
-          <p class="request-card-meta">${taskDueText(task)} • ${task.points} Punkte</p>
+          ${renderCardMetaGrid([
+        { label: "Fällig", value: taskDueText(task) },
+        { label: "Punkte", value: `${task.points}` },
+      ], { className: "request-card-kv" })}
           <div class="request-card-actions">
             <button data-task-review-action="approved" data-task-id="${task.id}">Bestätigen</button>
             ${
@@ -2604,11 +2660,13 @@ function renderSpecialTaskTemplates() {
               <p class="entity-card-title">${safeHtmlText(entry.title)}</p>
               <span class="entity-tag">${entry.is_active ? "aktiv" : "deaktiviert"}</span>
             </div>
-            <p class="entity-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")}</p>
-            <p class="entity-card-meta">Punkte: ${entry.points}</p>
-            <p class="entity-card-meta">${specialTaskScheduleMeta(entry)}</p>
-            <p class="entity-card-meta">Limit pro Intervall: ${entry.max_claims_per_interval}</p>
-            <p class="entity-card-meta">Zuletzt geändert: ${fmtDate(entry.updated_at || entry.created_at)}</p>
+            <p class="entity-card-note">${safeHtmlText(entry.description, "Ohne Beschreibung")}</p>
+            ${renderCardMetaGrid([
+          { label: "Punkte", value: `${entry.points}` },
+          { label: "Rhythmus", value: specialTaskScheduleMeta(entry) },
+          { label: "Limit", value: `${entry.max_claims_per_interval} pro Intervall` },
+          { label: "Aktualisiert", value: fmtDate(entry.updated_at || entry.created_at) },
+        ], { className: "entity-card-kv" })}
             <div class="request-card-actions">
               <button data-special-task-action="edit" data-special-task-id="${entry.id}">Bearbeiten</button>
               <button class="btn-copy" data-special-task-action="duplicate" data-special-task-id="${entry.id}">Duplizieren</button>
@@ -2649,8 +2707,12 @@ function renderChildSpecialTaskCards() {
           : "";
         return `<article class="request-card tone-green">
           <p class="request-card-title">${safeHtmlText(entry.title)}</p>
-          <p class="request-card-meta">${safeHtmlText(entry.description, "Ohne Beschreibung")} • ${entry.points} Punkte</p>
-          <p class="request-card-meta">Intervall: ${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta} • Verfügbar: ${entry.remaining_count}/${entry.max_claims_per_interval}</p>
+          ${renderCardMetaGrid([
+        { label: "Punkte", value: `${entry.points}` },
+        { label: "Intervall", value: `${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta}` },
+        { label: "Verfügbar", value: `${entry.remaining_count}/${entry.max_claims_per_interval}` },
+      ], { className: "request-card-kv" })}
+          <p class="request-card-note">${safeHtmlText(entry.description, "Ohne Beschreibung")}</p>
           <div class="request-card-actions">
             <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
           </div>
@@ -2773,7 +2835,10 @@ function renderRewards() {
     ? state.rewards
     .map((reward) => {
       const actions = manager
-        ? `<button data-reward-action="edit" data-reward-id="${reward.id}">Bearbeiten</button> <button data-reward-action="delete" data-reward-id="${reward.id}">Löschen</button>`
+        ? renderTableActionGroup([
+          `<button data-reward-action="edit" data-reward-id="${reward.id}">Bearbeiten</button>`,
+          `<button data-reward-action="delete" data-reward-id="${reward.id}">Löschen</button>`,
+        ])
         : "-";
       return `<tr>
         <td>${safeHtmlText(reward.title)}</td>
@@ -2898,8 +2963,12 @@ function renderSelectedRewardContribution() {
     ? progress.contributions
       .map(
         (entry) => `<article class="request-card">
-          <p class="request-card-title">${safeHtmlText(entry.user_name)}: ${entry.points_reserved} Punkte</p>
-          <p class="request-card-meta">Status: ${contributionStatusLabel(entry.status)} • ${fmtDate(entry.created_at)}</p>
+          <p class="request-card-title">${safeHtmlText(entry.user_name)}</p>
+          ${renderCardMetaGrid([
+          { label: "Beitrag", value: `${entry.points_reserved} Punkte` },
+          { label: "Status", value: contributionStatusLabel(entry.status) },
+          { label: "Zeit", value: fmtDate(entry.created_at) },
+        ], { className: "request-card-kv" })}
         </article>`
       )
       .join("")
@@ -2984,7 +3053,10 @@ function renderManagerRewardReviewCards() {
         const reward = state.rewards.find((r) => r.id === entry.reward_id);
         return `<article class="request-card">
           <p class="request-card-title">${memberNameHtml(entry.requested_by_id)}: ${safeHtmlText(reward ? reward.title : "Belohnung")}</p>
-          <p class="request-card-meta">Angefragt: ${fmtDate(entry.requested_at)}</p>
+          ${renderCardMetaGrid([
+          { label: "Angefragt", value: fmtDate(entry.requested_at) },
+          { label: "Status", value: "Wartet auf Freigabe" },
+        ], { className: "request-card-kv" })}
           <div class="request-card-actions">
             <button data-reward-review-action="approved" data-redemption-id="${entry.id}">Bestätigen</button>
             <button class="btn-secondary" data-reward-review-action="rejected" data-redemption-id="${entry.id}">Ablehnen</button>
@@ -3006,7 +3078,10 @@ function renderPointsUsers() {
     ? state.pointsBalances
     .map((entry) => {
       const actions = manager
-        ? `<button data-points-action="history" data-user-id="${entry.user_id}">Historie</button> <button data-points-action="edit" data-user-id="${entry.user_id}">Bearbeiten</button>`
+        ? renderTableActionGroup([
+          `<button class="btn-secondary" data-points-action="history" data-user-id="${entry.user_id}">Historie</button>`,
+          `<button data-points-action="edit" data-user-id="${entry.user_id}">Bearbeiten</button>`,
+        ])
         : "-";
       return `<tr>
         <td>${safeHtmlText(entry.display_name)}</td>
@@ -3483,10 +3558,10 @@ function renderHomeAssistantUserConfigs() {
       <td>${safeHtmlText(entry.ha_notify_service, "-")}</td>
       <td>${entry.ha_notifications_enabled ? "ja" : "nein"}</td>
       <td>${safeHtmlText(haEventsText(entry), "-")}</td>
-      <td>
-        <button data-ha-user-action="edit" data-user-id="${entry.user_id}">Bearbeiten</button>
-        <button data-ha-user-action="test" data-user-id="${entry.user_id}">Testen</button>
-      </td>
+      <td>${renderTableActionGroup([
+    `<button data-ha-user-action="edit" data-user-id="${entry.user_id}">Bearbeiten</button>`,
+    `<button class="btn-secondary" data-ha-user-action="test" data-user-id="${entry.user_id}">Testen</button>`,
+  ])}</td>
     </tr>`)
     .join("");
   applyMobileLabelsToTableBodies(["ha-user-config-body"]);

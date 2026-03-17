@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260317f" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260317i" />
   </head>
   <body>
     <main class="container">
@@ -702,12 +702,14 @@
             <button id="create-event-btn">Termin speichern</button>
           </div>
 
-          <h4>Termine</h4>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Titel</th><th>Verantwortlich</th><th>Start</th><th>Ende</th></tr></thead>
-              <tbody id="events-body"></tbody>
-            </table>
+          <div class="section-block">
+            <h4>Termine</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Titel</th><th>Verantwortlich</th><th>Start</th><th>Ende</th></tr></thead>
+                <tbody id="events-body"></tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -789,12 +791,14 @@
             </div>
           </div>
 
-          <h4>Einlösungen</h4>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Belohnung</th><th>Angefragt von</th><th>Status</th><th>Zeitpunkt</th></tr></thead>
-              <tbody id="redemptions-body"></tbody>
-            </table>
+          <div class="section-block">
+            <h4>Einlösungen</h4>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Belohnung</th><th>Angefragt von</th><th>Status</th><th>Zeitpunkt</th></tr></thead>
+                <tbody id="redemptions-body"></tbody>
+              </table>
+            </div>
           </div>
         </section>
 
@@ -946,8 +950,10 @@
             <select id="ha-user-select"></select>
           </div>
 
-          <h4>Diagnose</h4>
-          <pre id="log-output"></pre>
+          <div class="section-block">
+            <h4>Diagnose</h4>
+            <pre id="log-output"></pre>
+          </div>
 
           <div class="section-block">
             <div class="section-head-row">
@@ -1015,6 +1021,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260317f"></script>
+    <script src="/static/app.js?v=20260317i"></script>
   </body>
 </html>
