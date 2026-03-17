@@ -1,5 +1,14 @@
 # Changelog
 
+## v2026.03.17-01 (2026-03-17)
+
+- WebUI-Redesign: umfangreiche visuelle Ueberarbeitung mit neuem Premium-Theme (Sora + Manrope), modernisierten Panels, Tabs, Karten und Dashboard-Flows.
+- UX-Feedback erweitert: globaler Status-Banner (`info/success/error`) und zentraler Loading-Indikator fuer laufende Requests/Refreshes.
+- Formularvalidierung verbessert: feldspezifische Fehlermeldungen (`FIELD_ERROR_MESSAGES`) mit inline Fehleranzeige statt nur roter Markierung.
+- Leere Listen vereinheitlicht: neue Empty-State-Komponenten fuer Karten- und Tabellenbereiche.
+- Stabilitaet im API-Client: Netzwerk-/HTTP-Fehler zeigen jetzt sofort sichtbares UI-Feedback.
+- WebUI-Assets: Cache-Buster fuer `styles.css` und `app.js` auf `20260317f` angehoben.
+
 ## v2026.03.16-05 (2026-03-16)
 
 - System-Event-Ansicht in der WebUI vereinfacht: statt Tabelle + separatem Textfeld jetzt ein einheitlicher Log-Container (`system-events-view`) mit Scroll und Copy-Button.
