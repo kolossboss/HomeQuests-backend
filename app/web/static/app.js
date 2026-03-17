@@ -1428,6 +1428,8 @@ function closeMembersSystemModal() {
   } else {
     membersPanelOriginalParent.appendChild(membersPanel);
   }
+  // Outside the modal the members panel must stay hidden until explicitly opened.
+  membersPanel.classList.remove("active");
 
   if (modal) modal.classList.add("hidden");
   membersSystemModalOpen = false;

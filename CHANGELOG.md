@@ -1,5 +1,10 @@
 # Changelog
 
+## v2026.03.17-04 (2026-03-17)
+
+- Mitglieder-Modal-Fix: beim Schließen der System-Mitgliederverwaltung wird der eingebettete Members-Tab explizit aus `active` genommen, damit er außerhalb des Modals nicht sichtbar bleibt.
+- Dashboard-Stat-Icons visuell entschlackt: `stat-dot` ohne Box-Hintergrund/Border, größere Symbolgröße und transparente Darstellung über alle Metric-Farben.
+
 ## v2026.03.17-03 (2026-03-17)
 
 - Aufgaben- und Sonderaufgabenlisten erweitert: neue Suchfelder im UI (`tasks-search`, `special-tasks-search`) fuer schnellere Filterung nach Titel/Beschreibung/Zustaendigkeit.

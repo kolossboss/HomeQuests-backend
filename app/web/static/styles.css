@@ -3853,20 +3853,31 @@ pre {
 
 /* ===== Requested UX Adjustments ===== */
 .stat-dot {
-  width: 24px;
-  height: 24px;
-  border-radius: 10px;
-  border: 1px solid rgba(151, 186, 255, 0.42);
-  background: rgba(120, 154, 226, 0.18);
+  width: auto;
+  height: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
   box-shadow: none;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .stat-dot::before {
-  font-size: 13px;
+  font-size: 17px;
   line-height: 1;
+}
+
+.metric-indigo .stat-dot,
+.metric-blue .stat-dot,
+.metric-orange .stat-dot,
+.metric-green .stat-dot,
+.metric-red .stat-dot,
+.metric-pink .stat-dot,
+.metric-magenta .stat-dot,
+.metric-gold .stat-dot {
+  background: transparent !important;
 }
 
 .stat-dot[data-icon="alert"]::before { content: "!"; }
