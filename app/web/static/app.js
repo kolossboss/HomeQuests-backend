@@ -25,6 +25,8 @@ const state = {
   systemEvents: [],
   tasksSort: "updated_desc",
   specialTasksSort: "updated_desc",
+  tasksSearch: "",
+  specialTasksSearch: "",
   taskEditorDirty: false,
   specialTaskEditorDirty: false,
   taskEditorInitialSnapshot: "",
@@ -105,7 +107,7 @@ const FIELD_ERROR_MESSAGES = {
   "reward-editor-cost": "Bitte gültige Kostenpunkte eingeben.",
   "redeem-reward-select": "Bitte eine Belohnung auswählen.",
   "redeem-points": "Bitte gültige Punkte eingeben.",
-  "points-adjust-delta": "Delta darf nicht 0 sein.",
+  "points-adjust-delta": "Delta muss in 5er-Schritten und ungleich 0 sein.",
   "points-adjust-description": "Bitte Beschreibung eingeben.",
   "ha-base-url": "Bitte eine gültige Home-Assistant URL eingeben.",
   "ha-token": "Bitte Token eingeben.",
@@ -130,6 +132,9 @@ let specialTaskRefreshTimer = null;
 let dataRefreshInFlight = false;
 let uiLoadingCounter = 0;
 let uiStatusTimer = null;
+let membersPanelOriginalParent = null;
+let membersPanelOriginalNextSibling = null;
+let membersSystemModalOpen = false;
 
 function byId(id) {
   return document.getElementById(id);
@@ -188,6 +193,35 @@ function renderTableActionGroup(actions) {
     .filter(Boolean);
   if (!buttons.length) return "-";
   return `<div class="table-action-group">${buttons.join("")}</div>`;
+}
+
+function normalizeSearchTerm(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function taskMatchesSearch(task, query) {
+  const normalized = normalizeSearchTerm(query);
+  if (!normalized) return true;
+  const haystack = [
+    task?.title || "",
+    task?.description || "",
+    memberName(task?.assignee_id),
+    statusLabel(task?.status || ""),
+    taskDueText(task),
+  ].join(" ").toLowerCase();
+  return haystack.includes(normalized);
+}
+
+function specialTaskMatchesSearch(entry, query) {
+  const normalized = normalizeSearchTerm(query);
+  if (!normalized) return true;
+  const haystack = [
+    entry?.title || "",
+    entry?.description || "",
+    specialIntervalLabel(entry?.interval_type || ""),
+    String(entry?.points ?? ""),
+  ].join(" ").toLowerCase();
+  return haystack.includes(normalized);
 }
 
 function hideUiStatus() {
@@ -1359,9 +1393,53 @@ function startSpecialTaskRefreshTicker() {
   }, 60000);
 }
 
+function openMembersSystemModal() {
+  if (!canManageMembers()) return;
+  const modal = byId("members-system-modal");
+  const modalContent = byId("members-system-modal-content");
+  const membersPanel = byId("tab-members");
+  if (!modal || !modalContent || !membersPanel) return;
+  if (membersSystemModalOpen) return;
+
+  if (!membersPanelOriginalParent) {
+    membersPanelOriginalParent = membersPanel.parentElement;
+    membersPanelOriginalNextSibling = membersPanel.nextElementSibling;
+  }
+
+  membersPanel.classList.add("active");
+  modalContent.appendChild(membersPanel);
+  modal.classList.remove("hidden");
+  membersSystemModalOpen = true;
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+}
+
+function closeMembersSystemModal() {
+  if (!membersSystemModalOpen) return;
+  const modal = byId("members-system-modal");
+  const membersPanel = byId("tab-members");
+  if (!membersPanel || !membersPanelOriginalParent) {
+    if (modal) modal.classList.add("hidden");
+    membersSystemModalOpen = false;
+    return;
+  }
+
+  if (membersPanelOriginalNextSibling && membersPanelOriginalNextSibling.parentElement === membersPanelOriginalParent) {
+    membersPanelOriginalParent.insertBefore(membersPanel, membersPanelOriginalNextSibling);
+  } else {
+    membersPanelOriginalParent.appendChild(membersPanel);
+  }
+
+  if (modal) modal.classList.add("hidden");
+  membersSystemModalOpen = false;
+}
+
 function switchTab(name) {
+  if (membersSystemModalOpen) {
+    closeMembersSystemModal();
+  }
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
 }
 
 function getActiveTabName() {
@@ -1956,6 +2034,11 @@ function applyRoleVisibility() {
   toggleHidden("tab-btn-system", child);
   toggleHidden("tab-members", child);
   toggleHidden("tab-system", child);
+  toggleHidden("system-members-section", !canManageMembers());
+  toggleHidden("open-members-system-modal-btn", !canManageMembers());
+  if (!canManageMembers()) {
+    closeMembersSystemModal();
+  }
 
   toggleHidden("toggle-member-create-btn", !canManageMembers());
   if (!canManageMembers()) {
@@ -2267,7 +2350,7 @@ function renderManagerChildOpenSummary() {
       </div>
       <div class="child-open-summary-actions">
         <button
-          class="child-open-summary-action btn-warning"
+          class="child-open-summary-action child-open-summary-action-today"
           data-dashboard-child-open-action="today"
           data-user-id="${member.user_id}"
         >
@@ -2276,7 +2359,7 @@ function renderManagerChildOpenSummary() {
           <small>${buckets.overdueTasks.length ? `${buckets.overdueTasks.length} überfällig` : "Heutige Aufgaben anzeigen"}</small>
         </button>
         <button
-          class="child-open-summary-action btn-primary"
+          class="child-open-summary-action child-open-summary-action-upcoming"
           data-dashboard-child-open-action="upcoming"
           data-user-id="${member.user_id}"
         >
@@ -2318,6 +2401,7 @@ function renderTasks() {
   const visibleTasks = getVisibleTasksForDashboard();
   const manager = isManagerRole();
   const statusCounts = getTaskStatusCounts(visibleTasks);
+  const taskSearch = normalizeSearchTerm(state.tasksSearch);
 
   byId("dashboard-tasks-body").innerHTML = visibleTasks.length
     ? visibleTasks
@@ -2333,7 +2417,10 @@ function renderTasks() {
     .join("")
     : renderTableEmptyRow(5, "Keine Aufgaben", "Aktuell gibt es keine sichtbaren Aufgaben.");
 
-  const managerTasks = manager ? sortManagerTasks(state.tasks.filter((task) => task.status !== "approved")) : [];
+  const managerTasksBase = manager ? sortManagerTasks(state.tasks.filter((task) => task.status !== "approved")) : [];
+  const managerTasks = taskSearch
+    ? managerTasksBase.filter((task) => taskMatchesSearch(task, taskSearch))
+    : managerTasksBase;
   const managerHistoryTasks = manager
     ? state.tasks
       .filter((task) => task.status === "approved")
@@ -2342,6 +2429,10 @@ function renderTasks() {
   const tasksSortSelect = byId("tasks-sort-select");
   if (tasksSortSelect && tasksSortSelect.value !== state.tasksSort) {
     tasksSortSelect.value = state.tasksSort;
+  }
+  const tasksSearchInput = byId("tasks-search-input");
+  if (tasksSearchInput && tasksSearchInput.value !== state.tasksSearch) {
+    tasksSearchInput.value = state.tasksSearch;
   }
   byId("tasks-manager-cards").innerHTML = manager
     ? managerTasks.length
@@ -2370,7 +2461,12 @@ function renderTasks() {
           </article>`
         )
         .join("")
-      : renderEmptyState("Keine offenen Aufgaben", "Hier erscheinen offene, eingereichte und verpasste Aufgaben.")
+      : renderEmptyState(
+        "Keine passenden Aufgaben",
+        taskSearch
+          ? "Zur Suchanfrage wurden keine Aufgaben gefunden."
+          : "Hier erscheinen offene, eingereichte und verpasste Aufgaben."
+      )
     : "";
 
   if (state.selectedTaskId) {
@@ -2645,10 +2741,18 @@ async function duplicateSpecialTaskTemplate(templateId) {
 
 function renderSpecialTaskTemplates() {
   const manager = isManagerRole();
-  const sortedTemplates = sortSpecialTaskTemplates(state.specialTaskTemplates);
+  const sortedTemplatesBase = sortSpecialTaskTemplates(state.specialTaskTemplates);
+  const specialTaskSearch = normalizeSearchTerm(state.specialTasksSearch);
+  const sortedTemplates = specialTaskSearch
+    ? sortedTemplatesBase.filter((entry) => specialTaskMatchesSearch(entry, specialTaskSearch))
+    : sortedTemplatesBase;
   const specialSortSelect = byId("special-tasks-sort-select");
   if (specialSortSelect && specialSortSelect.value !== state.specialTasksSort) {
     specialSortSelect.value = state.specialTasksSort;
+  }
+  const specialSearchInput = byId("special-tasks-search-input");
+  if (specialSearchInput && specialSearchInput.value !== state.specialTasksSearch) {
+    specialSearchInput.value = state.specialTasksSearch;
   }
 
   byId("special-task-manager-cards").innerHTML = manager
@@ -2675,7 +2779,12 @@ function renderSpecialTaskTemplates() {
           </article>`
         )
         .join("")
-      : renderEmptyState("Keine Sonderaufgaben", "Lege eine Sonderaufgabe an, um spontane Aufgaben anzubieten.")
+      : renderEmptyState(
+        "Keine passenden Sonderaufgaben",
+        specialTaskSearch
+          ? "Zur Suchanfrage wurden keine Sonderaufgaben gefunden."
+          : "Lege eine Sonderaufgabe an, um spontane Aufgaben anzubieten."
+      )
     : "";
   updateSpecialTaskEditButtons();
 
@@ -3950,6 +4059,7 @@ async function logout() {
   } catch (_) {
     // Local cleanup still runs below.
   }
+  closeMembersSystemModal();
   restoreAllInlineEditorSections();
   stopLiveUpdates({ resetCursor: true });
   stopSpecialTaskRefreshTicker();
@@ -3970,6 +4080,8 @@ async function logout() {
   state.pointsHistory = [];
   state.tasksSort = "updated_desc";
   state.specialTasksSort = "updated_desc";
+  state.tasksSearch = "";
+  state.specialTasksSearch = "";
   state.taskEditorDirty = false;
   state.specialTaskEditorDirty = false;
   state.taskEditorInitialSnapshot = "";
@@ -4798,6 +4910,17 @@ function closePointsAdjust() {
   flushDeferredLiveRefresh("points_editor_closed");
 }
 
+function stepPointsAdjustDelta(step) {
+  const deltaInput = byId("points-adjust-delta");
+  if (!deltaInput) return;
+  const current = Number(deltaInput.value || 0);
+  const baseRaw = Number.isFinite(current) ? current : 0;
+  const base = baseRaw === 0 ? 0 : Math.round(baseRaw / 5) * 5;
+  const next = base + Number(step || 0);
+  deltaInput.value = String(next);
+  setInvalid(deltaInput, false);
+}
+
 async function savePointsAdjust() {
   if (!isManagerRole()) return;
   if (!state.selectedPointsUserId) {
@@ -4812,7 +4935,7 @@ async function savePointsAdjust() {
   const description = descriptionInput.value.trim();
 
   let invalid = false;
-  if (Number.isNaN(points_delta) || points_delta === 0) {
+  if (Number.isNaN(points_delta) || points_delta === 0 || points_delta % 5 !== 0) {
     setInvalid(deltaInput, true);
     invalid = true;
   }
@@ -5046,6 +5169,20 @@ const dashboardDetailModalClose = byId("dashboard-detail-modal-close");
 if (dashboardDetailModalClose) {
   dashboardDetailModalClose.addEventListener("click", closeDashboardDetailModal);
 }
+const membersSystemModal = byId("members-system-modal");
+if (membersSystemModal) {
+  membersSystemModal.addEventListener("click", (event) => {
+    if (event.target === membersSystemModal) closeMembersSystemModal();
+  });
+}
+const membersSystemModalCloseBtn = byId("members-system-modal-close-btn");
+if (membersSystemModalCloseBtn) {
+  membersSystemModalCloseBtn.addEventListener("click", closeMembersSystemModal);
+}
+const openMembersSystemModalBtn = byId("open-members-system-modal-btn");
+if (openMembersSystemModalBtn) {
+  openMembersSystemModalBtn.addEventListener("click", openMembersSystemModal);
+}
 
 byId("tasks-manager-cards").addEventListener("click", async (event) => {
   const actionButton = event.target.closest("button[data-task-action]");
@@ -5167,7 +5304,7 @@ byId("special-task-manager-cards").addEventListener("click", async (event) => {
   }
 });
 
-byId("members-body").addEventListener("click", async (event) => {
+async function handleMemberActionClick(event) {
   const actionButton = event.target.closest("button[data-member-action]");
   if (!actionButton) return;
 
@@ -5191,7 +5328,14 @@ byId("members-body").addEventListener("click", async (event) => {
       log("Mitglied löschen fehlgeschlagen", { error: error.message });
     }
   }
-});
+}
+
+const membersBody = byId("members-body");
+if (membersBody) {
+  membersBody.addEventListener("click", (event) => {
+    handleMemberActionClick(event).catch((error) => log("Mitglied Aktion Fehler", { error: error.message }));
+  });
+}
 
 byId("rewards-body").addEventListener("click", async (event) => {
   const actionButton = event.target.closest("button[data-reward-action]");
@@ -5366,10 +5510,24 @@ byId("tasks-sort-select").addEventListener("change", (event) => {
   state.tasksSort = event.target.value || "updated_desc";
   renderTasks();
 });
+const tasksSearchInput = byId("tasks-search-input");
+if (tasksSearchInput) {
+  tasksSearchInput.addEventListener("input", (event) => {
+    state.tasksSearch = event.target.value || "";
+    renderTasks();
+  });
+}
 byId("special-tasks-sort-select").addEventListener("change", (event) => {
   state.specialTasksSort = event.target.value || "updated_desc";
   renderSpecialTaskTemplates();
 });
+const specialTasksSearchInput = byId("special-tasks-search-input");
+if (specialTasksSearchInput) {
+  specialTasksSearchInput.addEventListener("input", (event) => {
+    state.specialTasksSearch = event.target.value || "";
+    renderSpecialTaskTemplates();
+  });
+}
 byId("boot-password-visible").addEventListener("change", (event) =>
   setPasswordInputVisibility(["boot-password", "boot-password-confirm"], event.target.checked)
 );
@@ -5403,6 +5561,20 @@ byId("redeem-reward-select").addEventListener("change", () =>
 );
 byId("points-adjust-save-btn").addEventListener("click", () => savePointsAdjust().catch((error) => log("Punkte bearbeiten Fehler", { error: error.message })));
 byId("points-adjust-cancel-btn").addEventListener("click", closePointsAdjust);
+const pointsStepMinusBtn = byId("points-step-minus-btn");
+if (pointsStepMinusBtn) pointsStepMinusBtn.addEventListener("click", () => stepPointsAdjustDelta(-5));
+const pointsStepPlusBtn = byId("points-step-plus-btn");
+if (pointsStepPlusBtn) pointsStepPlusBtn.addEventListener("click", () => stepPointsAdjustDelta(5));
+const pointsAdjustDeltaInput = byId("points-adjust-delta");
+if (pointsAdjustDeltaInput) {
+  pointsAdjustDeltaInput.addEventListener("change", (event) => {
+    const raw = Number(event.target.value || 0);
+    if (!Number.isFinite(raw)) return;
+    const rounded = Math.round(raw / 5) * 5;
+    event.target.value = String(rounded);
+    setInvalid(event.target, false);
+  });
+}
 byId("ha-save-btn").addEventListener("click", () =>
   saveHomeAssistantSettings().catch((error) => log("HA Einstellungen speichern Fehler", { error: error.message }))
 );

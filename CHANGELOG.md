@@ -1,5 +1,14 @@
 # Changelog
 
+## v2026.03.17-03 (2026-03-17)
+
+- Aufgaben- und Sonderaufgabenlisten erweitert: neue Suchfelder im UI (`tasks-search`, `special-tasks-search`) fuer schnellere Filterung nach Titel/Beschreibung/Zustaendigkeit.
+- Mitgliederverwaltung im System-Tab ergaenzt: eigener „Mitgliederverwaltung öffnen“-Dialog mit eingebettetem Members-Bereich.
+- Punkteanpassung verbessert: Delta jetzt in 5er-Schritten (`step=5`) inklusive `-5`/`+5` Schnellbuttons und Rundungslogik.
+- Dashboard-Stat-Karten verfeinert: neue Icon-Dots (`data-icon`) und klarere visuelle Kennzeichnung.
+- Mobile Tabellen-UX gehärtet: Aktionen-Buttons umbrechen konsistent, bleiben horizontal lesbar und nutzen feste Responsive-Breakpoints.
+- WebUI-Assets: Cache-Buster fuer `styles.css`/`app.js` auf `20260317j` angehoben.
+
 ## v2026.03.17-02 (2026-03-17)
 
 - WebUI weiter ausgebaut: neues Meta-Card-System fuer kompakte Key/Value-Infos in Karten (`entity-card-kv`, `request-card-kv`) und konsistentere Aktionsdarstellung.
