@@ -56,6 +56,61 @@ const TASK_REMINDER_LABELS = {
 const WEEKDAY_LABELS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
 const DAILY_REMINDER_OFFSETS = [15, 30, 60, 120];
 const ALL_REMINDER_OFFSETS = [15, 30, 60, 120, 1440, 2880];
+const FIELD_ERROR_MESSAGES = {
+  "login-email": "Bitte Benutzername oder E-Mail eingeben.",
+  "login-password": "Bitte Passwort eingeben.",
+  "boot-name": "Bitte einen Namen eingeben.",
+  "boot-email": "Bitte eine gültige E-Mail-Adresse eingeben.",
+  "boot-password": "Passwort muss mindestens 8 Zeichen haben.",
+  "boot-password-confirm": "Passwörter müssen identisch sein.",
+  "member-name": "Name ist erforderlich.",
+  "member-email": "Bitte eine gültige E-Mail-Adresse eingeben.",
+  "member-password": "Passwort muss mindestens 8 Zeichen haben.",
+  "member-password-confirm": "Passwörter müssen identisch sein.",
+  "member-editor-name": "Name ist erforderlich.",
+  "task-title": "Titel ist erforderlich.",
+  "task-assignee": "Bitte zuständiges Mitglied auswählen.",
+  "task-points": "Bitte gültige Punkte eingeben.",
+  "task-due": "Bitte Fälligkeit prüfen.",
+  "task-daily-time": "Bitte eine tägliche Uhrzeit auswählen.",
+  "task-weekly-day": "Bitte einen Wochentag auswählen.",
+  "task-weekly-time": "Bitte eine wöchentliche Uhrzeit auswählen.",
+  "task-weekdays-row": "Bitte mindestens einen Wochentag auswählen.",
+  "task-penalty-points": "Bitte gültige Minuspunkte eingeben.",
+  "task-editor-title": "Titel ist erforderlich.",
+  "task-editor-assignee": "Bitte zuständiges Mitglied auswählen.",
+  "task-editor-points": "Bitte gültige Punkte eingeben.",
+  "task-editor-due": "Bitte Fälligkeit prüfen.",
+  "task-editor-daily-time": "Bitte eine tägliche Uhrzeit auswählen.",
+  "task-editor-weekly-day": "Bitte einen Wochentag auswählen.",
+  "task-editor-weekly-time": "Bitte eine wöchentliche Uhrzeit auswählen.",
+  "task-editor-weekdays-row": "Bitte mindestens einen Wochentag auswählen.",
+  "task-editor-penalty-points": "Bitte gültige Minuspunkte eingeben.",
+  "special-task-title": "Titel ist erforderlich.",
+  "special-task-points": "Bitte gültige Punkte eingeben.",
+  "special-task-limit": "Bitte ein gültiges Limit angeben.",
+  "special-task-due-time": "Bitte eine Uhrzeit angeben.",
+  "special-task-weekdays-row": "Bitte mindestens einen aktiven Tag auswählen.",
+  "special-task-editor-title": "Titel ist erforderlich.",
+  "special-task-editor-points": "Bitte gültige Punkte eingeben.",
+  "special-task-editor-limit": "Bitte ein gültiges Limit angeben.",
+  "special-task-editor-due-time": "Bitte eine Uhrzeit angeben.",
+  "special-task-editor-weekdays-row": "Bitte mindestens einen aktiven Tag auswählen.",
+  "event-title": "Titel ist erforderlich.",
+  "event-start": "Bitte einen gültigen Startzeitpunkt angeben.",
+  "event-end": "Bitte einen gültigen Endzeitpunkt angeben.",
+  "reward-title": "Titel ist erforderlich.",
+  "reward-cost": "Bitte gültige Kostenpunkte eingeben.",
+  "reward-editor-title": "Titel ist erforderlich.",
+  "reward-editor-cost": "Bitte gültige Kostenpunkte eingeben.",
+  "redeem-reward-select": "Bitte eine Belohnung auswählen.",
+  "redeem-points": "Bitte gültige Punkte eingeben.",
+  "points-adjust-delta": "Delta darf nicht 0 sein.",
+  "points-adjust-description": "Bitte Beschreibung eingeben.",
+  "ha-base-url": "Bitte eine gültige Home-Assistant URL eingeben.",
+  "ha-token": "Bitte Token eingeben.",
+  "ha-user-service": "Für aktivierte Nutzer ist ein Service erforderlich.",
+};
 const LOG_MAX_LINES = 1200;
 const LIVE_REFRESH_DEBOUNCE_MS = 350;
 const LIVE_RECONNECT_BASE_MS = 1000;
@@ -73,6 +128,8 @@ let liveFamilyId = null;
 let liveCursor = 0;
 let specialTaskRefreshTimer = null;
 let dataRefreshInFlight = false;
+let uiLoadingCounter = 0;
+let uiStatusTimer = null;
 
 function byId(id) {
   return document.getElementById(id);
@@ -93,6 +150,72 @@ function safeHtmlText(value, fallback = "-") {
   return escapeHtml(text);
 }
 
+function renderEmptyState(title, message = "", tone = "neutral") {
+  const safeTitle = safeHtmlText(title, "Keine Einträge");
+  const safeMessage = safeHtmlText(message, "");
+  return `<div class="empty-state empty-state-${tone}">
+    <div class="empty-state-icon" aria-hidden="true"></div>
+    <p class="empty-state-title">${safeTitle}</p>
+    ${safeMessage ? `<p class="empty-state-text">${safeMessage}</p>` : ""}
+  </div>`;
+}
+
+function renderTableEmptyRow(colspan, title, message = "") {
+  return `<tr class="table-empty-row">
+    <td colspan="${colspan}" class="table-cell-full">${renderEmptyState(title, message)}</td>
+  </tr>`;
+}
+
+function hideUiStatus() {
+  const banner = byId("ui-status-banner");
+  if (!banner) return;
+  banner.classList.add("hidden");
+  banner.textContent = "";
+  banner.classList.remove("is-info", "is-success", "is-error");
+}
+
+function showUiStatus(type, message, { autoHideMs = 5200 } = {}) {
+  const banner = byId("ui-status-banner");
+  if (!banner || !message) return;
+  const tone = ["info", "success", "error"].includes(type) ? type : "info";
+  if (uiStatusTimer) {
+    window.clearTimeout(uiStatusTimer);
+    uiStatusTimer = null;
+  }
+  banner.textContent = message;
+  banner.classList.remove("hidden", "is-info", "is-success", "is-error");
+  banner.classList.add(`is-${tone}`);
+  if (autoHideMs > 0) {
+    uiStatusTimer = window.setTimeout(() => {
+      hideUiStatus();
+    }, autoHideMs);
+  }
+}
+
+function setUiLoading(isLoading, label = "") {
+  const loading = byId("ui-loading-indicator");
+  const loadingText = byId("ui-loading-text");
+  const appContainer = byId("app-panel");
+  if (!loading) return;
+
+  if (isLoading) {
+    uiLoadingCounter += 1;
+    if (loadingText && label) loadingText.textContent = label;
+    loading.classList.remove("hidden");
+    document.body.classList.add("ui-busy");
+    if (appContainer) appContainer.setAttribute("aria-busy", "true");
+    return;
+  }
+
+  uiLoadingCounter = Math.max(0, uiLoadingCounter - 1);
+  if (uiLoadingCounter === 0) {
+    loading.classList.add("hidden");
+    document.body.classList.remove("ui-busy");
+    if (appContainer) appContainer.setAttribute("aria-busy", "false");
+    if (loadingText) loadingText.textContent = "Daten werden geladen ...";
+  }
+}
+
 function log(message, data = null) {
   const line = `[${new Date().toISOString()}] ${message}`;
   const nextText = `${line}\n${data ? JSON.stringify(data, null, 2) : ""}\n\n${logOutput.textContent}`;
@@ -105,13 +228,72 @@ function toggleHidden(id, hidden) {
   if (element) element.classList.toggle("hidden", Boolean(hidden));
 }
 
-function setInvalid(input, invalid) {
+function getFieldErrorHost(input) {
+  if (!input) return null;
+  if (input.matches && input.matches("label, .weekday-picker, .reminder-wrap")) return input;
+  const inLabel = input.closest ? input.closest("label") : null;
+  if (inLabel) return inLabel;
+  return input;
+}
+
+function getFieldErrorMessage(input, fallback = "") {
+  if (!input) return fallback || "Bitte Eingabe prüfen.";
+  if (fallback) return fallback;
+  const byData = input.dataset ? input.dataset.errorMessage : "";
+  if (byData) return byData;
+  if (input.id && FIELD_ERROR_MESSAGES[input.id]) return FIELD_ERROR_MESSAGES[input.id];
+  return "Bitte Eingabe prüfen.";
+}
+
+function findFieldErrorNode(host, fieldId) {
+  if (!host || !fieldId || !host.querySelector) return null;
+  return host.querySelector(`.field-error-msg[data-for-field="${fieldId}"]`);
+}
+
+function setInvalid(input, invalid, message = "") {
   if (!input) return;
-  input.classList.toggle("invalid", Boolean(invalid));
+  const hasError = Boolean(invalid);
+  input.classList.toggle("invalid", hasError);
+  const host = getFieldErrorHost(input);
+  if (!host) return;
+  const fieldId = input.id || host.id || "";
+  if (!fieldId) return;
+
+  const existingNode = findFieldErrorNode(host, fieldId);
+  if (!hasError) {
+    host.classList.remove("has-field-error");
+    if (existingNode) existingNode.remove();
+    return;
+  }
+
+  host.classList.add("has-field-error");
+  const text = getFieldErrorMessage(input, message);
+  if (existingNode) {
+    existingNode.textContent = text;
+    return;
+  }
+
+  const node = document.createElement("small");
+  node.className = "field-error-msg";
+  node.dataset.forField = fieldId;
+  node.textContent = text;
+  host.appendChild(node);
 }
 
 function clearInvalid(ids) {
   ids.forEach((id) => setInvalid(byId(id), false));
+}
+
+function clearValidationStateForTarget(target) {
+  if (!target) return;
+  if (target.classList && target.classList.contains("invalid")) {
+    setInvalid(target, false);
+  }
+  const picker = target.closest ? target.closest(".weekday-picker.has-field-error, .weekday-picker.invalid") : null;
+  if (picker) {
+    const selectedCount = picker.querySelectorAll("input[type=\"checkbox\"]:checked").length;
+    if (selectedCount > 0) setInvalid(picker, false);
+  }
 }
 
 function isValidEmail(value) {
@@ -616,7 +798,7 @@ function renderChildTaskCards(targetId, tasks, emptyText, { overdue = false, act
   const target = byId(targetId);
   if (!target) return;
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    target.innerHTML = `<p class="muted">${emptyText}</p>`;
+    target.innerHTML = renderEmptyState("Keine Aufgaben", emptyText, "soft");
     return;
   }
   target.innerHTML = tasks
@@ -897,13 +1079,18 @@ function getOwnBalance() {
 
 async function api(path, { method = "GET", body = null } = {}) {
   const headers = { "Content-Type": "application/json" };
-
-  const response = await fetch(path, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : null,
-    credentials: "same-origin",
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : null,
+      credentials: "same-origin",
+    });
+  } catch (error) {
+    showUiStatus("error", "Server ist gerade nicht erreichbar. Bitte erneut versuchen.");
+    throw error;
+  }
 
   const raw = await response.text();
   let payload = {};
@@ -917,7 +1104,9 @@ async function api(path, { method = "GET", body = null } = {}) {
 
   if (!response.ok) {
     const detail = payload?.detail || raw || `HTTP ${response.status}`;
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
+    showUiStatus("error", detailText, { autoHideMs: 8000 });
+    throw new Error(detailText);
   }
   return payload;
 }
@@ -999,7 +1188,7 @@ function queueLiveRefresh(reason = "live_update") {
 
     liveRefreshInFlight = true;
     try {
-      await refreshFamilyData();
+      await refreshFamilyData({ silent: true });
     } catch (error) {
       log("Live-Refresh Fehler", { error: error.message, reason });
     } finally {
@@ -1323,7 +1512,7 @@ function openDashboardDetailModal(title, bodyHtml, subtitle = "", context = null
   titleNode.textContent = title;
   subtitleNode.textContent = subtitle || "";
   toggleHidden("dashboard-detail-modal-subtitle", !subtitle);
-  bodyNode.innerHTML = bodyHtml || "<p class=\"muted\">Keine Einträge vorhanden.</p>";
+  bodyNode.innerHTML = bodyHtml || renderEmptyState("Keine Einträge", "Hier gibt es aktuell nichts anzuzeigen.");
   toggleHidden("dashboard-detail-modal", false);
 }
 
@@ -1393,7 +1582,7 @@ function dashboardTaskToneClass(task, options = {}) {
 
 function renderDashboardTaskCards(tasks, emptyText, options = {}) {
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    return `<p class="muted">${emptyText}</p>`;
+    return renderEmptyState("Keine Aufgaben", emptyText, "soft");
   }
   const { overdue = false, reviewMode = null, allowManagerDelete = false } = options;
   return tasks.map((task) => {
@@ -1436,7 +1625,7 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
 
 function renderDashboardRewardCards(entries, emptyText, { reviewMode = false } = {}) {
   if (!Array.isArray(entries) || entries.length === 0) {
-    return `<p class="muted">${emptyText}</p>`;
+    return renderEmptyState("Keine Belohnungen", emptyText, "soft");
   }
   return entries.map((entry) => {
     const reward = state.rewards.find((item) => item.id === entry.reward_id);
@@ -1481,7 +1670,7 @@ function childDashboardSpecialCardsMarkup() {
 
 function renderChildDashboardTaskCards(tasks, emptyText, options = {}) {
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    return `<p class="muted">${emptyText}</p>`;
+    return renderEmptyState("Keine Aufgaben", emptyText, "soft");
   }
   const { overdue = false, actionable = true } = options;
   return tasks.map((task) => childTaskCardMarkup(task, { overdue, actionable })).join("");
@@ -1489,7 +1678,7 @@ function renderChildDashboardTaskCards(tasks, emptyText, options = {}) {
 
 function renderChildReadOnlyTaskCards(tasks, emptyText, toneClass, metaBuilder) {
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    return `<p class="muted">${emptyText}</p>`;
+    return renderEmptyState("Keine Einträge", emptyText, "soft");
   }
   return tasks.map((task) => `<article class="request-card ${toneClass}">
     <p class="request-card-title">${safeHtmlText(task.title)}</p>
@@ -1789,6 +1978,7 @@ function applyRoleVisibility() {
 async function initAuthPanel() {
   authPanel.classList.remove("hidden");
   appPanel.classList.add("hidden");
+  hideUiStatus();
   toggleHidden("login-section", true);
   toggleHidden("bootstrap-section", true);
   if (byId("boot-password-visible")) byId("boot-password-visible").checked = false;
@@ -1797,6 +1987,7 @@ async function initAuthPanel() {
   setPasswordInputVisibility(["member-password", "member-password-confirm"], false);
 
   try {
+    setUiLoading(true, "Anmeldung wird vorbereitet ...");
     const status = await api("/auth/bootstrap-status");
     if (status.bootstrap_required) {
       toggleHidden("bootstrap-section", false);
@@ -1805,7 +1996,10 @@ async function initAuthPanel() {
     }
   } catch (error) {
     toggleHidden("login-section", false);
+    showUiStatus("error", "Bootstrap-Status konnte nicht geladen werden. Login ist trotzdem möglich.");
     log("Bootstrap-Status konnte nicht geladen werden", { error: error.message });
+  } finally {
+    setUiLoading(false);
   }
 }
 
@@ -1909,7 +2103,8 @@ function syncTaskEditorTimingUI() {
 
 function renderMembers() {
   const manageMembers = canManageMembers();
-  const memberRows = state.members
+  const memberRows = state.members.length
+    ? state.members
     .map((member) => {
       const actions = manageMembers
         ? `<button data-member-action="edit" data-member-id="${member.user_id}">Bearbeiten</button> <button data-member-action="delete" data-member-id="${member.user_id}">Löschen</button>`
@@ -1923,9 +2118,11 @@ function renderMembers() {
         <td>${actions}</td>
       </tr>`;
     })
-    .join("");
+    .join("")
+    : renderTableEmptyRow(6, "Keine Mitglieder", "Füge ein neues Mitglied hinzu, um zu starten.");
 
-  const dashboardRows = state.members
+  const dashboardRows = state.members.length
+    ? state.members
     .map(
       (member) => `<tr>
         <td>${safeHtmlText(member.display_name)}</td>
@@ -1934,7 +2131,8 @@ function renderMembers() {
         <td>${member.is_active ? "ja" : "nein"}</td>
       </tr>`
     )
-    .join("");
+    .join("")
+    : renderTableEmptyRow(4, "Keine Mitglieder", "Noch keine Personen in dieser Familie.");
 
   byId("members-body").innerHTML = memberRows;
   byId("dashboard-members-body").innerHTML = dashboardRows;
@@ -1981,7 +2179,8 @@ function closeMemberEditor() {
 }
 
 function renderDashboardPoints() {
-  byId("dashboard-points-body").innerHTML = state.pointsBalances
+  byId("dashboard-points-body").innerHTML = state.pointsBalances.length
+    ? state.pointsBalances
     .map(
       (entry) => `<tr>
         <td>${safeHtmlText(entry.display_name)}</td>
@@ -1989,7 +2188,8 @@ function renderDashboardPoints() {
         <td>${entry.balance}</td>
       </tr>`
     )
-    .join("");
+    .join("")
+    : renderTableEmptyRow(3, "Keine Punkte", "Sobald Aufgaben bestätigt werden, erscheint hier der Stand.");
   applyMobileLabelsToTableBodies(["dashboard-points-body"]);
 }
 
@@ -2009,7 +2209,7 @@ function renderManagerChildOpenSummary() {
 
   toggleHidden("dashboard-parent-open-summary-section", false);
   if (!childMembers.length) {
-    target.innerHTML = "<p class=\"muted\">Keine Kinder in dieser Familie vorhanden.</p>";
+    target.innerHTML = renderEmptyState("Keine Kinder", "In dieser Familie sind aktuell keine aktiven Kinder angelegt.");
     return;
   }
 
@@ -2075,7 +2275,8 @@ function renderTasks() {
   const manager = isManagerRole();
   const statusCounts = getTaskStatusCounts(visibleTasks);
 
-  byId("dashboard-tasks-body").innerHTML = visibleTasks
+  byId("dashboard-tasks-body").innerHTML = visibleTasks.length
+    ? visibleTasks
     .map(
       (task) => `<tr>
         <td>${safeHtmlText(task.title)}</td>
@@ -2085,7 +2286,8 @@ function renderTasks() {
         <td>${taskDueText(task)}</td>
       </tr>`
     )
-    .join("");
+    .join("")
+    : renderTableEmptyRow(5, "Keine Aufgaben", "Aktuell gibt es keine sichtbaren Aufgaben.");
 
   const managerTasks = manager ? sortManagerTasks(state.tasks.filter((task) => task.status !== "approved")) : [];
   const managerHistoryTasks = manager
@@ -2121,7 +2323,7 @@ function renderTasks() {
           </article>`
         )
         .join("")
-      : "<p class=\"muted\">Keine offenen oder wartenden Aufgaben.</p>"
+      : renderEmptyState("Keine offenen Aufgaben", "Hier erscheinen offene, eingereichte und verpasste Aufgaben.")
     : "";
 
   if (state.selectedTaskId) {
@@ -2153,7 +2355,7 @@ function renderTasks() {
           </article>`
         )
         .join("")
-      : "<p class=\"muted\">Keine abgeschlossenen Aufgaben in der Historie.</p>"
+      : renderEmptyState("Historie leer", "Sobald Aufgaben bestätigt wurden, werden sie hier gelistet.")
     : "";
   applyMobileLabelsToTableBodies(["dashboard-tasks-body"]);
 
@@ -2196,7 +2398,7 @@ function renderChildTaskLists() {
         </article>`
       )
       .join("")
-    : "<p class=\"muted\">Keine Aufgaben in Prüfung</p>";
+    : renderEmptyState("Keine Prüfungen offen", "Du hast aktuell keine Aufgabe zur Bestätigung eingereicht.");
 
   byId("child-missed-task-cards").innerHTML = missedTasks.length
     ? missedTasks
@@ -2207,7 +2409,7 @@ function renderChildTaskLists() {
         </article>`
       )
       .join("")
-    : "<p class=\"muted\">Keine verpassten Aufgaben</p>";
+    : renderEmptyState("Keine verpassten Aufgaben", "Sehr gut, aktuell ist nichts verpasst.");
 
   renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks);
 
@@ -2220,7 +2422,7 @@ function renderChildTaskLists() {
         </article>`
       )
       .join("")
-    : "<p class=\"muted\">Noch keine bestätigten Aufgaben</p>";
+    : renderEmptyState("Noch nichts abgeschlossen", "Bestätigte Aufgaben tauchen hier automatisch auf.");
 }
 
 function renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks) {
@@ -2314,7 +2516,7 @@ function renderManagerTaskReviewCards() {
         </article>`;
       })
       .join("")
-    : "<p class=\"muted\">Keine wartenden Aufgaben.</p>";
+    : renderEmptyState("Nichts zu prüfen", "Aktuell warten keine Aufgaben auf eine Entscheidung.");
 }
 
 function fillSpecialTaskEditorForm() {
@@ -2415,7 +2617,7 @@ function renderSpecialTaskTemplates() {
           </article>`
         )
         .join("")
-      : "<p class=\"muted\">Keine Sonderaufgaben vorhanden.</p>"
+      : renderEmptyState("Keine Sonderaufgaben", "Lege eine Sonderaufgabe an, um spontane Aufgaben anzubieten.")
     : "";
   updateSpecialTaskEditButtons();
 
@@ -2455,7 +2657,7 @@ function renderChildSpecialTaskCards() {
         </article>`;
       })
       .join("")
-    : "<p class=\"muted\">Keine aktiven Sonderaufgaben vorhanden.</p>";
+    : renderEmptyState("Keine Sonderaufgaben verfügbar", "Im Moment ist keine Sonderaufgabe annehmbar.");
 }
 
 function fillTaskEditorForm() {
@@ -2550,7 +2752,8 @@ async function duplicateTask(taskId) {
 }
 
 function renderEvents() {
-  byId("events-body").innerHTML = state.events
+  byId("events-body").innerHTML = state.events.length
+    ? state.events
     .map(
       (event) => `<tr>
         <td>${safeHtmlText(event.title)}</td>
@@ -2559,13 +2762,15 @@ function renderEvents() {
         <td>${fmtDate(event.end_at)}</td>
       </tr>`
     )
-    .join("");
+    .join("")
+    : renderTableEmptyRow(4, "Keine Termine", "Plane den ersten Familientermin direkt hier.");
   applyMobileLabelsToTableBodies(["events-body"]);
 }
 
 function renderRewards() {
   const manager = isManagerRole();
-  byId("rewards-body").innerHTML = state.rewards
+  byId("rewards-body").innerHTML = state.rewards.length
+    ? state.rewards
     .map((reward) => {
       const actions = manager
         ? `<button data-reward-action="edit" data-reward-id="${reward.id}">Bearbeiten</button> <button data-reward-action="delete" data-reward-id="${reward.id}">Löschen</button>`
@@ -2579,7 +2784,8 @@ function renderRewards() {
         <td>${actions}</td>
       </tr>`;
     })
-    .join("");
+    .join("")
+    : renderTableEmptyRow(6, "Keine Belohnungen", "Lege eine Belohnung an, damit Punkte eingelöst werden können.");
   applyMobileLabelsToTableBodies(["rewards-body"]);
 
   fillSelect(
@@ -2697,7 +2903,7 @@ function renderSelectedRewardContribution() {
         </article>`
       )
       .join("")
-    : "<p class=\"muted\">Noch keine Beiträge vorhanden.</p>";
+    : renderEmptyState("Noch keine Beiträge", "Sobald jemand Punkte reserviert, wird der Beitrag hier angezeigt.");
 
   contributeBtn.disabled = Boolean(progress.pending_redemption_id) || progress.remaining_points <= 0 || maxSelectable <= 0;
 }
@@ -2750,7 +2956,8 @@ function closeRewardEditor() {
 function renderRedemptions() {
   const visible = state.redemptions;
 
-  byId("redemptions-body").innerHTML = visible
+  byId("redemptions-body").innerHTML = visible.length
+    ? visible
     .map((entry) => {
       const reward = state.rewards.find((r) => r.id === entry.reward_id);
       return `<tr>
@@ -2760,7 +2967,8 @@ function renderRedemptions() {
         <td>${fmtDate(entry.requested_at)}</td>
       </tr>`;
     })
-    .join("");
+    .join("")
+    : renderTableEmptyRow(4, "Keine Einlösungen", "Anfragen für Belohnungen erscheinen hier.");
   applyMobileLabelsToTableBodies(["redemptions-body"]);
   renderManagerRewardReviewCards();
   renderDashboardPendingRequests();
@@ -2784,7 +2992,7 @@ function renderManagerRewardReviewCards() {
         </article>`;
       })
       .join("")
-    : "<p class=\"muted\">Keine wartenden Belohnungen.</p>";
+    : renderEmptyState("Nichts zu prüfen", "Es warten aktuell keine Belohnungsanfragen.");
 }
 
 function getPointsUserDisplayName(userId) {
@@ -2794,7 +3002,8 @@ function getPointsUserDisplayName(userId) {
 
 function renderPointsUsers() {
   const manager = isManagerRole();
-  byId("points-users-body").innerHTML = state.pointsBalances
+  byId("points-users-body").innerHTML = state.pointsBalances.length
+    ? state.pointsBalances
     .map((entry) => {
       const actions = manager
         ? `<button data-points-action="history" data-user-id="${entry.user_id}">Historie</button> <button data-points-action="edit" data-user-id="${entry.user_id}">Bearbeiten</button>`
@@ -2806,7 +3015,8 @@ function renderPointsUsers() {
         <td>${actions}</td>
       </tr>`;
     })
-    .join("");
+    .join("")
+    : renderTableEmptyRow(4, "Keine Punktekonten", "Sobald Mitglieder existieren, erscheinen sie hier.");
   applyMobileLabelsToTableBodies(["points-users-body"]);
 }
 
@@ -2822,7 +3032,7 @@ function renderPointsHistory() {
     )
     .join("");
 
-  byId("points-history-body").innerHTML = rows || "<tr><td colspan=\"4\">Keine Buchungen vorhanden</td></tr>";
+  byId("points-history-body").innerHTML = rows || renderTableEmptyRow(4, "Keine Buchungen", "Es wurden noch keine Punktebewegungen erfasst.");
   applyMobileLabelsToTableBodies(["points-history-body"]);
 }
 
@@ -3465,9 +3675,10 @@ async function sendHomeAssistantUserTest(userIdOverride = null) {
   });
 }
 
-async function refreshFamilyData() {
+async function refreshFamilyData({ silent = false } = {}) {
   if (dataRefreshInFlight) return;
   dataRefreshInFlight = true;
+  if (!silent) setUiLoading(true, "Familiendaten werden aktualisiert ...");
   try {
     await loadMembers();
     await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances()]);
@@ -3533,12 +3744,14 @@ async function refreshFamilyData() {
     const emailPart = state.me.email ? ` (${state.me.email})` : "";
     userInfo.textContent = `Angemeldet als ${state.me.display_name}${emailPart} | Rolle: ${roleLabel(state.currentRole)}`;
   } finally {
+    if (!silent) setUiLoading(false);
     dataRefreshInFlight = false;
     flushDeferredLiveRefresh("post_refresh");
   }
 }
 
 async function refreshSession() {
+  setUiLoading(true, "Sitzung wird geladen ...");
   try {
     state.me = await api("/auth/me");
     state.families = await api("/families/my");
@@ -3569,10 +3782,13 @@ async function refreshSession() {
     if (isChildRole()) startSpecialTaskRefreshTicker();
     else stopSpecialTaskRefreshTicker();
   } catch (error) {
+    showUiStatus("error", "Sitzung konnte nicht geladen werden. Bitte erneut anmelden.");
     log("Session Fehler", { error: error.message });
     stopLiveUpdates({ resetCursor: true });
     stopSpecialTaskRefreshTicker();
     await logout();
+  } finally {
+    setUiLoading(false);
   }
 }
 
@@ -3594,12 +3810,14 @@ async function login() {
     invalid = true;
   }
   if (invalid) {
+    showUiStatus("error", "Bitte Login und Passwort eingeben.");
     log("Login: Bitte Pflichtfelder korrekt ausfuellen");
     return;
   }
 
   await api("/auth/login", { method: "POST", body: { login: loginValue, password } });
   await refreshSession();
+  showUiStatus("success", "Erfolgreich angemeldet.");
 }
 
 async function bootstrap() {
@@ -3637,6 +3855,7 @@ async function bootstrap() {
     validationMessages.push("Passwort-Bestätigung muss identisch sein und mindestens 8 Zeichen haben");
   }
   if (invalid) {
+    showUiStatus("error", "Bitte die Initialisierungseingaben prüfen.");
     log("Initialisierung: Bitte Eingaben prüfen", { details: validationMessages });
     return;
   }
@@ -3647,6 +3866,7 @@ async function bootstrap() {
   });
 
   await refreshSession();
+  showUiStatus("success", "Initialisierung abgeschlossen.");
 }
 
 async function logout() {
@@ -4657,6 +4877,18 @@ if (familySelect) {
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
+});
+
+document.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  clearValidationStateForTarget(target);
+});
+
+document.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  clearValidationStateForTarget(target);
 });
 
 const statCardApproved = byId("stat-card-approved");

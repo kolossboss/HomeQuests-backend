@@ -8,8 +8,8 @@
     <link rel="apple-touch-icon" href="/static/favicon-homequests.png?v=20260221a" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260316b" />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260317f" />
   </head>
   <body>
     <main class="container">
@@ -55,6 +55,14 @@
               <select id="family-select"></select>
             </label>
             <button id="logout-btn">Logout</button>
+          </div>
+        </div>
+
+        <div id="app-state-stack" class="app-state-stack" aria-live="polite">
+          <div id="ui-status-banner" class="ui-status-banner hidden" role="status"></div>
+          <div id="ui-loading-indicator" class="ui-loading hidden" role="status">
+            <span class="ui-loading-spinner" aria-hidden="true"></span>
+            <span id="ui-loading-text">Daten werden geladen ...</span>
           </div>
         </div>
 
@@ -1007,6 +1015,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260316b"></script>
+    <script src="/static/app.js?v=20260317f"></script>
   </body>
 </html>
