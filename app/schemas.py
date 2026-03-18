@@ -1,12 +1,16 @@
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from .models import (
     ApprovalDecisionEnum,
+    NotificationChannelEnum,
     RecurrenceTypeEnum,
+    RewardContributionStatusEnum,
     RedemptionStatusEnum,
     RoleEnum,
+    SpecialTaskIntervalEnum,
     TaskStatusEnum,
 )
 
@@ -23,10 +27,16 @@ class LoginRequest(BaseModel):
 
 
 class BootstrapRequest(BaseModel):
-    family_name: str = Field(min_length=2, max_length=120)
-    email: EmailStr
+    email: EmailStr | None = None
     display_name: str = Field(min_length=2, max_length=120)
     password: str = Field(min_length=8, max_length=128)
+    password_confirm: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_passwords(self):
+        if self.password != self.password_confirm:
+            raise ValueError("Passwort und Passwort-Wiederholung stimmen nicht überein")
+        return self
 
 
 class BootstrapStatusOut(BaseModel):
@@ -35,9 +45,52 @@ class BootstrapStatusOut(BaseModel):
 
 class UserOut(BaseModel):
     id: int
-    email: EmailStr
+    email: EmailStr | None
     display_name: str
     is_active: bool
+
+    model_config = {"from_attributes": True}
+
+
+class PushDeviceRegisterRequest(BaseModel):
+    device_token: str = Field(min_length=32, max_length=255)
+    bundle_id: str = Field(min_length=3, max_length=255)
+    push_environment: Literal["development", "production"] = "production"
+    notifications_enabled: bool = True
+    child_new_task: bool = True
+    manager_task_submitted: bool = True
+    manager_reward_requested: bool = True
+    task_due_reminder: bool = True
+
+    @field_validator("device_token", "bundle_id")
+    @classmethod
+    def normalize_push_strings(cls, value: str) -> str:
+        return value.strip()
+
+
+class PushDeviceUnregisterRequest(BaseModel):
+    device_token: str = Field(min_length=32, max_length=255)
+
+    @field_validator("device_token")
+    @classmethod
+    def normalize_device_token(cls, value: str) -> str:
+        return value.strip()
+
+
+class PushDeviceOut(BaseModel):
+    id: int
+    family_id: int
+    user_id: int
+    device_token: str = Field(description="Maskierter Device-Token (nicht der vollständige Wert)")
+    platform: str
+    bundle_id: str
+    push_environment: str
+    notifications_enabled: bool
+    child_new_task: bool
+    manager_task_submitted: bool
+    manager_reward_requested: bool
+    task_due_reminder: bool
+    last_seen_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -54,24 +107,107 @@ class FamilyMemberOut(BaseModel):
     family_id: int
     user_id: int
     display_name: str
-    email: EmailStr
+    email: EmailStr | None
+    ha_notify_service: str | None = None
+    ha_notifications_enabled: bool = False
+    ha_child_new_task: bool = True
+    ha_manager_task_submitted: bool = True
+    ha_manager_reward_requested: bool = True
+    ha_task_due_reminder: bool = True
     is_active: bool
     role: RoleEnum
     created_at: datetime
 
 
 class MemberCreate(BaseModel):
-    email: EmailStr
+    email: EmailStr | None = None
     display_name: str = Field(min_length=2, max_length=120)
+    ha_notify_service: str | None = Field(default=None, max_length=255)
+    ha_notifications_enabled: bool = False
+    ha_child_new_task: bool = True
+    ha_manager_task_submitted: bool = True
+    ha_manager_reward_requested: bool = True
+    ha_task_due_reminder: bool = True
     password: str | None = Field(default=None, min_length=8, max_length=128)
+    password_confirm: str | None = Field(default=None, min_length=8, max_length=128)
     role: RoleEnum
+
+    @field_validator("ha_notify_service", mode="before")
+    @classmethod
+    def normalize_ha_notify_service(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @model_validator(mode="after")
+    def validate_passwords(self):
+        if self.password != self.password_confirm:
+            raise ValueError("Passwort und Passwort-Wiederholung stimmen nicht überein")
+        return self
 
 
 class MemberUpdate(BaseModel):
     display_name: str = Field(min_length=2, max_length=120)
+    ha_notify_service: str | None = Field(default=None, max_length=255)
+    ha_notifications_enabled: bool | None = None
+    ha_child_new_task: bool | None = None
+    ha_manager_task_submitted: bool | None = None
+    ha_manager_reward_requested: bool | None = None
+    ha_task_due_reminder: bool | None = None
     role: RoleEnum
     is_active: bool = True
     password: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @field_validator("ha_notify_service", mode="before")
+    @classmethod
+    def normalize_ha_notify_service(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+ALLOWED_TASK_REMINDER_MINUTES = {15, 30, 60, 120, 1440, 2880}
+ALLOWED_DAILY_REMINDER_MINUTES = {15, 30, 60, 120}
+ALLOWED_WEEKDAYS = {0, 1, 2, 3, 4, 5, 6}
+FULL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
+
+
+def _normalize_task_reminders(value: list[int]) -> list[int]:
+    unique_sorted = sorted(set(value))
+    invalid = [entry for entry in unique_sorted if entry not in ALLOWED_TASK_REMINDER_MINUTES]
+    if invalid:
+        allowed = ", ".join(str(entry) for entry in sorted(ALLOWED_TASK_REMINDER_MINUTES))
+        raise ValueError(f"Ungültige Erinnerungszeiten: {invalid}. Erlaubt sind: {allowed}")
+    return unique_sorted
+
+
+def _normalize_weekdays(value: list[int]) -> list[int]:
+    unique_sorted = sorted(set(value))
+    invalid = [entry for entry in unique_sorted if entry not in ALLOWED_WEEKDAYS]
+    if invalid:
+        raise ValueError("Ungültige Wochentage. Erlaubt sind 0=Mo bis 6=So")
+    return unique_sorted
+
+
+def _normalize_due_time_hhmm(value: str | None) -> str | None:
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    parts = raw.split(":")
+    if len(parts) != 2:
+        raise ValueError("Uhrzeit muss im Format HH:MM angegeben werden")
+    hour, minute = parts
+    if not hour.isdigit() or not minute.isdigit():
+        raise ValueError("Uhrzeit muss im Format HH:MM angegeben werden")
+    hour_value = int(hour)
+    minute_value = int(minute)
+    if hour_value < 0 or hour_value > 23 or minute_value < 0 or minute_value > 59:
+        raise ValueError("Uhrzeit muss zwischen 00:00 und 23:59 liegen")
+    return f"{hour_value:02d}:{minute_value:02d}"
 
 
 class TaskCreate(BaseModel):
@@ -80,7 +216,58 @@ class TaskCreate(BaseModel):
     assignee_id: int
     due_at: datetime | None = None
     points: int = Field(default=0, ge=0)
+    reminder_offsets_minutes: list[int] = Field(default_factory=list)
+    active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
+    always_submittable: bool = False
+    penalty_enabled: bool = False
+    penalty_points: int = Field(default=0, ge=0, le=9999)
+
+    @field_validator("reminder_offsets_minutes")
+    @classmethod
+    def validate_reminder_offsets_minutes(cls, value: list[int]) -> list[int]:
+        return _normalize_task_reminders(value)
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @model_validator(mode="after")
+    def validate_task_schedule(self):
+        if self.recurrence_type == RecurrenceTypeEnum.daily:
+            if not self.due_at:
+                raise ValueError("Bei täglicher Wiederholung ist eine Uhrzeit erforderlich")
+            if not self.active_weekdays:
+                raise ValueError("Bei täglicher Wiederholung muss mindestens ein Wochentag gewählt sein")
+            invalid_daily = [entry for entry in self.reminder_offsets_minutes if entry not in ALLOWED_DAILY_REMINDER_MINUTES]
+            if invalid_daily:
+                raise ValueError("Bei täglicher Wiederholung sind nur Erinnerungen bis 2 Stunden erlaubt")
+        elif self.recurrence_type == RecurrenceTypeEnum.monthly:
+            if self.due_at is None:
+                raise ValueError("Bei monatlicher Wiederholung ist eine Fälligkeit erforderlich")
+            if self.reminder_offsets_minutes and self.due_at is None:
+                raise ValueError("Erinnerungen benötigen eine Fälligkeit")
+            self.active_weekdays = []
+        elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
+            if self.reminder_offsets_minutes:
+                raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
+            if self.penalty_enabled:
+                raise ValueError("Minuspunkte benötigen bei wöchentlichen Aufgaben einen festen Zeitpunkt")
+            self.always_submittable = False
+            self.active_weekdays = []
+        else:
+            self.active_weekdays = []
+
+        if self.recurrence_type == RecurrenceTypeEnum.none and self.reminder_offsets_minutes and self.due_at is None:
+            raise ValueError("Erinnerungen benötigen eine Fälligkeit")
+
+        if self.recurrence_type not in {RecurrenceTypeEnum.daily, RecurrenceTypeEnum.weekly}:
+            self.penalty_enabled = False
+            self.penalty_points = 0
+        elif self.penalty_enabled and self.penalty_points < 1:
+            raise ValueError("Minuspunkte müssen größer als 0 sein")
+        return self
 
 
 class TaskUpdate(BaseModel):
@@ -89,8 +276,60 @@ class TaskUpdate(BaseModel):
     assignee_id: int
     due_at: datetime | None = None
     points: int = Field(default=0, ge=0)
+    reminder_offsets_minutes: list[int] = Field(default_factory=list)
+    active_weekdays: list[int] = Field(default_factory=list)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
+    always_submittable: bool = False
+    penalty_enabled: bool = False
+    penalty_points: int = Field(default=0, ge=0, le=9999)
+    is_active: bool = True
     status: TaskStatusEnum = TaskStatusEnum.open
+
+    @field_validator("reminder_offsets_minutes")
+    @classmethod
+    def validate_reminder_offsets_minutes(cls, value: list[int]) -> list[int]:
+        return _normalize_task_reminders(value)
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @model_validator(mode="after")
+    def validate_task_schedule(self):
+        if self.recurrence_type == RecurrenceTypeEnum.daily:
+            if not self.due_at:
+                raise ValueError("Bei täglicher Wiederholung ist eine Uhrzeit erforderlich")
+            if not self.active_weekdays:
+                raise ValueError("Bei täglicher Wiederholung muss mindestens ein Wochentag gewählt sein")
+            invalid_daily = [entry for entry in self.reminder_offsets_minutes if entry not in ALLOWED_DAILY_REMINDER_MINUTES]
+            if invalid_daily:
+                raise ValueError("Bei täglicher Wiederholung sind nur Erinnerungen bis 2 Stunden erlaubt")
+        elif self.recurrence_type == RecurrenceTypeEnum.monthly:
+            if self.due_at is None:
+                raise ValueError("Bei monatlicher Wiederholung ist eine Fälligkeit erforderlich")
+            if self.reminder_offsets_minutes and self.due_at is None:
+                raise ValueError("Erinnerungen benötigen eine Fälligkeit")
+            self.active_weekdays = []
+        elif self.recurrence_type == RecurrenceTypeEnum.weekly and self.due_at is None:
+            if self.reminder_offsets_minutes:
+                raise ValueError("Für wöchentliche Aufgaben ohne festen Zeitpunkt sind keine Erinnerungen erlaubt")
+            if self.penalty_enabled:
+                raise ValueError("Minuspunkte benötigen bei wöchentlichen Aufgaben einen festen Zeitpunkt")
+            self.always_submittable = False
+            self.active_weekdays = []
+        else:
+            self.active_weekdays = []
+
+        if self.recurrence_type == RecurrenceTypeEnum.none and self.reminder_offsets_minutes and self.due_at is None:
+            raise ValueError("Erinnerungen benötigen eine Fälligkeit")
+
+        if self.recurrence_type not in {RecurrenceTypeEnum.daily, RecurrenceTypeEnum.weekly}:
+            self.penalty_enabled = False
+            self.penalty_points = 0
+        elif self.penalty_enabled and self.penalty_points < 1:
+            raise ValueError("Minuspunkte müssen größer als 0 sein")
+        return self
 
 
 class TaskOut(BaseModel):
@@ -101,7 +340,16 @@ class TaskOut(BaseModel):
     assignee_id: int
     due_at: datetime | None
     points: int
+    reminder_offsets_minutes: list[int]
+    active_weekdays: list[int]
     recurrence_type: RecurrenceTypeEnum
+    series_id: str | None
+    always_submittable: bool
+    penalty_enabled: bool
+    penalty_points: int
+    penalty_last_applied_at: datetime | None
+    special_template_id: int | None
+    is_active: bool
     status: TaskStatusEnum
     created_by_id: int
     created_at: datetime
@@ -117,6 +365,24 @@ class TaskSubmitRequest(BaseModel):
 class TaskReviewRequest(BaseModel):
     decision: ApprovalDecisionEnum
     comment: str | None = None
+
+
+class MissedTaskReviewRequest(BaseModel):
+    action: Literal["delete", "penalty", "approve"]
+    comment: str | None = None
+
+
+class TaskReminderOut(BaseModel):
+    task_id: int
+    title: str
+    assignee_id: int
+    due_at: datetime
+    reminder_offset_minutes: int
+    notify_at: datetime
+
+
+class TaskActiveUpdate(BaseModel):
+    is_active: bool
 
 
 class CalendarEventCreate(BaseModel):
@@ -144,6 +410,7 @@ class RewardCreate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
     description: str | None = None
     cost_points: int = Field(ge=1)
+    is_shareable: bool = False
     is_active: bool = True
 
 
@@ -151,6 +418,7 @@ class RewardUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
     description: str | None = None
     cost_points: int = Field(ge=1)
+    is_shareable: bool = False
     is_active: bool = True
 
 
@@ -160,6 +428,7 @@ class RewardOut(BaseModel):
     title: str
     description: str | None
     cost_points: int
+    is_shareable: bool
     is_active: bool
 
     model_config = {"from_attributes": True}
@@ -185,6 +454,44 @@ class RedemptionOut(BaseModel):
     reviewed_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class RewardContributionRequest(BaseModel):
+    points: int = Field(ge=1, le=9999)
+    comment: str | None = None
+
+
+class RewardContributionOut(BaseModel):
+    id: int
+    family_id: int
+    reward_id: int
+    user_id: int
+    points_reserved: int
+    status: RewardContributionStatusEnum
+    redemption_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RewardContributionProgressItemOut(BaseModel):
+    id: int
+    user_id: int
+    user_name: str
+    points_reserved: int
+    status: RewardContributionStatusEnum
+    created_at: datetime
+
+
+class RewardContributionProgressOut(BaseModel):
+    reward_id: int
+    reward_title: str
+    cost_points: int
+    total_reserved: int
+    remaining_points: int
+    pending_redemption_id: int | None
+    contributions: list[RewardContributionProgressItemOut]
 
 
 class LedgerEntryOut(BaseModel):
@@ -218,3 +525,237 @@ class PointsAdjustRequest(BaseModel):
     user_id: int
     points_delta: int = Field(ge=-9999, le=9999)
     description: str = Field(min_length=2, max_length=255)
+
+
+class SpecialTaskTemplateCreate(BaseModel):
+    title: str = Field(min_length=2, max_length=180)
+    description: str | None = None
+    points: int = Field(default=0, ge=0)
+    interval_type: SpecialTaskIntervalEnum
+    max_claims_per_interval: int = Field(default=1, ge=1, le=50)
+    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy())
+    due_time_hhmm: str | None = Field(default=None, min_length=5, max_length=5)
+    is_active: bool = True
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @field_validator("due_time_hhmm")
+    @classmethod
+    def validate_due_time_hhmm(cls, value: str | None) -> str | None:
+        return _normalize_due_time_hhmm(value)
+
+    @model_validator(mode="after")
+    def validate_daily_special_task_fields(self):
+        if self.interval_type == SpecialTaskIntervalEnum.daily:
+            if not self.active_weekdays:
+                raise ValueError("Bei täglichen Sonderaufgaben muss mindestens ein Wochentag gewählt sein")
+            if not self.due_time_hhmm:
+                raise ValueError("Bei täglichen Sonderaufgaben ist eine Fälligkeitsuhrzeit erforderlich")
+        else:
+            self.active_weekdays = FULL_WEEKDAYS.copy()
+            self.due_time_hhmm = None
+        return self
+
+
+class SpecialTaskTemplateUpdate(BaseModel):
+    title: str = Field(min_length=2, max_length=180)
+    description: str | None = None
+    points: int = Field(default=0, ge=0)
+    interval_type: SpecialTaskIntervalEnum
+    max_claims_per_interval: int = Field(default=1, ge=1, le=50)
+    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy())
+    due_time_hhmm: str | None = Field(default=None, min_length=5, max_length=5)
+    is_active: bool = True
+
+    @field_validator("active_weekdays")
+    @classmethod
+    def validate_active_weekdays(cls, value: list[int]) -> list[int]:
+        return _normalize_weekdays(value)
+
+    @field_validator("due_time_hhmm")
+    @classmethod
+    def validate_due_time_hhmm(cls, value: str | None) -> str | None:
+        return _normalize_due_time_hhmm(value)
+
+    @model_validator(mode="after")
+    def validate_daily_special_task_fields(self):
+        if self.interval_type == SpecialTaskIntervalEnum.daily:
+            if not self.active_weekdays:
+                raise ValueError("Bei täglichen Sonderaufgaben muss mindestens ein Wochentag gewählt sein")
+            if not self.due_time_hhmm:
+                raise ValueError("Bei täglichen Sonderaufgaben ist eine Fälligkeitsuhrzeit erforderlich")
+        else:
+            self.active_weekdays = FULL_WEEKDAYS.copy()
+            self.due_time_hhmm = None
+        return self
+
+
+class SpecialTaskTemplateOut(BaseModel):
+    id: int
+    family_id: int
+    title: str
+    description: str | None
+    points: int
+    interval_type: SpecialTaskIntervalEnum
+    max_claims_per_interval: int
+    active_weekdays: list[int]
+    due_time_hhmm: str | None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SpecialTaskAvailabilityOut(SpecialTaskTemplateOut):
+    used_count: int
+    remaining_count: int
+
+
+class SystemTestNotificationRequest(BaseModel):
+    title: str = Field(min_length=2, max_length=120)
+    message: str = Field(min_length=2, max_length=500)
+    recipient_user_ids: list[int] | None = None
+    test_channel: Literal["active", "sse", "apns", "home_assistant"] = "active"
+    send_via_home_assistant: bool = False
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def validate_recipient_user_ids(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+
+        normalized: list[int] = []
+        for entry in value:
+            if entry < 1:
+                raise ValueError("Empfänger-IDs müssen größer als 0 sein")
+            if entry not in normalized:
+                normalized.append(entry)
+        return normalized
+
+
+class SystemTestNotificationOut(BaseModel):
+    sent: bool
+    family_id: int
+    title: str
+    message: str
+    recipient_count: int
+    recipient_user_ids: list[int]
+    recipient_display_names: list[str]
+    test_channel: Literal["active", "sse", "apns", "home_assistant"]
+    delivery_mode: str
+    event_type: str
+    sent_at: str
+    home_assistant_delivery: dict[str, object] | None = None
+
+
+class SystemRuntimeOut(BaseModel):
+    app_name: str
+    app_version: str
+    app_build_ref: str | None = None
+    server_time_utc: datetime
+
+
+class SystemEventOut(BaseModel):
+    id: int
+    event_type: str
+    payload: dict[str, object] | None = None
+    created_at: datetime
+
+
+class HomeAssistantSettingsUpdateRequest(BaseModel):
+    ha_enabled: bool = False
+    notification_channel: NotificationChannelEnum = NotificationChannelEnum.sse
+    ha_base_url: str | None = Field(default=None, max_length=255)
+    ha_token: str | None = Field(default=None, max_length=4096)
+    verify_ssl: bool = True
+    keep_existing_token: bool = True
+
+    @field_validator("ha_base_url", "ha_token", mode="before")
+    @classmethod
+    def normalize_home_assistant_strings(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class HomeAssistantSettingsOut(BaseModel):
+    ha_enabled: bool
+    notification_channel: NotificationChannelEnum
+    ha_base_url: str | None
+    verify_ssl: bool
+    has_token: bool
+
+
+class NotificationChannelUpdateRequest(BaseModel):
+    channel: NotificationChannelEnum
+
+
+class HomeAssistantUserConfigUpdateRequest(BaseModel):
+    ha_notify_service: str | None = Field(default=None, max_length=255)
+    ha_notifications_enabled: bool = False
+    ha_child_new_task: bool = True
+    ha_manager_task_submitted: bool = True
+    ha_manager_reward_requested: bool = True
+    ha_task_due_reminder: bool = True
+
+    @field_validator("ha_notify_service", mode="before")
+    @classmethod
+    def normalize_ha_user_notify_service(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class HomeAssistantUserConfigOut(BaseModel):
+    user_id: int
+    display_name: str
+    role: RoleEnum
+    is_active: bool
+    ha_notify_service: str | None
+    ha_notifications_enabled: bool
+    ha_child_new_task: bool
+    ha_manager_task_submitted: bool
+    ha_manager_reward_requested: bool
+    ha_task_due_reminder: bool
+
+
+class HomeAssistantUserTestRequest(BaseModel):
+    title: str = Field(min_length=2, max_length=120, default="Home Assistant Test")
+    message: str = Field(min_length=2, max_length=500, default="Dies ist eine Testnachricht aus HomeQuests.")
+
+
+class SystemPracticalTestRequest(BaseModel):
+    scenario: Literal["task_submitted", "task_created", "task_due_reminder"] = "task_created"
+    recipient_user_ids: list[int] | None = None
+    dry_run: bool = False
+
+    @field_validator("recipient_user_ids")
+    @classmethod
+    def validate_recipient_user_ids(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+
+        normalized: list[int] = []
+        for entry in value:
+            if entry < 1:
+                raise ValueError("Empfänger-IDs müssen größer als 0 sein")
+            if entry not in normalized:
+                normalized.append(entry)
+        return normalized
+
+
+class SystemPracticalTestOut(BaseModel):
+    sent: bool
+    dry_run: bool
+    family_id: int
+    scenario: Literal["task_submitted", "task_created", "task_due_reminder"]
+    recipient_user_ids: list[int]
+    recipient_display_names: list[str]
+    affected_entities: dict[str, object]
+    delivery_expectation: str

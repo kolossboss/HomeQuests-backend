@@ -6,6 +6,7 @@ from ..deps import get_current_user
 from ..models import CalendarEvent, FamilyMembership, RoleEnum, User
 from ..rbac import get_membership_or_403, require_roles
 from ..schemas import CalendarEventCreate, CalendarEventOut
+from ..services import emit_live_event
 
 router = APIRouter(tags=["events"])
 
@@ -60,6 +61,13 @@ def create_event(
         created_by_id=current_user.id,
     )
     db.add(event)
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="event.created",
+        payload={"event_id": event.id, "responsible_user_id": event.responsible_user_id},
+    )
     db.commit()
     db.refresh(event)
     return event
