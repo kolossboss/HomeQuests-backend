@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -7,8 +8,51 @@ from ..models import Family, FamilyMembership, RoleEnum, User
 from ..rbac import get_membership_or_403, require_roles
 from ..schemas import FamilyMemberOut, FamilyOut, MemberCreate, MemberUpdate
 from ..security import hash_password
+from ..services import emit_live_event
 
 router = APIRouter(prefix="/families", tags=["families"])
+
+
+def _serialize_family_member(
+    membership: FamilyMembership,
+    user: User,
+    viewer_role: RoleEnum,
+    viewer_user_id: int,
+) -> FamilyMemberOut:
+    email = user.email
+    ha_notify_service = user.ha_notify_service
+    ha_notifications_enabled = bool(user.ha_notifications_enabled)
+    ha_child_new_task = bool(user.ha_child_new_task)
+    ha_manager_task_submitted = bool(user.ha_manager_task_submitted)
+    ha_manager_reward_requested = bool(user.ha_manager_reward_requested)
+    ha_task_due_reminder = bool(user.ha_task_due_reminder)
+    role = membership.role
+    if viewer_role == RoleEnum.child and user.id != viewer_user_id:
+        email = None
+        ha_notify_service = None
+        ha_notifications_enabled = False
+        ha_child_new_task = True
+        ha_manager_task_submitted = True
+        ha_manager_reward_requested = True
+        ha_task_due_reminder = True
+        role = RoleEnum.child
+
+    return FamilyMemberOut(
+        membership_id=membership.id,
+        family_id=membership.family_id,
+        user_id=user.id,
+        display_name=user.display_name,
+        email=email,
+        ha_notify_service=ha_notify_service,
+        ha_notifications_enabled=ha_notifications_enabled,
+        ha_child_new_task=ha_child_new_task,
+        ha_manager_task_submitted=ha_manager_task_submitted,
+        ha_manager_reward_requested=ha_manager_reward_requested,
+        ha_task_due_reminder=ha_task_due_reminder,
+        is_active=user.is_active,
+        role=role,
+        created_at=membership.created_at,
+    )
 
 
 @router.get("/my", response_model=list[FamilyOut])
@@ -30,7 +74,7 @@ def list_members(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    get_membership_or_403(db, family_id, current_user.id)
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
     rows = (
         db.query(FamilyMembership, User)
         .join(User, User.id == FamilyMembership.user_id)
@@ -39,16 +83,7 @@ def list_members(
         .all()
     )
     return [
-        FamilyMemberOut(
-            membership_id=membership.id,
-            family_id=membership.family_id,
-            user_id=user.id,
-            display_name=user.display_name,
-            email=user.email,
-            is_active=user.is_active,
-            role=membership.role,
-            created_at=membership.created_at,
-        )
+        _serialize_family_member(membership, user, membership_context.role, current_user.id)
         for membership, user in rows
     ]
 
@@ -67,8 +102,19 @@ def create_member(
     if not family:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Familie nicht gefunden")
 
-    existing_user = db.query(User).filter(User.email == payload.email.lower()).first()
+    normalized_email = payload.email.lower() if payload.email else None
+    existing_user = db.query(User).filter(User.email == normalized_email).first() if normalized_email else None
     if existing_user:
+        other_household = (
+            db.query(FamilyMembership)
+            .filter(FamilyMembership.user_id == existing_user.id, FamilyMembership.family_id != family_id)
+            .first()
+        )
+        if other_household:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Benutzer gehört bereits zu einem anderen Haushalt",
+            )
         already_member = (
             db.query(FamilyMembership)
             .filter(FamilyMembership.family_id == family_id, FamilyMembership.user_id == existing_user.id)
@@ -77,15 +123,37 @@ def create_member(
         if already_member:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Benutzer ist bereits Mitglied")
         user = existing_user
+        user.ha_notify_service = payload.ha_notify_service
+        user.ha_notifications_enabled = payload.ha_notifications_enabled
+        user.ha_child_new_task = payload.ha_child_new_task
+        user.ha_manager_task_submitted = payload.ha_manager_task_submitted
+        user.ha_manager_reward_requested = payload.ha_manager_reward_requested
+        user.ha_task_due_reminder = payload.ha_task_due_reminder
     else:
+        display_name_taken = (
+            db.query(User)
+            .filter(func.lower(User.display_name) == payload.display_name.lower())
+            .first()
+        )
+        if display_name_taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Name ist bereits vergeben. Bitte einen anderen Namen wählen",
+            )
         if not payload.password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Passwort erforderlich für neue Benutzer",
             )
         user = User(
-            email=payload.email.lower(),
+            email=normalized_email,
             display_name=payload.display_name,
+            ha_notify_service=payload.ha_notify_service,
+            ha_notifications_enabled=payload.ha_notifications_enabled,
+            ha_child_new_task=payload.ha_child_new_task,
+            ha_manager_task_submitted=payload.ha_manager_task_submitted,
+            ha_manager_reward_requested=payload.ha_manager_reward_requested,
+            ha_task_due_reminder=payload.ha_task_due_reminder,
             password_hash=hash_password(payload.password),
         )
         db.add(user)
@@ -93,20 +161,18 @@ def create_member(
 
     new_membership = FamilyMembership(family_id=family_id, user_id=user.id, role=payload.role)
     db.add(new_membership)
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="member.created",
+        payload={"user_id": user.id, "role": payload.role.value},
+    )
     db.commit()
     db.refresh(new_membership)
     db.refresh(user)
 
-    return FamilyMemberOut(
-        membership_id=new_membership.id,
-        family_id=new_membership.family_id,
-        user_id=user.id,
-        display_name=user.display_name,
-        email=user.email,
-        is_active=user.is_active,
-        role=new_membership.role,
-        created_at=new_membership.created_at,
-    )
+    return _serialize_family_member(new_membership, user, membership_context.role, current_user.id)
 
 
 @router.put("/{family_id}/members/{user_id}", response_model=FamilyMemberOut)
@@ -143,26 +209,46 @@ def update_member(
             detail="Mindestens ein Admin muss in der Familie verbleiben",
         )
 
+    duplicate_name = (
+        db.query(User)
+        .filter(func.lower(User.display_name) == payload.display_name.lower(), User.id != user.id)
+        .first()
+    )
+    if duplicate_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Name ist bereits vergeben. Bitte einen anderen Namen wählen",
+        )
+
     user.display_name = payload.display_name
+    user.ha_notify_service = payload.ha_notify_service
+    if payload.ha_notifications_enabled is not None:
+        user.ha_notifications_enabled = payload.ha_notifications_enabled
+    if payload.ha_child_new_task is not None:
+        user.ha_child_new_task = payload.ha_child_new_task
+    if payload.ha_manager_task_submitted is not None:
+        user.ha_manager_task_submitted = payload.ha_manager_task_submitted
+    if payload.ha_manager_reward_requested is not None:
+        user.ha_manager_reward_requested = payload.ha_manager_reward_requested
+    if payload.ha_task_due_reminder is not None:
+        user.ha_task_due_reminder = payload.ha_task_due_reminder
     user.is_active = payload.is_active
     if payload.password:
         user.password_hash = hash_password(payload.password)
     membership.role = payload.role
 
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="member.updated",
+        payload={"user_id": user.id, "role": payload.role.value, "is_active": user.is_active},
+    )
     db.commit()
     db.refresh(membership)
     db.refresh(user)
 
-    return FamilyMemberOut(
-        membership_id=membership.id,
-        family_id=membership.family_id,
-        user_id=user.id,
-        display_name=user.display_name,
-        email=user.email,
-        is_active=user.is_active,
-        role=membership.role,
-        created_at=membership.created_at,
-    )
+    return _serialize_family_member(membership, user, membership_context.role, current_user.id)
 
 
 @router.delete("/{family_id}/members/{user_id}")
@@ -201,6 +287,13 @@ def delete_member(
                 detail="Mindestens ein Admin muss in der Familie verbleiben",
             )
 
+    user_id_value = membership.user_id
     db.delete(membership)
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="member.deleted",
+        payload={"user_id": user_id_value},
+    )
     db.commit()
     return {"deleted": True}
