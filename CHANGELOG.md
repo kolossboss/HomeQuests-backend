@@ -1,5 +1,13 @@
 # Changelog
 
+## v2026.03.18-01 (2026-03-18)
+
+- Backend-Basis auf schlankere API-Variante zurückgeführt: mehrere erweiterte HomeQuests-Module/Validierungen reduziert und Kern-Endpoints vereinfacht.
+- Auth/Family-Flows vereinfacht: Cookie-Logik, erweiterte Rollen-/Privatsphäre-Serialisierung und diverse Zusatzprüfungen entfernt.
+- Task-/Reward-/Schema-Logik deutlich ausgedünnt (Rollback auf kompakteres Modell ohne viele Spezialfälle/Worker-Hooks).
+- Settings vereinfacht: reduzierte Konfigurationsoberfläche, kürzere Token-Laufzeit, Datenbank-Defaults wieder auf `familienplaner`.
+- Dependency-Bereinigung: `requirements.txt` reduziert.
+
 ## v2026.03.17-04 (2026-03-17)
 
 - Mitglieder-Modal-Fix: beim Schließen der System-Mitgliederverwaltung wird der eingebettete Members-Tab explizit aus `active` genommen, damit er außerhalb des Modals nicht sichtbar bleibt.
