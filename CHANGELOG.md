@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.19-01 (2026-03-19)
+
+- Neue API-Aktion: `POST /tasks/{task_id}/delete-instance` löscht gezielt nur eine konkrete Aufgabeninstanz (statt die gesamte Serie).
+- Wiederkehrende Aufgaben: bei Instanz-Löschung wird je nach Typ automatisch die nächste Aufgabe erzeugt oder bei flexiblen Wochenaufgaben die Zyklus-Sperre gesetzt.
+- Dashboard-Modal angepasst: Manager-Löschaktion nutzt jetzt `delete-instance`, damit Serien-Aufgaben korrekt fortgeführt werden.
+
 ## v2026.03.17-04 (2026-03-17)
 
 - Mitglieder-Modal-Fix: beim Schließen der System-Mitgliederverwaltung wird der eingebettete Members-Tab explizit aus `active` genommen, damit er außerhalb des Modals nicht sichtbar bleibt.

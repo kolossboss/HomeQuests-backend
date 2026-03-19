@@ -4631,6 +4631,15 @@ async function deleteTask(taskId) {
   await refreshFamilyData();
 }
 
+async function deleteTaskInstance(taskId) {
+  if (!isManagerRole()) return;
+  await api(`/tasks/${taskId}/delete-instance`, { method: "POST" });
+  if (state.selectedTaskId === taskId) {
+    closeTaskEditor();
+  }
+  await refreshFamilyData();
+}
+
 async function setTaskActive(taskId, is_active) {
   if (!isManagerRole()) return;
   await api(`/tasks/${taskId}/active`, {
@@ -5032,7 +5041,7 @@ async function handleDashboardModalActionClick(event) {
     if (!confirmed) return;
 
     try {
-      await deleteTask(taskId);
+      await deleteTaskInstance(taskId);
       refreshDashboardModalContext();
     } catch (error) {
       log("Aufgabe im Kinder-Popup löschen Fehler", { error: error.message });

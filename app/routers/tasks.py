@@ -1358,6 +1358,46 @@ def delete_task(
     return {"deleted": True}
 
 
+@router.post("/tasks/{task_id}/delete-instance")
+def delete_task_instance(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
+
+    membership_context = get_membership_or_403(db, task.family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nur offene Aufgaben können hier gelöscht werden")
+
+    next_task: Task | None = None
+    if task.recurrence_type != RecurrenceTypeEnum.none.value and task.is_active:
+        if _is_weekly_flexible_task(task):
+            _block_weekly_flexible_generation_for_current_cycle(db, task, current_user.id)
+        else:
+            next_task = _create_next_recurring_task(db, task, current_user.id)
+
+    task_id_value = task.id
+    family_id_value = task.family_id
+    db.delete(task)
+    emit_live_event(
+        db,
+        family_id=family_id_value,
+        event_type="task.deleted",
+        payload={
+            "task_id": task_id_value,
+            "instance_only": True,
+            "next_task_id": next_task.id if next_task else None,
+        },
+    )
+    db.commit()
+    return {"deleted": True, "instance_only": True, "next_task_id": next_task.id if next_task else None}
+
+
 @router.post("/tasks/{task_id}/submit", response_model=TaskOut)
 def submit_task(
     task_id: int,
