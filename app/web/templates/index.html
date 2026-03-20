@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260317j" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260320e" />
   </head>
   <body>
     <main class="container">
@@ -19,9 +19,10 @@
       </header>
 
       <section class="panel" id="auth-panel">
+        <p id="auth-status" class="auth-status hidden" role="alert"></p>
         <div id="login-section" class="hidden">
           <h2>Login</h2>
-          <p class="muted auth-hint">Bei neuen Konten gilt: Passwort mit mindestens 8 Zeichen.</p>
+          <p class="muted auth-hint">Bei neuen Konten gilt: Passwort mit mindestens 3 Zeichen.</p>
           <div class="form-grid auth-form">
             <label>Username or Email<input id="login-email" type="text" placeholder="Username or Email" /></label>
             <label>Passwort<input id="login-password" type="password" placeholder="Passwort" /></label>
@@ -32,11 +33,11 @@
         <div id="bootstrap-section" class="hidden">
           <h2>Erstinitialisierung</h2>
           <p class="muted">Nur beim allerersten Start notwendig. Der Haushalt wird automatisch angelegt.</p>
-          <p class="muted auth-hint auth-hint-strong">Passwort-Regel: mindestens 8 Zeichen, zweimal identisch eingeben.</p>
+          <p class="muted auth-hint auth-hint-strong">Passwort-Regel: mindestens 3 Zeichen, zweimal identisch eingeben.</p>
           <div class="form-grid auth-form">
             <label>Name<input id="boot-name" type="text" placeholder="Admin Name" /></label>
             <label>E-Mail (optional)<input id="boot-email" type="email" placeholder="optional@example.com" /></label>
-            <label>Passwort<input id="boot-password" type="password" placeholder="mind. 8 Zeichen" /></label>
+            <label>Passwort<input id="boot-password" type="password" placeholder="mind. 3 Zeichen" /></label>
             <label>Passwort wiederholen<input id="boot-password-confirm" type="password" placeholder="Passwort wiederholen" /></label>
             <label class="checkbox-line"><input id="boot-password-visible" type="checkbox" /> Passwort anzeigen</label>
           </div>
@@ -742,18 +743,21 @@
           </div>
 
           <div id="reward-redeem-section" class="section-block">
-            <h4 id="reward-redeem-heading">Belohnung anfragen</h4>
+            <h4 id="reward-redeem-heading">Belohnungen einlösen</h4>
             <p class="muted">Deine Punkte: <strong id="child-reward-points">-</strong></p>
-            <div class="form-grid compact">
+            <div id="child-reward-cards" class="request-card-list"></div>
+            <div id="reward-redeem-legacy" class="hidden">
+              <div class="form-grid compact">
               <label>Belohnung
                 <select id="redeem-reward-select"></select>
               </label>
               <label id="redeem-points-label">Punkte beitragen<input id="redeem-points" type="number" min="1" value="10" /></label>
               <label>Kommentar (optional)<input id="redeem-comment" type="text" /></label>
+              </div>
+              <p id="reward-contribution-status" class="muted"></p>
+              <div id="reward-contribution-list" class="request-card-list"></div>
+              <button id="redeem-reward-btn">Einlösung anfragen</button>
             </div>
-            <p id="reward-contribution-status" class="muted"></p>
-            <div id="reward-contribution-list" class="request-card-list"></div>
-            <button id="redeem-reward-btn">Einlösung anfragen</button>
           </div>
 
           <div id="reward-review-cards-section" class="section-block">
@@ -761,7 +765,12 @@
             <div id="manager-reward-review-cards" class="request-card-list"></div>
           </div>
 
-          <div class="section-block">
+          <div id="reward-manager-cards-section" class="section-block hidden">
+            <h4>Belohnungen</h4>
+            <div id="reward-manager-cards" class="request-card-list"></div>
+          </div>
+
+          <div id="rewards-table-section" class="section-block">
             <h4>Belohnungsliste</h4>
             <div class="table-wrap">
               <table>
@@ -1051,6 +1060,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260317j"></script>
+    <script src="/static/app.js?v=20260320e"></script>
   </body>
 </html>

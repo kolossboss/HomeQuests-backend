@@ -1371,8 +1371,11 @@ def delete_task_instance(
     membership_context = get_membership_or_403(db, task.family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
 
-    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nur offene Aufgaben können hier gelöscht werden")
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.submitted, TaskStatusEnum.missed_submitted}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aufgabe kann in diesem Status nicht als einzelne Instanz gelöscht werden",
+        )
 
     next_task: Task | None = None
     if task.recurrence_type != RecurrenceTypeEnum.none.value and task.is_active:
