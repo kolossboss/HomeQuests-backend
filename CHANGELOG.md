@@ -1,5 +1,12 @@
 # Changelog
 
+## v2026.03.20-01 (2026-03-20)
+
+- Aufgaben-Loeschung verfeinert: `delete-instance` akzeptiert jetzt auch eingereichte/verpasste Aufgaben und loescht nur die einzelne Instanz.
+- Validierung gelockert: Passwort-Mindestlaenge fuer Bootstrap/Mitgliederverwaltung auf 3 Zeichen reduziert.
+- Belohnungen/Aufgaben-UI erweitert: neue Karten- und Detailansichten, Rueckmeldungen im Auth-Bereich und zusaetzliche Manager-/Child-Abläufe.
+- WebUI-Assets: Cache-Buster auf `styles.css?v=20260320e` und `app.js?v=20260320e` angehoben.
+
 ## v2026.03.19-01 (2026-03-19)
 
 - Neue API-Aktion: `POST /tasks/{task_id}/delete-instance` löscht gezielt nur eine konkrete Aufgabeninstanz (statt die gesamte Serie).

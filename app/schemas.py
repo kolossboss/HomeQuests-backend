@@ -29,8 +29,8 @@ class LoginRequest(BaseModel):
 class BootstrapRequest(BaseModel):
     email: EmailStr | None = None
     display_name: str = Field(min_length=2, max_length=120)
-    password: str = Field(min_length=8, max_length=128)
-    password_confirm: str = Field(min_length=8, max_length=128)
+    password: str = Field(min_length=3, max_length=128)
+    password_confirm: str = Field(min_length=3, max_length=128)
 
     @model_validator(mode="after")
     def validate_passwords(self):
@@ -128,8 +128,8 @@ class MemberCreate(BaseModel):
     ha_manager_task_submitted: bool = True
     ha_manager_reward_requested: bool = True
     ha_task_due_reminder: bool = True
-    password: str | None = Field(default=None, min_length=8, max_length=128)
-    password_confirm: str | None = Field(default=None, min_length=8, max_length=128)
+    password: str | None = Field(default=None, min_length=3, max_length=128)
+    password_confirm: str | None = Field(default=None, min_length=3, max_length=128)
     role: RoleEnum
 
     @field_validator("ha_notify_service", mode="before")
@@ -157,7 +157,7 @@ class MemberUpdate(BaseModel):
     ha_task_due_reminder: bool | None = None
     role: RoleEnum
     is_active: bool = True
-    password: str | None = Field(default=None, min_length=8, max_length=128)
+    password: str | None = Field(default=None, min_length=3, max_length=128)
 
     @field_validator("ha_notify_service", mode="before")
     @classmethod

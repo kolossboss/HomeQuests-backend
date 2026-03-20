@@ -10,6 +10,8 @@ const state = {
   events: [],
   rewards: [],
   redemptions: [],
+  rewardContributionProgressById: {},
+  expandedChildRewardId: null,
   selectedRewardContribution: null,
   pointsBalances: [],
   pointsHistory: [],
@@ -29,8 +31,10 @@ const state = {
   specialTasksSearch: "",
   taskEditorDirty: false,
   specialTaskEditorDirty: false,
+  rewardEditorDirty: false,
   taskEditorInitialSnapshot: "",
   specialTaskEditorInitialSnapshot: "",
+  rewardEditorInitialSnapshot: "",
   dashboardModalContext: null,
 };
 
@@ -63,13 +67,14 @@ const FIELD_ERROR_MESSAGES = {
   "login-password": "Bitte Passwort eingeben.",
   "boot-name": "Bitte einen Namen eingeben.",
   "boot-email": "Bitte eine gültige E-Mail-Adresse eingeben.",
-  "boot-password": "Passwort muss mindestens 8 Zeichen haben.",
+  "boot-password": "Passwort muss mindestens 3 Zeichen haben.",
   "boot-password-confirm": "Passwörter müssen identisch sein.",
   "member-name": "Name ist erforderlich.",
   "member-email": "Bitte eine gültige E-Mail-Adresse eingeben.",
-  "member-password": "Passwort muss mindestens 8 Zeichen haben.",
+  "member-password": "Passwort muss mindestens 3 Zeichen haben.",
   "member-password-confirm": "Passwörter müssen identisch sein.",
   "member-editor-name": "Name ist erforderlich.",
+  "member-editor-password": "Passwort muss mindestens 3 Zeichen haben.",
   "task-title": "Titel ist erforderlich.",
   "task-assignee": "Bitte zuständiges Mitglied auswählen.",
   "task-points": "Bitte gültige Punkte eingeben.",
@@ -230,6 +235,24 @@ function hideUiStatus() {
   banner.classList.add("hidden");
   banner.textContent = "";
   banner.classList.remove("is-info", "is-success", "is-error");
+}
+
+function clearAuthStatus() {
+  const target = byId("auth-status");
+  if (!target) return;
+  target.textContent = "";
+  target.classList.add("hidden");
+}
+
+function showAuthStatus(message) {
+  const target = byId("auth-status");
+  if (!target) return;
+  if (!message) {
+    clearAuthStatus();
+    return;
+  }
+  target.textContent = String(message);
+  target.classList.remove("hidden");
 }
 
 function showUiStatus(type, message, { autoHideMs = 5200 } = {}) {
@@ -753,6 +776,16 @@ function specialTaskEditorSnapshot() {
   });
 }
 
+function rewardEditorSnapshot() {
+  return JSON.stringify({
+    title: byId("reward-editor-title")?.value || "",
+    description: byId("reward-editor-description")?.value || "",
+    cost_points: byId("reward-editor-cost")?.value || "",
+    is_shareable: byId("reward-editor-shareable")?.value || "",
+    is_active: byId("reward-editor-active")?.value || "",
+  });
+}
+
 function updateTaskEditButtons() {
   const isOpen = isSectionOpen("task-editor-section");
   document.querySelectorAll("#tasks-manager-cards button[data-task-action=\"edit\"]").forEach((button) => {
@@ -777,6 +810,25 @@ function updateSpecialTaskEditButtons() {
   });
 }
 
+function updateRewardEditButtons() {
+  const isOpen = isSectionOpen("reward-editor-section");
+  const applyLabel = (button, rewardIdRaw) => {
+    const rewardId = Number(rewardIdRaw || 0);
+    if (!isOpen || !rewardId || rewardId !== state.selectedRewardId) {
+      button.textContent = "Bearbeiten";
+      return;
+    }
+    button.textContent = state.rewardEditorDirty ? "Speichern" : "Schließen";
+  };
+
+  document.querySelectorAll("#reward-manager-cards button[data-manager-reward-action=\"edit\"]").forEach((button) => {
+    applyLabel(button, button.dataset.rewardId);
+  });
+  document.querySelectorAll("#rewards-body button[data-reward-action=\"edit\"]").forEach((button) => {
+    applyLabel(button, button.dataset.rewardId);
+  });
+}
+
 function syncTaskEditorDirtyState() {
   if (!state.selectedTaskId || !isSectionOpen("task-editor-section")) {
     state.taskEditorDirty = false;
@@ -793,6 +845,15 @@ function syncSpecialTaskEditorDirtyState() {
     state.specialTaskEditorDirty = specialTaskEditorSnapshot() !== state.specialTaskEditorInitialSnapshot;
   }
   updateSpecialTaskEditButtons();
+}
+
+function syncRewardEditorDirtyState() {
+  if (!state.selectedRewardId || !isSectionOpen("reward-editor-section")) {
+    state.rewardEditorDirty = false;
+  } else {
+    state.rewardEditorDirty = rewardEditorSnapshot() !== state.rewardEditorInitialSnapshot;
+  }
+  updateRewardEditButtons();
 }
 
 function parseDateSafe(value) {
@@ -1147,6 +1208,9 @@ async function api(path, { method = "GET", body = null } = {}) {
     });
   } catch (error) {
     showUiStatus("error", "Server ist gerade nicht erreichbar. Bitte erneut versuchen.");
+    if (!state.me && authPanel && !authPanel.classList.contains("hidden")) {
+      showAuthStatus("Server ist gerade nicht erreichbar. Bitte erneut versuchen.");
+    }
     throw error;
   }
 
@@ -1164,6 +1228,9 @@ async function api(path, { method = "GET", body = null } = {}) {
     const detail = payload?.detail || raw || `HTTP ${response.status}`;
     const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
     showUiStatus("error", detailText, { autoHideMs: 8000 });
+    if (!state.me && authPanel && !authPanel.classList.contains("hidden")) {
+      showAuthStatus(detailText);
+    }
     throw new Error(detailText);
   }
   return payload;
@@ -1705,6 +1772,7 @@ function renderDashboardTaskCards(tasks, emptyText, options = {}) {
               ? `<button class="btn-secondary" data-dashboard-task-review-action="rejected_delete" data-task-id="${task.id}">Ablehnen & löschen</button>`
               : `<button class="btn-secondary" data-dashboard-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>`
           }
+          <button class="btn-danger" data-dashboard-task-review-action="delete_instance" data-task-id="${task.id}">Löschen</button>
         </div>
       </article>`;
     }
@@ -1911,7 +1979,7 @@ function openManagerTaskModal(mode) {
   if (mode === "overdue") {
     openDashboardDetailModal(
       "Überfällige Aufgaben",
-      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(overdueTasks, "Keine überfälligen Aufgaben.", { overdue: true })}</div>`,
+      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(overdueTasks, "Keine überfälligen Aufgaben.", { overdue: true, allowManagerDelete: true })}</div>`,
       "Offene Aufgaben mit überschrittener Fälligkeit",
       { type: "manager", view: "overdue" }
     );
@@ -2086,6 +2154,9 @@ function applyRoleVisibility() {
   closeRewardEditor();
   toggleHidden("reward-redeem-section", !child);
   toggleHidden("reward-review-cards-section", child);
+  if (!child) {
+    state.expandedChildRewardId = null;
+  }
 
   toggleHidden("points-manager-block", child);
   closePointsAdjust();
@@ -2105,6 +2176,7 @@ async function initAuthPanel() {
   authPanel.classList.remove("hidden");
   appPanel.classList.add("hidden");
   hideUiStatus();
+  clearAuthStatus();
   toggleHidden("login-section", true);
   toggleHidden("bootstrap-section", true);
   if (byId("boot-password-visible")) byId("boot-password-visible").checked = false;
@@ -2666,6 +2738,7 @@ function renderManagerTaskReviewCards() {
                 ? `<button class="btn-secondary" data-task-review-action="rejected_delete" data-task-id="${task.id}">Ablehnen & löschen</button>`
                 : `<button class="btn-secondary" data-task-review-action="rejected" data-task-id="${task.id}">Ablehnen</button>`
             }
+            <button class="btn-danger" data-task-review-action="delete_instance" data-task-id="${task.id}">Löschen</button>
           </div>
         </article>`;
       })
@@ -2940,8 +3013,48 @@ function renderEvents() {
   applyMobileLabelsToTableBodies(["events-body"]);
 }
 
+function renderManagerRewardCards() {
+  const section = byId("reward-manager-cards-section");
+  const target = byId("reward-manager-cards");
+  if (!section || !target) return;
+
+  if (!isManagerRole()) {
+    toggleHidden("reward-manager-cards-section", true);
+    target.innerHTML = "";
+    return;
+  }
+
+  toggleHidden("reward-manager-cards-section", false);
+  if (!state.rewards.length) {
+    target.innerHTML = renderEmptyState("Keine Belohnungen", "Lege die erste Belohnung direkt oben an.");
+    return;
+  }
+
+  const sortedRewards = [...state.rewards].sort((a, b) =>
+    String(a.title || "").localeCompare(String(b.title || ""), "de")
+  );
+
+  target.innerHTML = sortedRewards
+    .map((reward) => `<article class="request-card entity-card tone-blue reward-manager-card" data-manager-reward-id="${reward.id}">
+      <p class="request-card-title">${safeHtmlText(reward.title)}</p>
+      ${renderCardMetaGrid([
+        { label: "Beschreibung", value: reward.description || "Ohne Beschreibung" },
+        { label: "Kosten", value: `${reward.cost_points} Punkte` },
+        { label: "Aufteilbar", value: reward.is_shareable ? "ja" : "nein" },
+        { label: "Status", value: reward.is_active ? "aktiv" : "deaktiviert" },
+      ], { className: "request-card-kv" })}
+      <div class="request-card-actions">
+        <button data-manager-reward-action="edit" data-reward-id="${reward.id}">Bearbeiten</button>
+        <button class="btn-danger" data-manager-reward-action="delete" data-reward-id="${reward.id}">Löschen</button>
+      </div>
+    </article>`)
+    .join("");
+}
+
 function renderRewards() {
   const manager = isManagerRole();
+  toggleHidden("rewards-table-section", manager || isChildRole());
+  renderManagerRewardCards();
   byId("rewards-body").innerHTML = state.rewards.length
     ? state.rewards
     .map((reward) => {
@@ -2979,11 +3092,190 @@ function renderRewards() {
     if (!selectedRewardExists) {
       closeRewardEditor();
     } else {
-      fillRewardEditorForm();
+      if (!isSectionOpen("reward-editor-section") || !state.rewardEditorDirty) {
+        fillRewardEditorForm();
+        state.rewardEditorInitialSnapshot = rewardEditorSnapshot();
+        state.rewardEditorDirty = false;
+      }
     }
   }
 
+  updateRewardEditButtons();
+  renderChildRewardCards();
   renderSelectedRewardContribution();
+}
+
+const REWARD_PROGRESS_COLORS = [
+  "#0A84FF",
+  "#30D158",
+  "#FF9F0A",
+  "#BF5AF2",
+  "#FF375F",
+  "#64D2FF",
+  "#FFD60A",
+  "#5E5CE6",
+];
+
+function getPendingRedemptionForReward(rewardId) {
+  return state.redemptions.find((entry) => entry.reward_id === rewardId && entry.status === "pending") || null;
+}
+
+function getRewardContributionProgress(rewardId) {
+  if (!state.rewardContributionProgressById) return null;
+  return state.rewardContributionProgressById[rewardId] || null;
+}
+
+function rewardProgressColor(index) {
+  return REWARD_PROGRESS_COLORS[index % REWARD_PROGRESS_COLORS.length];
+}
+
+function aggregateRewardContributionsByUser(progress) {
+  if (!progress || !Array.isArray(progress.contributions)) return [];
+  const byUser = new Map();
+  progress.contributions.forEach((entry) => {
+    if (!entry || !entry.user_id) return;
+    const key = Number(entry.user_id);
+    const current = byUser.get(key);
+    if (!current) {
+      byUser.set(key, {
+        user_id: key,
+        user_name: entry.user_name || `Nutzer ${key}`,
+        points_reserved: Number(entry.points_reserved || 0),
+      });
+      return;
+    }
+    current.points_reserved += Number(entry.points_reserved || 0);
+  });
+  return Array.from(byUser.values());
+}
+
+function rewardProgressBarMarkup(progress) {
+  const grouped = aggregateRewardContributionsByUser(progress);
+  if (!progress || !grouped.length) {
+    return `<div class="reward-progress-wrap">
+      <div class="reward-progress-bar">
+        <span class="reward-progress-segment reward-progress-segment-empty" style="width:100%;"></span>
+      </div>
+      <div class="reward-progress-labels">
+        <span class="reward-progress-label">Noch keine Beiträge</span>
+      </div>
+    </div>`;
+  }
+  const segments = grouped
+    .map((entry, index) => {
+      const width = Math.max(Math.min((entry.points_reserved / Math.max(progress.cost_points || 1, 1)) * 100, 100), 0);
+      return `<span class="reward-progress-segment" style="width:${width.toFixed(2)}%; background:${rewardProgressColor(index)};"></span>`;
+    })
+    .join("");
+  const labels = grouped
+    .map(
+      (entry, index) =>
+        `<span class="reward-progress-label"><span class="reward-progress-dot" style="background:${rewardProgressColor(index)};"></span>${safeHtmlText(entry.user_name)}: ${entry.points_reserved}</span>`
+    )
+    .join("");
+  return `<div class="reward-progress-wrap">
+    <div class="reward-progress-bar">${segments}</div>
+    <div class="reward-progress-labels">${labels}</div>
+  </div>`;
+}
+
+function renderChildRewardCards() {
+  const listEl = byId("child-reward-cards");
+  if (!listEl) return;
+  if (!isChildRole()) {
+    listEl.innerHTML = "";
+    return;
+  }
+
+  const rewards = state.rewards
+    .filter((reward) => reward.is_active !== false)
+    .sort((a, b) => String(a.title || "").localeCompare(String(b.title || ""), "de"));
+  if (!rewards.length) {
+    listEl.innerHTML = renderEmptyState("Keine Belohnungen", "Es sind aktuell keine aktiven Belohnungen vorhanden.");
+    return;
+  }
+
+  const ownBalance = getOwnBalance();
+  listEl.innerHTML = rewards
+    .map((reward) => {
+      const pendingRedemption = getPendingRedemptionForReward(reward.id);
+      const progress = reward.is_shareable ? getRewardContributionProgress(reward.id) : null;
+      const groupedContributions = aggregateRewardContributionsByUser(progress);
+      const missingPoints = Math.max(reward.cost_points - Number(ownBalance || 0), 0);
+      const insufficientOwnPoints = ownBalance !== null && ownBalance < reward.cost_points;
+      const shareableStateText = progress
+        ? `Reserviert: ${progress.total_reserved}/${progress.cost_points} • Fehlen: ${progress.remaining_points}`
+        : "Sammelstatus wird geladen ...";
+      const nonShareableStateText = pendingRedemption
+        ? "Anfrage läuft bereits (wartet auf Bestätigung)."
+        : insufficientOwnPoints
+          ? `Dir fehlen ${missingPoints} Punkte.`
+          : `Direkt einlösbar mit ${reward.cost_points} Punkten.`;
+      const statusText = reward.is_shareable ? shareableStateText : nonShareableStateText;
+      const pendingForShareable = Boolean(progress && progress.pending_redemption_id);
+      const canContribute = Boolean(
+        reward.is_shareable &&
+          progress &&
+          !progress.pending_redemption_id &&
+          progress.remaining_points > 0 &&
+          (ownBalance === null || ownBalance > 0)
+      );
+      const maxContribution = reward.is_shareable && progress
+        ? Math.max(
+          Math.min(progress.remaining_points, ownBalance === null ? progress.remaining_points : Number(ownBalance)),
+          0
+        )
+        : 0;
+      const actionLabel = reward.is_shareable ? "Punkte beitragen" : "Einlösung anfragen";
+
+      return `<article class="request-card tone-blue reward-child-card is-expanded" data-reward-card-id="${reward.id}">
+        <div class="reward-child-card-head">
+          <p class="request-card-title">${safeHtmlText(reward.title)}</p>
+          <span class="reward-card-cost">${reward.cost_points} Punkte</span>
+        </div>
+        <p class="request-card-meta">${safeHtmlText(reward.description || "Ohne Beschreibung")}</p>
+        <p class="reward-card-status">${safeHtmlText(statusText)}</p>
+        ${reward.is_shareable ? rewardProgressBarMarkup(progress) : ""}
+        <div class="reward-card-detail">
+          ${reward.is_shareable && progress ? `<div class="reward-card-detail-list">
+            ${groupedContributions.length
+              ? groupedContributions
+                .map((entry) => `<p class="reward-card-detail-item">${safeHtmlText(entry.user_name)}: ${entry.points_reserved} Punkte reserviert</p>`)
+                .join("")
+              : '<p class="reward-card-detail-item">Noch keine Beiträge</p>'}
+          </div>` : ""}
+          <div class="reward-card-form-grid">
+            ${reward.is_shareable
+              ? `<label>Dein Beitrag (Punkte)
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value="${maxContribution > 0 ? maxContribution : ""}"
+                    data-reward-contribution-input="${reward.id}"
+                    ${canContribute ? "" : "disabled"}
+                  />
+                </label>`
+              : ""}
+            <label>Kommentar (optional)
+              <input type="text" data-reward-comment-input="${reward.id}" maxlength="255" placeholder="Optionaler Kommentar" />
+            </label>
+          </div>
+          <div class="request-card-actions">
+            <button
+              class="btn-success"
+              data-reward-card-action="submit"
+              data-reward-id="${reward.id}"
+              ${reward.is_shareable
+                ? (!canContribute ? "disabled" : "")
+                : (pendingRedemption || insufficientOwnPoints ? "disabled" : "")}
+            >${actionLabel}</button>
+          </div>
+          ${reward.is_shareable && pendingForShareable ? '<p class="reward-card-status">Für diese Belohnung läuft bereits eine Anfrage.</p>' : ""}
+        </div>
+      </article>`;
+    })
+    .join("");
 }
 
 function contributionStatusLabel(status) {
@@ -3089,6 +3381,7 @@ function renderSelectedRewardContribution() {
 }
 
 async function refreshSelectedRewardContribution() {
+  if (byId("reward-redeem-legacy")?.classList.contains("hidden")) return;
   if (!isChildRole()) return;
   const familyId = getSelectedFamilyId();
   const rewardId = Number(byId("redeem-reward-select").value || 0);
@@ -3107,6 +3400,41 @@ async function refreshSelectedRewardContribution() {
   renderSelectedRewardContribution();
 }
 
+async function refreshChildRewardContributionMap(familyId = null) {
+  if (!isChildRole()) {
+    state.rewardContributionProgressById = {};
+    return;
+  }
+  const selectedFamilyId = familyId || getSelectedFamilyId();
+  if (!selectedFamilyId) {
+    state.rewardContributionProgressById = {};
+    return;
+  }
+
+  const shareableRewards = state.rewards.filter((entry) => entry.is_active !== false && entry.is_shareable);
+  if (!shareableRewards.length) {
+    state.rewardContributionProgressById = {};
+    return;
+  }
+
+  const resultMap = {};
+  const results = await Promise.all(
+    shareableRewards.map(async (reward) => {
+      try {
+        const progress = await api(`/families/${selectedFamilyId}/rewards/${reward.id}/contributions`);
+        return [reward.id, progress];
+      } catch (error) {
+        log("Belohnungs-Sammelstand Fehler", { reward_id: reward.id, error: error.message });
+        return [reward.id, null];
+      }
+    })
+  );
+  results.forEach(([rewardId, progress]) => {
+    if (progress) resultMap[rewardId] = progress;
+  });
+  state.rewardContributionProgressById = resultMap;
+}
+
 function fillRewardEditorForm() {
   const rewardId = state.selectedRewardId;
   const reward = state.rewards.find((entry) => entry.id === rewardId);
@@ -3122,14 +3450,20 @@ function fillRewardEditorForm() {
 function openRewardEditor(rewardId, triggerButton = null) {
   state.selectedRewardId = rewardId;
   fillRewardEditorForm();
+  state.rewardEditorInitialSnapshot = rewardEditorSnapshot();
+  state.rewardEditorDirty = false;
   mountInlineEditorSectionBelowTrigger("reward-editor-section", triggerButton);
   toggleHidden("reward-editor-section", false);
+  updateRewardEditButtons();
 }
 
 function closeRewardEditor() {
   state.selectedRewardId = null;
+  state.rewardEditorInitialSnapshot = "";
+  state.rewardEditorDirty = false;
   toggleHidden("reward-editor-section", true);
   restoreInlineEditorSection("reward-editor-section");
+  updateRewardEditButtons();
   flushDeferredLiveRefresh("reward_editor_closed");
 }
 
@@ -3270,10 +3604,13 @@ async function loadRewards() {
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
   state.rewards = await api(`/families/${familyId}/rewards`);
-  renderRewards();
   if (isChildRole()) {
-    await refreshSelectedRewardContribution();
+    await refreshChildRewardContributionMap(familyId);
+  } else {
+    state.rewardContributionProgressById = {};
+    state.expandedChildRewardId = null;
   }
+  renderRewards();
 }
 
 async function loadRedemptions() {
@@ -3281,6 +3618,9 @@ async function loadRedemptions() {
   if (!familyId) return;
   state.redemptions = await api(`/families/${familyId}/redemptions`);
   renderRedemptions();
+  if (isChildRole()) {
+    renderChildRewardCards();
+  }
 }
 
 async function loadPointsBalances() {
@@ -3289,6 +3629,9 @@ async function loadPointsBalances() {
   state.pointsBalances = await api(`/families/${familyId}/points/balances`);
   renderDashboardPoints();
   renderPointsUsers();
+  if (isChildRole()) {
+    renderChildRewardCards();
+  }
 }
 
 async function loadPointsHistory(userId) {
@@ -3904,6 +4247,8 @@ async function refreshFamilyData({ silent = false } = {}) {
     } else {
       byId("child-reward-points").textContent = "-";
       byId("stat-child-points-value").textContent = "-";
+      state.rewardContributionProgressById = {};
+      state.expandedChildRewardId = null;
       state.selectedRewardContribution = null;
       if (
         state.selectedPointsUserId &&
@@ -3980,6 +4325,7 @@ async function refreshSession() {
 
 async function login() {
   clearInvalid(["login-email", "login-password"]);
+  clearAuthStatus();
   const loginInput = byId("login-email");
   const passwordInput = byId("login-password");
 
@@ -3997,17 +4343,20 @@ async function login() {
   }
   if (invalid) {
     showUiStatus("error", "Bitte Login und Passwort eingeben.");
+    showAuthStatus("Bitte Username/E-Mail und Passwort eingeben.");
     log("Login: Bitte Pflichtfelder korrekt ausfuellen");
     return;
   }
 
   await api("/auth/login", { method: "POST", body: { login: loginValue, password } });
+  clearAuthStatus();
   await refreshSession();
   showUiStatus("success", "Erfolgreich angemeldet.");
 }
 
 async function bootstrap() {
   clearInvalid(["boot-name", "boot-email", "boot-password", "boot-password-confirm"]);
+  clearAuthStatus();
   const nameInput = byId("boot-name");
   const emailInput = byId("boot-email");
   const passwordInput = byId("boot-password");
@@ -4030,18 +4379,19 @@ async function bootstrap() {
     invalid = true;
     validationMessages.push("E-Mail ist ungültig");
   }
-  if (password.length < 8) {
+  if (password.length < 3) {
     setInvalid(passwordInput, true);
     invalid = true;
-    validationMessages.push("Passwort muss mindestens 8 Zeichen haben");
+    validationMessages.push("Passwort muss mindestens 3 Zeichen haben");
   }
-  if (password !== password_confirm || password_confirm.length < 8) {
+  if (password !== password_confirm || password_confirm.length < 3) {
     setInvalid(passwordConfirmInput, true);
     invalid = true;
-    validationMessages.push("Passwort-Bestätigung muss identisch sein und mindestens 8 Zeichen haben");
+    validationMessages.push("Passwort-Bestätigung muss identisch sein und mindestens 3 Zeichen haben");
   }
   if (invalid) {
     showUiStatus("error", "Bitte die Initialisierungseingaben prüfen.");
+    showAuthStatus(validationMessages.join(" • "));
     log("Initialisierung: Bitte Eingaben prüfen", { details: validationMessages });
     return;
   }
@@ -4051,6 +4401,7 @@ async function bootstrap() {
     body: { display_name, email: email || null, password, password_confirm },
   });
 
+  clearAuthStatus();
   await refreshSession();
   showUiStatus("success", "Initialisierung abgeschlossen.");
 }
@@ -4073,6 +4424,8 @@ async function logout() {
   state.selectedSpecialTaskTemplateId = null;
   state.selectedMemberId = null;
   state.selectedRewardId = null;
+  state.rewardContributionProgressById = {};
+  state.expandedChildRewardId = null;
   state.selectedRewardContribution = null;
   state.selectedPointsUserId = null;
   state.haSettings = null;
@@ -4086,8 +4439,10 @@ async function logout() {
   state.specialTasksSearch = "";
   state.taskEditorDirty = false;
   state.specialTaskEditorDirty = false;
+  state.rewardEditorDirty = false;
   state.taskEditorInitialSnapshot = "";
   state.specialTaskEditorInitialSnapshot = "";
+  state.rewardEditorInitialSnapshot = "";
   initAuthPanel().catch((error) => log("Auth-Ansicht Fehler", { error: error.message }));
 }
 
@@ -4116,11 +4471,11 @@ async function createMember() {
     setInvalid(emailInput, true);
     invalid = true;
   }
-  if (password.length < 8) {
+  if (password.length < 3) {
     setInvalid(passwordInput, true);
     invalid = true;
   }
-  if (password !== password_confirm || password_confirm.length < 8) {
+  if (password !== password_confirm || password_confirm.length < 3) {
     setInvalid(passwordConfirmInput, true);
     invalid = true;
   }
@@ -4173,7 +4528,7 @@ async function updateMember() {
     setInvalid(nameInput, true);
     invalid = true;
   }
-  if (password && password.length < 8) {
+  if (password && password.length < 3) {
     setInvalid(passwordInput, true);
     invalid = true;
   }
@@ -4800,42 +5155,82 @@ async function deleteReward(rewardId) {
   await refreshFamilyData();
 }
 
-async function redeemReward() {
-  const rewardId = Number(byId("redeem-reward-select").value);
-  if (!rewardId) {
-    setInvalid(byId("redeem-reward-select"), true);
+async function handleManagerRewardAction(action, rewardId, triggerElement = null) {
+  if (!rewardId) return;
+  if (action === "edit") {
+    const sameRewardOpen = isSectionOpen("reward-editor-section") && state.selectedRewardId === rewardId;
+    if (sameRewardOpen) {
+      if (state.rewardEditorDirty) {
+        await updateReward();
+      } else {
+        closeRewardEditor();
+      }
+    } else {
+      openRewardEditor(rewardId, triggerElement);
+    }
     return;
   }
-  setInvalid(byId("redeem-reward-select"), false);
+  if (action === "delete") {
+    const reward = state.rewards.find((entry) => entry.id === rewardId);
+    const rewardTitle = reward ? reward.title : "diese Belohnung";
+    const confirmed = window.confirm(`Belohnung "${rewardTitle}" wirklich löschen?`);
+    if (!confirmed) return;
+    await deleteReward(rewardId);
+  }
+}
+
+async function redeemReward(options = null) {
+  const useCardPayload = Boolean(options && typeof options === "object");
+  const rewardId = Number(useCardPayload ? options.rewardId : byId("redeem-reward-select").value);
+  if (!rewardId) {
+    if (!useCardPayload) {
+      setInvalid(byId("redeem-reward-select"), true);
+      return;
+    }
+    throw new Error("Belohnung nicht gefunden");
+  }
+  if (!useCardPayload) {
+    setInvalid(byId("redeem-reward-select"), false);
+  }
 
   const reward = state.rewards.find((entry) => entry.id === rewardId);
   if (!reward) {
     throw new Error("Belohnung nicht gefunden");
   }
 
+  const ownBalance = getOwnBalance();
+  const comment = useCardPayload
+    ? (String(options.comment || "").trim() || null)
+    : (byId("redeem-comment").value.trim() || null);
+
   if (!reward.is_shareable) {
-    const ownBalance = getOwnBalance();
     if (isChildRole() && ownBalance !== null && ownBalance < reward.cost_points) {
       window.alert(`Nicht genug Punkte. Du hast ${ownBalance}, benötigt: ${reward.cost_points}.`);
       return;
     }
     await api(`/rewards/${rewardId}/redeem`, {
       method: "POST",
-      body: { comment: byId("redeem-comment").value.trim() || null },
+      body: { comment },
     });
-    byId("redeem-comment").value = "";
+    if (!useCardPayload) byId("redeem-comment").value = "";
     await refreshFamilyData();
     return;
   }
 
-  const points = Number(byId("redeem-points").value || 0);
+  const points = Number(useCardPayload ? options.points : (byId("redeem-points").value || 0));
   if (!Number.isFinite(points) || points < 1) {
-    setInvalid(byId("redeem-points"), true);
+    if (!useCardPayload) {
+      setInvalid(byId("redeem-points"), true);
+    }
     throw new Error("Bitte gültige Punkte für den Beitrag eingeben");
   }
-  setInvalid(byId("redeem-points"), false);
+  if (!useCardPayload) {
+    setInvalid(byId("redeem-points"), false);
+  }
 
-  const progress = state.selectedRewardContribution;
+  const progress = useCardPayload
+    ? getRewardContributionProgress(rewardId)
+    : state.selectedRewardContribution;
   if (progress && progress.reward_id === rewardId) {
     if (progress.pending_redemption_id) {
       throw new Error("Für diese Belohnung läuft bereits eine Anfrage");
@@ -4845,7 +5240,6 @@ async function redeemReward() {
     }
   }
 
-  const ownBalance = getOwnBalance();
   if (isChildRole() && ownBalance !== null && ownBalance < points) {
     window.alert(`Nicht genug Punkte. Du hast ${ownBalance}, angefragt: ${points}.`);
     return;
@@ -4853,11 +5247,40 @@ async function redeemReward() {
 
   await api(`/rewards/${rewardId}/contribute`, {
     method: "POST",
-    body: { points, comment: byId("redeem-comment").value.trim() || null },
+    body: { points, comment },
   });
 
-  byId("redeem-comment").value = "";
+  if (!useCardPayload) byId("redeem-comment").value = "";
   await refreshFamilyData();
+}
+
+async function handleChildRewardCardActionClick(event) {
+  if (!isChildRole()) return;
+  const listEl = byId("child-reward-cards");
+  if (!listEl) return;
+
+  const actionButton = event.target.closest("button[data-reward-card-action]");
+  if (!actionButton) return;
+  const rewardId = Number(actionButton.dataset.rewardId);
+  if (!rewardId) return;
+  const action = actionButton.dataset.rewardCardAction;
+  if (action !== "submit") return;
+  const card = actionButton.closest("article[data-reward-card-id]");
+  const reward = state.rewards.find((entry) => entry.id === rewardId);
+  if (!card || !reward) return;
+
+  const commentInput = card.querySelector(`[data-reward-comment-input="${rewardId}"]`);
+  const contributionInput = card.querySelector(`[data-reward-contribution-input="${rewardId}"]`);
+  const comment = commentInput ? commentInput.value : "";
+  const points = reward.is_shareable
+    ? Number(contributionInput ? contributionInput.value || 0 : 0)
+    : null;
+  try {
+    await redeemReward({ rewardId, points, comment });
+  } catch (error) {
+    window.alert(error.message);
+    log("Belohnung einlösen Fehler", { reward_id: rewardId, error: error.message });
+  }
 }
 
 async function reviewTaskRequest(taskId, decision) {
@@ -4979,7 +5402,17 @@ async function handleDashboardReviewClick(event) {
     const decision = taskReviewButton.dataset.dashboardTaskReviewAction;
     if (!taskId || !decision) return true;
     try {
-      if (decision === "rejected_delete") {
+      if (decision === "delete_instance") {
+        const task = state.tasks.find((entry) => entry.id === taskId);
+        const taskTitle = task ? task.title : "diese Aufgabe";
+        const confirmed = window.confirm(
+          `Aufgabe "${taskTitle}" wirklich löschen?\n\n` +
+          "Es werden keine Punkte vergeben oder abgezogen. " +
+          "Bei wiederkehrenden Aufgaben läuft der nächste Task normal weiter."
+        );
+        if (!confirmed) return true;
+        await deleteTaskInstance(taskId);
+      } else if (decision === "rejected_delete") {
         await rejectAndDeleteSpecialTaskRequest(taskId);
       } else {
         await reviewTaskRequest(taskId, decision);
@@ -4997,6 +5430,16 @@ async function handleDashboardReviewClick(event) {
     const action = missedTaskButton.dataset.dashboardMissedTaskAction;
     if (!taskId || !action) return true;
     try {
+      if (action === "delete") {
+        const task = state.tasks.find((entry) => entry.id === taskId);
+        const taskTitle = task ? task.title : "diese Aufgabe";
+        const confirmed = window.confirm(
+          `Aufgabe "${taskTitle}" wirklich löschen?\n\n` +
+          "Es werden keine Punkte vergeben oder abgezogen. " +
+          "Bei wiederkehrenden Aufgaben läuft der nächste Task normal weiter."
+        );
+        if (!confirmed) return true;
+      }
       await reviewMissedTaskRequest(taskId, action);
       refreshDashboardModalContext();
     } catch (error) {
@@ -5356,21 +5799,35 @@ byId("rewards-body").addEventListener("click", async (event) => {
   if (!rewardId) return;
 
   const action = actionButton.dataset.rewardAction;
-  if (action === "edit") {
-    openRewardEditor(rewardId, actionButton);
+  try {
+    await handleManagerRewardAction(action, rewardId, actionButton);
+  } catch (error) {
+    log("Belohnung Aktion fehlgeschlagen", { error: error.message });
+  }
+});
+
+byId("reward-manager-cards").addEventListener("click", async (event) => {
+  const actionButton = event.target.closest("button[data-manager-reward-action]");
+  if (actionButton) {
+    const rewardId = Number(actionButton.dataset.rewardId);
+    const action = actionButton.dataset.managerRewardAction;
+    if (!rewardId || !action) return;
+    try {
+      await handleManagerRewardAction(action, rewardId, actionButton);
+    } catch (error) {
+      log("Belohnung Aktion fehlgeschlagen", { error: error.message });
+    }
     return;
   }
 
-  if (action === "delete") {
-    const reward = state.rewards.find((entry) => entry.id === rewardId);
-    const rewardTitle = reward ? reward.title : "diese Belohnung";
-    const confirmed = window.confirm(`Belohnung \"${rewardTitle}\" wirklich löschen?`);
-    if (!confirmed) return;
-    try {
-      await deleteReward(rewardId);
-    } catch (error) {
-      log("Belohnung löschen fehlgeschlagen", { error: error.message });
-    }
+  const card = event.target.closest("article[data-manager-reward-id]");
+  if (!card || event.target.closest("input, textarea, button, select, label")) return;
+  const rewardId = Number(card.dataset.managerRewardId);
+  if (!rewardId) return;
+  try {
+    await handleManagerRewardAction("edit", rewardId, card);
+  } catch (error) {
+    log("Belohnung bearbeiten fehlgeschlagen", { error: error.message });
   }
 });
 
@@ -5389,6 +5846,16 @@ byId("manager-task-review-cards").addEventListener("click", async (event) => {
     const action = missedButton.dataset.taskMissedReviewAction;
     if (!taskId || !action) return;
     try {
+      if (action === "delete") {
+        const task = state.tasks.find((entry) => entry.id === taskId);
+        const taskTitle = task ? task.title : "diese Aufgabe";
+        const confirmed = window.confirm(
+          `Aufgabe "${taskTitle}" wirklich löschen?\n\n` +
+          "Es werden keine Punkte vergeben oder abgezogen. " +
+          "Bei wiederkehrenden Aufgaben läuft der nächste Task normal weiter."
+        );
+        if (!confirmed) return;
+      }
       await reviewMissedTaskRequest(taskId, action);
     } catch (error) {
       log("Nicht-erledigt Prüfung Fehler", { error: error.message });
@@ -5404,7 +5871,17 @@ byId("manager-task-review-cards").addEventListener("click", async (event) => {
   if (!taskId || !decision) return;
 
   try {
-    if (decision === "rejected_delete") {
+    if (decision === "delete_instance") {
+      const task = state.tasks.find((entry) => entry.id === taskId);
+      const taskTitle = task ? task.title : "diese Aufgabe";
+      const confirmed = window.confirm(
+        `Aufgabe "${taskTitle}" wirklich löschen?\n\n` +
+        "Es werden keine Punkte vergeben oder abgezogen. " +
+        "Bei wiederkehrenden Aufgaben läuft der nächste Task normal weiter."
+      );
+      if (!confirmed) return;
+      await deleteTaskInstance(taskId);
+    } else if (decision === "rejected_delete") {
       await rejectAndDeleteSpecialTaskRequest(taskId);
     } else {
       await reviewTaskRequest(taskId, decision);
@@ -5493,6 +5970,13 @@ byId("child-special-task-section").addEventListener("click", async (event) => {
   }
 });
 
+byId("child-reward-cards").addEventListener("click", (event) => {
+  handleChildRewardCardActionClick(event).catch((error) => {
+    window.alert(error.message);
+    log("Belohnung Kachel Aktion Fehler", { error: error.message });
+  });
+});
+
 byId("toggle-member-create-btn").addEventListener("click", () =>
   toggleSection("member-create-section", "toggle-member-create-btn", "Neues Mitglied", "Eingabe schließen")
 );
@@ -5549,9 +6033,21 @@ byId("task-editor-section").addEventListener("input", syncTaskEditorDirtyState);
 byId("task-editor-section").addEventListener("change", syncTaskEditorDirtyState);
 byId("special-task-editor-section").addEventListener("input", syncSpecialTaskEditorDirtyState);
 byId("special-task-editor-section").addEventListener("change", syncSpecialTaskEditorDirtyState);
+byId("reward-editor-section").addEventListener("input", syncRewardEditorDirtyState);
+byId("reward-editor-section").addEventListener("change", syncRewardEditorDirtyState);
 
-byId("login-btn").addEventListener("click", () => login().catch((error) => log("Login Fehler", { error: error.message })));
-byId("bootstrap-btn").addEventListener("click", () => bootstrap().catch((error) => log("Initialisierung Fehler", { error: error.message })));
+byId("login-btn").addEventListener("click", () =>
+  login().catch((error) => {
+    showAuthStatus(error.message || "Anmeldung fehlgeschlagen.");
+    log("Login Fehler", { error: error.message });
+  })
+);
+byId("bootstrap-btn").addEventListener("click", () =>
+  bootstrap().catch((error) => {
+    showAuthStatus(error.message || "Initialisierung fehlgeschlagen.");
+    log("Initialisierung Fehler", { error: error.message });
+  })
+);
 byId("logout-btn").addEventListener("click", logout);
 
 byId("create-member-btn").addEventListener("click", () => createMember().catch((error) => log("Mitglied Fehler", { error: error.message })));
