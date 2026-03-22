@@ -1438,13 +1438,15 @@ def submit_task(
     if task.assignee_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur zugewiesenes Familienmitglied darf einreichen")
 
-    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+    was_missed_submission = task.status == TaskStatusEnum.missed_submitted
+
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.missed_submitted}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe kann aktuell nicht eingereicht werden")
 
     now_utc = datetime.utcnow()
     due_at_utc = _as_utc_naive(task.due_at)
 
-    if task.recurrence_type == RecurrenceTypeEnum.daily.value and not task.always_submittable:
+    if task.recurrence_type == RecurrenceTypeEnum.daily.value and not task.always_submittable and not was_missed_submission:
         if due_at_utc is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1472,7 +1474,10 @@ def submit_task(
         if due_at_utc > now_utc and due_at_utc.date() != now_utc.date():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
 
-    submission = TaskSubmission(task_id=task.id, submitted_by_id=current_user.id, note=payload.note)
+    submission_note = payload.note
+    if was_missed_submission and not submission_note:
+        submission_note = "Nachträglich als erledigt gemeldet"
+    submission = TaskSubmission(task_id=task.id, submitted_by_id=current_user.id, note=submission_note)
     db.add(submission)
     task.status = TaskStatusEnum.submitted
     db.flush()
