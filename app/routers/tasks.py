@@ -646,7 +646,15 @@ def _next_cycle_boundary(task: Task) -> datetime | None:
     due = _as_utc_naive(task.due_at)
     if due is None:
         return None
-    return _next_due(due, task.recurrence_type, task.active_weekdays)
+    # Zykluswechsel soll kalenderbasiert am neuen Tag starten (00:00),
+    # nicht erst zur nächsten Fälligkeits-Uhrzeit.
+    if task.recurrence_type == RecurrenceTypeEnum.none.value:
+        return due.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
+    next_due = _next_due(due, task.recurrence_type, task.active_weekdays)
+    if next_due is None:
+        return None
+    return next_due.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
@@ -659,6 +667,7 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
             Task.due_at.is_not(None),
             Task.recurrence_type.in_(
                 [
+                    RecurrenceTypeEnum.none.value,
                     RecurrenceTypeEnum.daily.value,
                     RecurrenceTypeEnum.weekly.value,
                     RecurrenceTypeEnum.monthly.value,
@@ -697,6 +706,15 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
         _create_next_recurring_task(db, task, task.created_by_id)
         changed = True
 
+    return changed
+
+
+def _run_family_task_maintenance(db: Session, family_id: int) -> bool:
+    changed = False
+    changed = _realign_daily_tasks_for_family(db, family_id) or changed
+    changed = _rollover_missed_tasks_for_family(db, family_id) or changed
+    changed = _advance_weekly_flexible_tasks_for_family(db, family_id) or changed
+    changed = _apply_penalties_for_family(db, family_id) or changed
     return changed
 
 
@@ -864,6 +882,9 @@ def list_tasks(
     db: Session = Depends(get_db),
 ):
     context = get_membership_or_403(db, family_id, current_user.id)
+    changed = _run_family_task_maintenance(db, family_id)
+    if changed:
+        db.commit()
     query = db.query(Task).filter(Task.family_id == family_id)
     if context.role == RoleEnum.child:
         query = query.filter(Task.assignee_id == current_user.id)
