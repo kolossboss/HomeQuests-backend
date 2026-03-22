@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.22-02 (2026-03-22)
+
+- Aufgaben: verpasste Aufgaben koennen jetzt nachtraeglich wieder eingereicht werden, inklusive sauberem Standard-Hinweis.
+- Dashboard/WebUI: eigener Bereich fuer "Demnächst fällig" und Wochenaufgaben im Kinder-Dashboard ergaenzt.
+- WebUI-Assets: `app.js` und Dashboard-Template fuer die neue Fokus-Kachel aktualisiert.
+
 ## v2026.03.22-01 (2026-03-22)
 
 - Tasks/Maintenance: auch nicht wiederkehrende Aufgaben werden in der Wartung mitgeprueft und korrekt weitergefuehrt.

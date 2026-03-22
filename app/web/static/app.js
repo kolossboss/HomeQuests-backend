@@ -903,12 +903,13 @@ function childTaskCardMarkup(task, { overdue = false, actionable = true } = {}) 
       <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
     </article>`;
   }
+  const allowMissedReport = overdue && task.status !== "missed_submitted";
   return `<article class="task-action-card ${toneClass}">
     <span class="task-card-title">${safeHtmlText(task.title)}</span>
     <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
     <div class="request-card-actions">
       <button class="child-task-btn done" data-task-id="${task.id}" data-task-action="submit_done">Erledigt</button>
-      ${overdue ? `<button class="child-task-btn missed" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>` : ""}
+      ${allowMissedReport ? `<button class="child-task-btn missed" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>` : ""}
     </div>
   </article>`;
 }
@@ -1704,25 +1705,28 @@ function getChildTaskBuckets(userId) {
   const actionableTasks = newestRecurringEntries(ownVisibleTasks
     .filter((task) => task.status === "open" || task.status === "rejected")
     .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)), "earliest_due");
+  const weekTasks = actionableTasks.filter(
+    (task) => task.recurrence_type === "weekly" && !(task.due_at && new Date(task.due_at) < now)
+  );
+  const upcomingTasks = actionableTasks.filter((task) => {
+    if (task.recurrence_type === "weekly") return false;
+    if (task.special_template_id) return false;
+    const due = parseDateSafe(task.due_at);
+    if (!due) return true;
+    return due >= tomorrowStart;
+  });
 
   return {
     overdueTasks: actionableTasks.filter((task) => task.due_at && new Date(task.due_at) < now),
-    weekTasks: actionableTasks.filter(
-      (task) => task.recurrence_type === "weekly" && !(task.due_at && new Date(task.due_at) < now)
-    ),
+    weekTasks,
     todayTasks: actionableTasks.filter((task) => {
       if (task.recurrence_type === "weekly") return false;
       if (task.special_template_id) return true;
       const due = parseDateSafe(task.due_at);
       return Boolean(due) && due >= now && due < tomorrowStart;
     }),
-    upcomingTasks: actionableTasks.filter((task) => {
-      if (task.recurrence_type === "weekly") return false;
-      if (task.special_template_id) return false;
-      const due = parseDateSafe(task.due_at);
-      if (!due) return true;
-      return due >= tomorrowStart;
-    }),
+    upcomingTasks,
+    upcomingAndWeekTasks: [...upcomingTasks, ...weekTasks],
     waitingTasks: newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "submitted")),
     missedTasks: newestRecurringEntries(ownVisibleTasks.filter((task) => task.status === "missed_submitted")),
     completedTasks: ownVisibleTasks.filter((task) => task.status === "approved" && task.recurrence_type === "none"),
@@ -1896,6 +1900,17 @@ function openChildDashboardModal(view) {
       <h5>Heute fällig</h5>
       <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.todayTasks, "Heute keine fälligen Aufgaben.")}</div>
     </section>`);
+  } else if (view === "upcoming") {
+    title = "Demnächst fällig";
+    subtitle = "Anstehende Aufgaben und Wochenaufgaben";
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Wochenaufgaben</h5>
+      <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.weekTasks, "Keine Wochenaufgaben.")}</div>
+    </section>`);
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Demnächst fällig</h5>
+      <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(buckets.upcomingTasks, "Keine Aufgaben für die nächsten Tage.", { actionable: false })}</div>
+    </section>`);
   } else if (view === "open") {
     title = "Offene Aufgaben";
     subtitle = "Heute, demnächst und diese Woche";
@@ -1935,11 +1950,10 @@ function openChildDashboardModal(view) {
     subtitle = "Warten auf Entscheidung der Eltern";
     sections.push(`<section class="dashboard-modal-section">
       <h5>Verpasst</h5>
-      <div class="dashboard-modal-grid">${renderChildReadOnlyTaskCards(
+      <div class="dashboard-modal-grid">${renderChildDashboardTaskCards(
         buckets.missedTasks,
         "Keine verpassten Aufgaben.",
-        "tone-pink",
-        (task) => `Verpasst • ${childTaskDueText(task)} • Entscheidung durch Eltern offen`
+        { overdue: true, actionable: true }
       )}</div>
     </section>`);
   } else if (view === "approved") {
@@ -2051,6 +2065,14 @@ function openManagerChildSummaryModal(userId, view) {
       )}</div>
     </section>`);
   } else {
+    sections.push(`<section class="dashboard-modal-section">
+      <h5>Wochenaufgaben</h5>
+      <div class="dashboard-modal-grid">${renderDashboardTaskCards(
+        buckets.weekTasks,
+        "Keine Wochenaufgaben.",
+        { allowManagerDelete: true }
+      )}</div>
+    </section>`);
     sections.push(`<section class="dashboard-modal-section">
       <h5>Demnächst fällig</h5>
       <div class="dashboard-modal-grid">${renderDashboardTaskCards(
@@ -2417,6 +2439,10 @@ function renderManagerChildOpenSummary() {
   target.innerHTML = childMembers.map((member) => {
     const buckets = getChildTaskBuckets(member.user_id);
     const todayCount = buckets.todayTasks.length + buckets.overdueTasks.length;
+    const upcomingCount = buckets.upcomingAndWeekTasks.length;
+    const upcomingMeta = buckets.weekTasks.length
+      ? `${buckets.weekTasks.length} Wochenaufgabe(n) enthalten`
+      : "Später anstehende Aufgaben";
     return `<article class="child-open-summary-card ${buckets.overdueTasks.length ? "has-overdue" : ""}">
       <div class="child-open-summary-head">
         <h5>${safeHtmlText(member.display_name)}</h5>
@@ -2437,9 +2463,9 @@ function renderManagerChildOpenSummary() {
           data-dashboard-child-open-action="upcoming"
           data-user-id="${member.user_id}"
         >
-          <strong>${buckets.upcomingTasks.length}</strong>
+          <strong>${upcomingCount}</strong>
           <span>Demnächst fällig</span>
-          <small>Später anstehende Aufgaben</small>
+          <small>${upcomingMeta}</small>
         </button>
       </div>
     </article>`;
@@ -2599,6 +2625,7 @@ function renderChildTaskLists() {
     weekTasks,
     todayTasks,
     upcomingTasks,
+    upcomingAndWeekTasks,
     waitingTasks,
     missedTasks,
     completedTasks,
@@ -2623,15 +2650,18 @@ function renderChildTaskLists() {
   byId("child-missed-task-cards").innerHTML = missedTasks.length
     ? missedTasks
       .map(
-        (task) => `<article class="request-card">
-          <p class="request-card-title">${safeHtmlText(task.title)}</p>
-          <p class="request-card-meta">Verpasst • ${childTaskDueText(task)} • Entscheidung durch Eltern offen</p>
+        (task) => `<article class="task-action-card tone-pink">
+          <span class="task-card-title">${safeHtmlText(task.title)}</span>
+          <span class="task-card-meta">Verpasst • ${childTaskDueText(task)} • Wenn erledigt, jetzt nachträglich melden</span>
+          <div class="request-card-actions">
+            <button class="child-task-btn done" data-task-id="${task.id}" data-task-action="submit_done">Erledigt</button>
+          </div>
         </article>`
       )
       .join("")
     : renderEmptyState("Keine verpassten Aufgaben", "Sehr gut, aktuell ist nichts verpasst.");
 
-  renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks);
+  renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks, upcomingAndWeekTasks, weekTasks, upcomingTasks);
 
   byId("child-completed-cards").innerHTML = completedTasks.length
     ? completedTasks
@@ -2645,22 +2675,46 @@ function renderChildTaskLists() {
     : renderEmptyState("Noch nichts abgeschlossen", "Bestätigte Aufgaben tauchen hier automatisch auf.");
 }
 
-function renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks) {
+function renderChildDashboardFocus(todayTasks, missedTasks, overdueTasks, upcomingAndWeekTasks, weekTasks, upcomingTasks) {
   const todayCard = byId("dashboard-child-today-focus");
   const missedCard = byId("dashboard-child-missed-focus");
+  const upcomingCard = byId("dashboard-child-upcoming-focus");
   const todayCount = byId("dashboard-child-today-count");
   const todayMeta = byId("dashboard-child-today-meta");
   const missedCount = byId("dashboard-child-missed-count");
   const missedMeta = byId("dashboard-child-missed-meta");
+  const upcomingCount = byId("dashboard-child-upcoming-count");
+  const upcomingMeta = byId("dashboard-child-upcoming-meta");
   if (!todayCard || !missedCard || !todayCount || !todayMeta || !missedCount || !missedMeta) return;
 
   const totalToday = Array.isArray(todayTasks) ? todayTasks.length : 0;
   const totalOverdue = Array.isArray(overdueTasks) ? overdueTasks.length : 0;
   const totalTodayTile = totalToday + totalOverdue;
   const totalMissed = Array.isArray(missedTasks) ? missedTasks.length : 0;
+  const totalUpcoming = Array.isArray(upcomingAndWeekTasks) ? upcomingAndWeekTasks.length : 0;
+  const totalWeek = Array.isArray(weekTasks) ? weekTasks.length : 0;
+  const totalUpcomingOnly = Array.isArray(upcomingTasks) ? upcomingTasks.length : 0;
   todayCount.textContent = String(totalTodayTile);
   missedCount.textContent = String(totalMissed);
   missedMeta.textContent = totalMissed > 0 ? `${totalMissed} warten auf Eltern-Entscheidung` : "Keine verpassten Aufgaben";
+  if (upcomingCard && upcomingCount && upcomingMeta) {
+    upcomingCount.textContent = String(totalUpcoming);
+    const currentClasses = ["focus-normal", "focus-soon", "focus-overdue", "focus-empty"];
+    upcomingCard.classList.remove(...currentClasses);
+    if (totalUpcoming === 0) {
+      upcomingCard.classList.add("focus-empty");
+      upcomingMeta.textContent = "Keine demnächst fälligen Aufgaben";
+    } else if (totalWeek > 0 && totalUpcomingOnly > 0) {
+      upcomingCard.classList.add("focus-soon");
+      upcomingMeta.textContent = `${totalUpcomingOnly} demnächst • ${totalWeek} Wochenaufgabe(n)`;
+    } else if (totalWeek > 0) {
+      upcomingCard.classList.add("focus-soon");
+      upcomingMeta.textContent = `${totalWeek} Wochenaufgabe(n) verfügbar`;
+    } else {
+      upcomingCard.classList.add("focus-normal");
+      upcomingMeta.textContent = `${totalUpcomingOnly} demnächst fällig`;
+    }
+  }
 
   const currentClasses = ["focus-normal", "focus-soon", "focus-overdue", "focus-empty"];
   todayCard.classList.remove(...currentClasses);
@@ -5592,6 +5646,10 @@ if (statCardWeekOpen) {
 const childTodayFocusCard = byId("dashboard-child-today-focus");
 if (childTodayFocusCard) {
   childTodayFocusCard.addEventListener("click", () => openChildDashboardModal("today"));
+}
+const childUpcomingFocusCard = byId("dashboard-child-upcoming-focus");
+if (childUpcomingFocusCard) {
+  childUpcomingFocusCard.addEventListener("click", () => openChildDashboardModal("upcoming"));
 }
 const childMissedFocusCard = byId("dashboard-child-missed-focus");
 if (childMissedFocusCard) {
