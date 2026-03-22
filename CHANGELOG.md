@@ -1,5 +1,10 @@
 # Changelog
 
+## v2026.03.22-01 (2026-03-22)
+
+- Tasks/Maintenance: auch nicht wiederkehrende Aufgaben werden in der Wartung mitgeprueft und korrekt weitergefuehrt.
+- Tasks/Rollover: der naechste Zyklus startet jetzt kalenderbasiert um Mitternacht statt erst zur naechsten Faelligkeitszeit.
+
 ## v2026.03.20-01 (2026-03-20)
 
 - Aufgaben-Loeschung verfeinert: `delete-instance` akzeptiert jetzt auch eingereichte/verpasste Aufgaben und loescht nur die einzelne Instanz.

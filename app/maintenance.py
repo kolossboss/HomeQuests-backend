@@ -79,6 +79,7 @@ def run_penalty_sweep_once() -> bool:
                         Task.is_active == True,  # noqa: E712
                         Task.recurrence_type.in_(
                             [
+                                RecurrenceTypeEnum.none.value,
                                 RecurrenceTypeEnum.daily.value,
                                 RecurrenceTypeEnum.weekly.value,
                                 RecurrenceTypeEnum.monthly.value,
