@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import text
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from ..database import engine, get_db
@@ -365,6 +365,16 @@ def _recurring_task_identity_key(task: Task) -> tuple | None:
     )
 
 
+def _weekly_flexible_semantic_key(task: Task) -> tuple:
+    return (
+        int(task.assignee_id),
+        task.title.strip().lower(),
+        task.recurrence_type,
+        int(task.special_template_id or 0),
+        "weekly_flexible",
+    )
+
+
 def _recurring_identity_hash(key: tuple | None) -> str | None:
     if key is None:
         return None
@@ -379,7 +389,7 @@ def _block_weekly_flexible_generation_for_current_cycle(
 ) -> None:
     if not _is_weekly_flexible_task(task):
         return
-    key_hash = _recurring_identity_hash(_recurring_task_identity_key(task))
+    key_hash = _recurring_identity_hash(_weekly_flexible_semantic_key(task))
     if key_hash is None:
         return
 
@@ -474,7 +484,7 @@ def _deactivate_current_cycle_weekly_flexible_tasks_by_key_hash(
 
     changed = False
     for task in query.all():
-        task_hash = _recurring_identity_hash(_recurring_task_identity_key(task))
+        task_hash = _recurring_identity_hash(_weekly_flexible_semantic_key(task))
         if task_hash != key_hash:
             continue
         task.is_active = False
@@ -579,6 +589,36 @@ def _dedupe_recurring_tasks_for_reminders(tasks: list[Task]) -> list[Task]:
 
 
 def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task | None:
+    if _is_weekly_flexible_task(source_task):
+        query = (
+            db.query(Task)
+            .filter(
+                Task.id != source_task.id,
+                Task.family_id == source_task.family_id,
+                Task.assignee_id == source_task.assignee_id,
+                Task.recurrence_type == RecurrenceTypeEnum.weekly.value,
+                Task.due_at.is_(None),
+                Task.is_active == True,  # noqa: E712
+                Task.status.in_(
+                    [
+                        TaskStatusEnum.open,
+                        TaskStatusEnum.rejected,
+                        TaskStatusEnum.submitted,
+                    ]
+                ),
+            )
+            .order_by(Task.created_at.desc(), Task.id.desc())
+        )
+        if source_task.special_template_id is None:
+            query = query.filter(Task.special_template_id.is_(None))
+        else:
+            query = query.filter(Task.special_template_id == source_task.special_template_id)
+        source_key = _weekly_flexible_semantic_key(source_task)
+        for candidate in query.all():
+            if _weekly_flexible_semantic_key(candidate) == source_key:
+                return candidate
+        return None
+
     if source_task.series_id:
         return (
             db.query(Task)
@@ -640,6 +680,64 @@ def _existing_open_recurring_successor(db: Session, source_task: Task) -> Task |
         if _recurring_task_identity_key(candidate) == key:
             return candidate
     return None
+
+
+def _deactivate_related_recurring_tasks(
+    db: Session,
+    source_task: Task,
+    *,
+    reason: str,
+    include_weekly_semantic_fallback: bool = False,
+) -> bool:
+    if source_task.recurrence_type == RecurrenceTypeEnum.none.value:
+        return False
+
+    candidates: list[Task] = []
+    if source_task.series_id:
+        candidates = (
+            db.query(Task)
+            .filter(
+                Task.id != source_task.id,
+                Task.family_id == source_task.family_id,
+                Task.series_id == source_task.series_id,
+                Task.is_active == True,  # noqa: E712
+            )
+            .all()
+        )
+    elif include_weekly_semantic_fallback and _is_weekly_flexible_task(source_task):
+        query = (
+            db.query(Task)
+            .filter(
+                Task.id != source_task.id,
+                Task.family_id == source_task.family_id,
+                Task.assignee_id == source_task.assignee_id,
+                Task.recurrence_type == RecurrenceTypeEnum.weekly.value,
+                Task.due_at.is_(None),
+                Task.is_active == True,  # noqa: E712
+            )
+            .order_by(Task.created_at.desc(), Task.id.desc())
+        )
+        if source_task.special_template_id is None:
+            query = query.filter(Task.special_template_id.is_(None))
+        else:
+            query = query.filter(Task.special_template_id == source_task.special_template_id)
+        source_key = _weekly_flexible_semantic_key(source_task)
+        candidates = [entry for entry in query.all() if _weekly_flexible_semantic_key(entry) == source_key]
+
+    changed = False
+    for candidate in candidates:
+        if not candidate.is_active:
+            continue
+        candidate.is_active = False
+        db.flush()
+        emit_live_event(
+            db,
+            family_id=candidate.family_id,
+            event_type="task.updated",
+            payload=_task_event_payload(candidate, reason=reason),
+        )
+        changed = True
+    return changed
 
 
 def _next_cycle_boundary(task: Task) -> datetime | None:
@@ -719,6 +817,8 @@ def _run_family_task_maintenance(db: Session, family_id: int) -> bool:
 
 
 def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int, *, force: bool = False) -> Task | None:
+    if not source_task.is_active:
+        return None
     if source_task.recurrence_type == RecurrenceTypeEnum.none.value:
         return None
     if _is_weekly_flexible_task(source_task) and not force:
@@ -784,25 +884,45 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
 
     grouped_by_key: dict[tuple, list[Task]] = {}
     for task in raw_tasks:
-        key = _recurring_task_identity_key(task)
-        if key is None:
-            continue
-        grouped_by_key.setdefault(key, []).append(task)
+        grouped_by_key.setdefault(_weekly_flexible_semantic_key(task), []).append(task)
 
     changed = False
     latest_by_key: dict[tuple, Task] = {}
     for key, tasks in grouped_by_key.items():
         tasks.sort(key=lambda entry: (entry.created_at, entry.id))
-        current_cycle_open = [
-            entry
-            for entry in tasks
-            if _start_of_week(entry.created_at) == now_week_start
-            and entry.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}
-            and entry.is_active
+
+        cycle_has_approved: dict[datetime, bool] = {}
+        for entry in tasks:
+            if entry.is_active and entry.status == TaskStatusEnum.approved:
+                cycle_has_approved[_start_of_week(entry.created_at)] = True
+
+        for entry in tasks:
+            if not entry.is_active:
+                continue
+            if entry.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+                continue
+            if not cycle_has_approved.get(_start_of_week(entry.created_at), False):
+                continue
+            entry.is_active = False
+            db.flush()
+            emit_live_event(
+                db,
+                family_id=entry.family_id,
+                event_type="task.updated",
+                payload=_task_event_payload(entry, reason="weekly_duplicate_cleanup"),
+            )
+            changed = True
+
+        active_tasks = [entry for entry in tasks if entry.is_active]
+        if not active_tasks:
+            continue
+
+        active_open_rejected = [
+            entry for entry in active_tasks if entry.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}
         ]
-        if len(current_cycle_open) >= 2:
-            keeper = max(current_cycle_open, key=lambda entry: (_as_utc_naive(entry.updated_at), entry.id))
-            for duplicate in current_cycle_open:
+        if len(active_open_rejected) >= 2:
+            keeper = max(active_open_rejected, key=lambda entry: (_as_utc_naive(entry.updated_at), entry.id))
+            for duplicate in active_open_rejected:
                 if duplicate.id == keeper.id:
                     continue
                 duplicate.is_active = False
@@ -814,13 +934,17 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
                     payload=_task_event_payload(duplicate, reason="weekly_duplicate_cleanup"),
                 )
                 changed = True
-            tasks = [entry for entry in tasks if entry.id == keeper.id or entry not in current_cycle_open]
+            active_tasks = [entry for entry in tasks if entry.is_active]
+            if not active_tasks:
+                continue
 
-        if len(tasks) >= 2:
-            latest = tasks[-1]
-            previous = tasks[-2]
+        if len(active_tasks) >= 2:
+            latest = active_tasks[-1]
+            previous = active_tasks[-2]
             same_cycle = _start_of_week(latest.created_at) == _start_of_week(previous.created_at)
-            approval_gap = _as_utc_naive(latest.created_at) - _as_utc_naive(previous.updated_at)
+            previous_updated = _as_utc_naive(previous.updated_at) or _as_utc_naive(previous.created_at) or now
+            latest_created = _as_utc_naive(latest.created_at) or now
+            approval_gap = latest_created - previous_updated
             if (
                 same_cycle
                 and previous.status == TaskStatusEnum.approved
@@ -836,13 +960,14 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
                     payload=_task_event_payload(latest, reason="weekly_duplicate_cleanup"),
                 )
                 changed = True
-                tasks = tasks[:-1]
+                active_tasks = [entry for entry in tasks if entry.is_active]
+                if not active_tasks:
+                    continue
 
-        if tasks:
-            latest_by_key[key] = tasks[-1]
+        latest_by_key[key] = active_tasks[-1]
 
     for task in latest_by_key.values():
-        key_hash = _recurring_identity_hash(_recurring_task_identity_key(task))
+        key_hash = _recurring_identity_hash(_weekly_flexible_semantic_key(task))
         if key_hash and key_hash in blocked_hashes:
             continue
         cycle_start = _start_of_week(task.created_at)
@@ -887,7 +1012,13 @@ def list_tasks(
         db.commit()
     query = db.query(Task).filter(Task.family_id == family_id)
     if context.role == RoleEnum.child:
-        query = query.filter(Task.assignee_id == current_user.id)
+        query = query.filter(
+            Task.assignee_id == current_user.id,
+            or_(
+                Task.is_active == True,  # noqa: E712
+                Task.status.in_([TaskStatusEnum.approved, TaskStatusEnum.missed_submitted]),
+            ),
+        )
     return query.order_by(Task.created_at.desc()).all()
 
 
@@ -1019,6 +1150,7 @@ def update_task(
     _ensure_assignee_in_family(db, task.family_id, payload.assignee_id)
 
     old_status = task.status
+    old_is_active = bool(task.is_active)
     old_weekly_flexible_hash = None
     if _is_weekly_flexible_task(task):
         old_weekly_flexible_hash = _recurring_identity_hash(_recurring_task_identity_key(task))
@@ -1117,6 +1249,16 @@ def update_task(
             )
 
         _create_next_recurring_task(db, task, current_user.id)
+
+    if old_is_active and not task.is_active:
+        _deactivate_related_recurring_tasks(
+            db,
+            task,
+            reason="series_deactivated",
+            include_weekly_semantic_fallback=True,
+        )
+        if _is_weekly_flexible_task(task):
+            _block_weekly_flexible_generation_for_current_cycle(db, task, current_user.id)
 
     db.flush()
     emit_live_event(
@@ -1767,11 +1909,21 @@ def set_task_active(
     membership_context = get_membership_or_403(db, task.family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
 
+    old_is_active = bool(task.is_active)
     task.is_active = payload.is_active
     if task.is_active:
         if task.recurrence_type != RecurrenceTypeEnum.none.value and not task.series_id:
             task.series_id = _new_series_id()
         task.due_at = _align_due_for_active_task(task.due_at, task.recurrence_type, task.active_weekdays)
+    elif old_is_active and task.recurrence_type != RecurrenceTypeEnum.none.value:
+        _deactivate_related_recurring_tasks(
+            db,
+            task,
+            reason="series_deactivated",
+            include_weekly_semantic_fallback=True,
+        )
+        if _is_weekly_flexible_task(task):
+            _block_weekly_flexible_generation_for_current_cycle(db, task, current_user.id)
 
     db.flush()
     emit_live_event(
