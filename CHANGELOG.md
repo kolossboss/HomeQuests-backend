@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.03.23-01 (2026-03-23)
+
+- Punkte/Analytics: neue Statistikdaten fuer Kinderpunkte, Trends und Belohnungs-Auswertungen in der API ergaenzt.
+- Aufgaben: angenommene Sonderaufgaben koennen nun wieder zurueckgelegt werden.
+- WebUI: Punkte-Dashboard, Aufgabenansichten und Templates fuer die erweiterten Daten aktualisiert.
+
 ## v2026.03.22-02 (2026-03-22)
 
 - Aufgaben: verpasste Aufgaben koennen jetzt nachtraeglich wieder eingereicht werden, inklusive sauberem Standard-Hinweis.

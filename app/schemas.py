@@ -498,6 +498,7 @@ class LedgerEntryOut(BaseModel):
     id: int
     family_id: int
     user_id: int
+    user_display_name: str | None = None
     source_type: str
     source_id: int
     points_delta: int
@@ -519,6 +520,51 @@ class BalanceItemOut(BaseModel):
     display_name: str
     role: RoleEnum
     balance: int
+
+
+class PointsTrendBucketOut(BaseModel):
+    bucket_key: str
+    label: str
+    earned_points: int
+    spent_points: int
+    net_points: int
+
+
+class PointsRewardRequestStatOut(BaseModel):
+    reward_id: int
+    reward_title: str
+    request_count: int
+    approved_count: int
+    pending_count: int
+    rejected_count: int
+
+
+class PointsRewardSpendStatOut(BaseModel):
+    reward_id: int
+    reward_title: str
+    points_spent: int
+    share_percent: float
+
+
+class ChildPointsStatsOut(BaseModel):
+    family_id: int
+    user_id: int
+    generated_at: datetime
+    current_points: int
+    lifetime_earned_points: int
+    lifetime_spent_points: int
+    average_points_per_day: float
+    average_points_per_week: float
+    average_points_per_month: float
+    active_days: int
+    approved_tasks_count: int
+    reward_requests_count: int
+    reward_contributions_count: int
+    trends_daily: list[PointsTrendBucketOut]
+    trends_weekly: list[PointsTrendBucketOut]
+    trends_monthly: list[PointsTrendBucketOut]
+    reward_request_stats: list[PointsRewardRequestStatOut]
+    reward_spent_stats: list[PointsRewardSpendStatOut]
 
 
 class PointsAdjustRequest(BaseModel):
