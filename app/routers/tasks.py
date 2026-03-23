@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -44,6 +45,9 @@ from ..services import emit_live_event
 
 router = APIRouter(tags=["tasks"])
 FULL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
+TASK_MAINTENANCE_LOCK_BASE = 870100000
+_fallback_maintenance_lock_guard = Lock()
+_fallback_maintenance_locks: dict[int, Lock] = {}
 
 
 def _as_utc_naive(value: datetime | None) -> datetime | None:
@@ -56,6 +60,28 @@ def _as_utc_naive(value: datetime | None) -> datetime | None:
 
 def _new_series_id() -> str:
     return uuid4().hex
+
+
+def _acquire_family_task_maintenance_lock(db: Session, family_id: int) -> bool:
+    if engine.dialect.name == "postgresql":
+        lock_key = TASK_MAINTENANCE_LOCK_BASE + int(family_id)
+        return bool(db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}).scalar())
+
+    with _fallback_maintenance_lock_guard:
+        lock = _fallback_maintenance_locks.setdefault(int(family_id), Lock())
+    return lock.acquire(blocking=False)
+
+
+def _release_family_task_maintenance_lock(db: Session, family_id: int) -> None:
+    if engine.dialect.name == "postgresql":
+        lock_key = TASK_MAINTENANCE_LOCK_BASE + int(family_id)
+        db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
+        return
+
+    with _fallback_maintenance_lock_guard:
+        lock = _fallback_maintenance_locks.get(int(family_id))
+    if lock and lock.locked():
+        lock.release()
 
 
 def _task_event_payload(task: Task, **extra) -> dict:
@@ -808,12 +834,18 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
 
 
 def _run_family_task_maintenance(db: Session, family_id: int) -> bool:
-    changed = False
-    changed = _realign_daily_tasks_for_family(db, family_id) or changed
-    changed = _rollover_missed_tasks_for_family(db, family_id) or changed
-    changed = _advance_weekly_flexible_tasks_for_family(db, family_id) or changed
-    changed = _apply_penalties_for_family(db, family_id) or changed
-    return changed
+    if not _acquire_family_task_maintenance_lock(db, family_id):
+        return False
+
+    try:
+        changed = False
+        changed = _realign_daily_tasks_for_family(db, family_id) or changed
+        changed = _rollover_missed_tasks_for_family(db, family_id) or changed
+        changed = _advance_weekly_flexible_tasks_for_family(db, family_id) or changed
+        changed = _apply_penalties_for_family(db, family_id) or changed
+        return changed
+    finally:
+        _release_family_task_maintenance_lock(db, family_id)
 
 
 def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: int, *, force: bool = False) -> Task | None:

@@ -12,7 +12,7 @@ from .config import settings
 from .database import SessionLocal, engine
 from .models import RecurrenceTypeEnum, Task, TaskStatusEnum
 from .push_notifications import run_push_reminder_sweep_once
-from .routers.tasks import _advance_weekly_flexible_tasks_for_family, _apply_penalties_for_family, _realign_daily_tasks_for_family, _rollover_missed_tasks_for_family
+from .routers.tasks import _run_family_task_maintenance
 
 logger = logging.getLogger(__name__)
 PENALTY_LOCK_KEY = 860031
@@ -113,10 +113,7 @@ def run_penalty_sweep_once() -> bool:
 
             changed = False
             for family_id in family_ids:
-                changed = _realign_daily_tasks_for_family(db, family_id) or changed
-                changed = _rollover_missed_tasks_for_family(db, family_id) or changed
-                changed = _advance_weekly_flexible_tasks_for_family(db, family_id) or changed
-                changed = _apply_penalties_for_family(db, family_id) or changed
+                changed = _run_family_task_maintenance(db, family_id) or changed
 
             if changed:
                 db.commit()

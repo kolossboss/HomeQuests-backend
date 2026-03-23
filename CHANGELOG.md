@@ -1,5 +1,10 @@
 # Changelog
 
+## v2026.03.23-03 (2026-03-23)
+
+- Wartung: Familienbezogene Aufgabenwartung laeuft jetzt mit Locking, damit parallele Jobs nicht doppelt eingreifen.
+- Maintenance: der Penalty-Sweep nutzt nun die zentrale Aufgabenwartung pro Familie statt einzelner Teilaufrufe.
+
 ## v2026.03.23-02 (2026-03-23)
 
 - Aufgaben: flexible Wochenaufgaben werden jetzt robuster nach einem semantischen Schlüssel gruppiert und Duplikate sauberer bereinigt.
