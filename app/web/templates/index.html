@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260320e" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260322f" />
   </head>
   <body>
     <main class="container">
@@ -145,6 +145,67 @@
                 <p class="child-focus-kicker">Verpasst</p>
                 <p id="dashboard-child-missed-count" class="child-focus-count">0</p>
                 <p id="dashboard-child-missed-meta" class="child-focus-meta">Keine verpassten Aufgaben</p>
+              </article>
+            </div>
+          </div>
+
+          <div id="dashboard-child-points-section" class="section-block hidden">
+            <div class="section-head-row child-points-head">
+              <div>
+                <h4>Punkt</h4>
+                <p class="muted">Deine Entwicklung, Belohnungen und Trends auf einen Blick.</p>
+              </div>
+              <button id="child-points-more-btn" type="button" class="btn-secondary">Mehr</button>
+            </div>
+            <div class="child-points-summary-grid">
+              <article class="child-points-stat metric-gold">
+                <span>Aktuell</span>
+                <strong id="child-points-current">0</strong>
+              </article>
+              <article class="child-points-stat metric-green">
+                <span>Jemals gesammelt</span>
+                <strong id="child-points-lifetime">0</strong>
+              </article>
+              <article class="child-points-stat metric-blue">
+                <span>Ø pro Tag</span>
+                <strong id="child-points-avg-day">0</strong>
+              </article>
+              <article class="child-points-stat metric-indigo">
+                <span>Ø pro Woche</span>
+                <strong id="child-points-avg-week">0</strong>
+              </article>
+              <article class="child-points-stat metric-slate">
+                <span>Ø pro Monat</span>
+                <strong id="child-points-avg-month">0</strong>
+              </article>
+            </div>
+            <div class="child-points-visual-grid">
+              <article class="analytics-card child-points-card">
+                <div class="child-points-card-head">
+                  <h5>Trend</h5>
+                  <div class="segmented-control" id="child-points-trend-mode">
+                    <button type="button" data-child-points-trend-mode="daily" class="is-active">Tag</button>
+                    <button type="button" data-child-points-trend-mode="weekly">Woche</button>
+                    <button type="button" data-child-points-trend-mode="monthly">Monat</button>
+                  </div>
+                </div>
+                <div id="child-points-trend-chart" class="child-points-trend-chart"></div>
+                <p id="child-points-trend-caption" class="muted">Noch keine Daten vorhanden.</p>
+              </article>
+              <article class="analytics-card child-points-card">
+                <div class="child-points-card-head">
+                  <h5>Belohnungen</h5>
+                  <div class="segmented-control" id="child-points-pie-mode">
+                    <button type="button" data-child-points-pie-mode="requests" class="is-active">Häufigkeit</button>
+                    <button type="button" data-child-points-pie-mode="spent">Punkte</button>
+                  </div>
+                </div>
+                <div class="child-points-pie-wrap">
+                  <svg id="child-points-pie-svg" viewBox="0 0 140 140" class="child-points-pie-svg" aria-label="Belohnungsdiagramm"></svg>
+                  <div id="child-points-pie-center" class="child-points-pie-center">Keine Daten</div>
+                </div>
+                <div id="child-points-pie-legend" class="child-points-pie-legend"></div>
+                <p id="child-points-pie-caption" class="muted">Wähle eine Kategorie für Details.</p>
               </article>
             </div>
           </div>
@@ -1065,6 +1126,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260322a"></script>
+    <script src="/static/app.js?v=20260322c"></script>
   </body>
 </html>

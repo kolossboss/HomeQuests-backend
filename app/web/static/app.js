@@ -15,6 +15,10 @@ const state = {
   selectedRewardContribution: null,
   pointsBalances: [],
   pointsHistory: [],
+  childPointsStats: null,
+  childPointsTrendMode: "daily",
+  childPointsPieMode: "requests",
+  childPointsSelectedRewardId: null,
   selectedTaskId: null,
   selectedSpecialTaskTemplateId: null,
   selectedMemberId: null,
@@ -904,12 +908,14 @@ function childTaskCardMarkup(task, { overdue = false, actionable = true } = {}) 
     </article>`;
   }
   const allowMissedReport = overdue && task.status !== "missed_submitted";
+  const allowSpecialUnclaim = Boolean(task.special_template_id) && (task.status === "open" || task.status === "rejected");
   return `<article class="task-action-card ${toneClass}">
     <span class="task-card-title">${safeHtmlText(task.title)}</span>
     <span class="task-card-meta">${childTaskDueText(task)} • ${task.points} Punkte${task.status === "rejected" ? " • erneut erledigen" : ""}</span>
     <div class="request-card-actions">
       <button class="child-task-btn done" data-task-id="${task.id}" data-task-action="submit_done">Erledigt</button>
       ${allowMissedReport ? `<button class="child-task-btn missed" data-task-id="${task.id}" data-task-action="report_missed">Nicht erledigt</button>` : ""}
+      ${allowSpecialUnclaim ? `<button class="btn-secondary child-task-btn" data-task-id="${task.id}" data-task-action="unclaim_special">Zurücklegen</button>` : ""}
     </div>
   </article>`;
 }
@@ -1132,6 +1138,316 @@ function renderDashboardAnalytics(tasks, statusCounts = getTaskStatusCounts(task
   setStatusProgress("approved", statusCounts.approved, totalStatusCount);
   setStatusProgress("rejected", statusCounts.rejected, totalStatusCount);
   renderWeeklyTrend(tasks);
+}
+
+function formatNumberCompact(value, { decimals = 1 } = {}) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return "0";
+  return numeric.toLocaleString("de-DE", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function getChildPointsTrendSeries(mode = state.childPointsTrendMode) {
+  const stats = state.childPointsStats;
+  if (!stats) return [];
+  if (mode === "weekly") return Array.isArray(stats.trends_weekly) ? stats.trends_weekly : [];
+  if (mode === "monthly") return Array.isArray(stats.trends_monthly) ? stats.trends_monthly : [];
+  return Array.isArray(stats.trends_daily) ? stats.trends_daily : [];
+}
+
+function childPointsTrendModeLabel(mode) {
+  if (mode === "weekly") return "pro Woche";
+  if (mode === "monthly") return "pro Monat";
+  return "pro Tag";
+}
+
+function getChildPointsPieSeries(mode = state.childPointsPieMode) {
+  const stats = state.childPointsStats;
+  if (!stats) return [];
+
+  if (mode === "spent") {
+    return (Array.isArray(stats.reward_spent_stats) ? stats.reward_spent_stats : [])
+      .filter((entry) => Number(entry.points_spent || 0) > 0)
+      .map((entry) => ({
+        reward_id: Number(entry.reward_id),
+        title: String(entry.reward_title || "Belohnung"),
+        value: Number(entry.points_spent || 0),
+        secondary: `${formatNumberCompact(entry.share_percent || 0, { decimals: 1 })}%`,
+      }));
+  }
+
+  return (Array.isArray(stats.reward_request_stats) ? stats.reward_request_stats : [])
+    .filter((entry) => Number(entry.request_count || 0) > 0)
+    .map((entry) => ({
+      reward_id: Number(entry.reward_id),
+      title: String(entry.reward_title || "Belohnung"),
+      value: Number(entry.request_count || 0),
+      secondary: `${entry.approved_count || 0} bestätigt`,
+    }));
+}
+
+function renderChildPointsTrendChart({ animate = true } = {}) {
+  const target = byId("child-points-trend-chart");
+  const caption = byId("child-points-trend-caption");
+  const modeButtons = document.querySelectorAll("#child-points-trend-mode button[data-child-points-trend-mode]");
+  if (!target || !caption) return;
+
+  modeButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.childPointsTrendMode === state.childPointsTrendMode);
+  });
+
+  const series = getChildPointsTrendSeries(state.childPointsTrendMode);
+  if (!series.length) {
+    target.innerHTML = renderEmptyState("Noch keine Punktedaten", "Sobald Punkte gebucht werden, erscheint hier dein Verlauf.");
+    caption.textContent = "Noch keine Daten vorhanden.";
+    return;
+  }
+
+  const maxValue = Math.max(
+    1,
+    ...series.map((entry) => Math.max(Number(entry.earned_points || 0), Number(entry.spent_points || 0), Math.abs(Number(entry.net_points || 0))))
+  );
+
+  target.innerHTML = `<div class="child-points-trend-bars">${series.map((entry) => {
+    const earned = Number(entry.earned_points || 0);
+    const spent = Number(entry.spent_points || 0);
+    const net = Number(entry.net_points || 0);
+    const earnedHeight = Math.max(0, Math.round((earned / maxValue) * 100));
+    const spentHeight = Math.max(0, Math.round((spent / maxValue) * 100));
+    return `<button type="button" class="child-points-trend-column" title="${safeHtmlText(entry.label)}: +${earned} / -${spent} (Netto ${net})">
+      <span class="child-points-trend-value">${net >= 0 ? "+" : ""}${net}</span>
+      <div class="child-points-trend-track">
+        <span class="child-points-trend-fill is-earned" data-target="${earnedHeight}" style="height:0%"></span>
+        <span class="child-points-trend-fill is-spent" data-target="${spentHeight}" style="height:0%"></span>
+      </div>
+      <span class="child-points-trend-label">${safeHtmlText(entry.label)}</span>
+    </button>`;
+  }).join("")}</div>`;
+
+  const netSum = series.reduce((sum, entry) => sum + Number(entry.net_points || 0), 0);
+  const earnedSum = series.reduce((sum, entry) => sum + Number(entry.earned_points || 0), 0);
+  const spentSum = series.reduce((sum, entry) => sum + Number(entry.spent_points || 0), 0);
+  caption.textContent = `${childPointsTrendModeLabel(state.childPointsTrendMode)}: +${earnedSum} gesammelt • -${spentSum} eingelöst • Netto ${netSum >= 0 ? "+" : ""}${netSum}`;
+
+  const fills = Array.from(target.querySelectorAll(".child-points-trend-fill"));
+  if (!fills.length) return;
+  if (!animate) {
+    fills.forEach((fill) => {
+      fill.style.height = `${fill.dataset.target || "0"}%`;
+    });
+    return;
+  }
+  requestAnimationFrame(() => {
+    fills.forEach((fill) => {
+      fill.style.height = `${fill.dataset.target || "0"}%`;
+    });
+  });
+}
+
+function renderChildPointsPieChart() {
+  const svg = byId("child-points-pie-svg");
+  const center = byId("child-points-pie-center");
+  const legend = byId("child-points-pie-legend");
+  const caption = byId("child-points-pie-caption");
+  const modeButtons = document.querySelectorAll("#child-points-pie-mode button[data-child-points-pie-mode]");
+  if (!svg || !center || !legend || !caption) return;
+
+  modeButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.childPointsPieMode === state.childPointsPieMode);
+  });
+
+  const series = getChildPointsPieSeries(state.childPointsPieMode);
+  if (!series.length) {
+    svg.innerHTML = "";
+    center.textContent = "Keine Daten";
+    legend.innerHTML = renderEmptyState("Noch keine Belohnungsdaten", "Sobald du Belohnungen einreichst oder einlöst, erscheint hier die Auswertung.");
+    caption.textContent = "Noch keine Daten vorhanden.";
+    return;
+  }
+
+  if (!series.some((entry) => entry.reward_id === state.childPointsSelectedRewardId)) {
+    state.childPointsSelectedRewardId = series[0].reward_id;
+  }
+
+  const total = series.reduce((sum, entry) => sum + Number(entry.value || 0), 0);
+  const selected = series.find((entry) => entry.reward_id === state.childPointsSelectedRewardId) || series[0];
+  const radius = 46;
+  const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+
+  svg.innerHTML = [
+    `<circle cx="70" cy="70" r="${radius}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="20"></circle>`,
+    ...series.map((entry, index) => {
+      const ratio = total > 0 ? Number(entry.value || 0) / total : 0;
+      const arc = Math.max(0, Math.min(circumference, circumference * ratio));
+      const segment = `<circle
+        class="child-points-pie-segment ${entry.reward_id === selected.reward_id ? "is-active" : ""}"
+        cx="70" cy="70" r="${radius}" fill="none"
+        stroke="${rewardProgressColor(index)}"
+        stroke-width="${entry.reward_id === selected.reward_id ? 22 : 20}"
+        stroke-dasharray="${arc} ${Math.max(circumference - arc, 0)}"
+        stroke-dashoffset="${-offset}"
+        transform="rotate(-90 70 70)"
+        data-child-points-reward-id="${entry.reward_id}"
+      ></circle>`;
+      offset += arc;
+      return segment;
+    }),
+  ].join("");
+
+  const selectedShare = total > 0 ? Math.round((Number(selected.value || 0) / total) * 100) : 0;
+  center.innerHTML = `<strong>${formatNumberCompact(selected.value, { decimals: 0 })}</strong><small>${selectedShare}%</small>`;
+  caption.textContent = state.childPointsPieMode === "spent"
+    ? `Punkteausgaben für ${selected.title}`
+    : `Häufigkeit für ${selected.title}`;
+
+  legend.innerHTML = series.map((entry, index) => {
+    const share = total > 0 ? Math.round((Number(entry.value || 0) / total) * 100) : 0;
+    const active = entry.reward_id === selected.reward_id;
+    return `<button type="button" class="child-points-pie-legend-item ${active ? "is-active" : ""}" data-child-points-reward-id="${entry.reward_id}">
+      <span class="child-points-pie-swatch" style="background:${rewardProgressColor(index)}"></span>
+      <span class="child-points-pie-title">${safeHtmlText(entry.title)}</span>
+      <span class="child-points-pie-value">${formatNumberCompact(entry.value, { decimals: 0 })} • ${share}%</span>
+      <small class="child-points-pie-sub">${safeHtmlText(entry.secondary || "")}</small>
+    </button>`;
+  }).join("");
+}
+
+function selectChildPointsReward(rewardId) {
+  const numericRewardId = Number(rewardId || 0);
+  if (!numericRewardId) return;
+  state.childPointsSelectedRewardId = numericRewardId;
+  renderChildPointsPieChart();
+}
+
+function buildChildPointsDetailsModal() {
+  const stats = state.childPointsStats;
+  if (!stats) {
+    return renderEmptyState("Keine Daten", "Für diese Ansicht sind noch keine Punktedaten vorhanden.");
+  }
+
+  const rewardRequestRows = (stats.reward_request_stats || []).slice(0, 8);
+  const rewardSpentRows = (stats.reward_spent_stats || []).slice(0, 8);
+  const monthlySeries = (stats.trends_monthly || []).slice(-6);
+
+  return `
+    <section class="dashboard-modal-section">
+      <h5>Zusammenfassung</h5>
+      <div class="dashboard-modal-grid">
+        <article class="request-card tone-blue">${renderCardMetaGrid([
+          { label: "Aktuelle Punkte", value: `${stats.current_points}` },
+          { label: "Jemals gesammelt", value: `${stats.lifetime_earned_points}` },
+          { label: "Insgesamt eingelöst", value: `${stats.lifetime_spent_points}` },
+          { label: "Aktive Tage", value: `${stats.active_days}` },
+          { label: "Bestätigte Aufgaben", value: `${stats.approved_tasks_count}` },
+          { label: "Belohnungsanfragen", value: `${stats.reward_requests_count}` },
+        ], { className: "request-card-kv" })}</article>
+      </div>
+    </section>
+    <section class="dashboard-modal-section">
+      <h5>Ø-Werte</h5>
+      <div class="dashboard-modal-grid">
+        <article class="request-card tone-green">
+          ${renderCardMetaGrid([
+            { label: "Ø pro Tag", value: formatNumberCompact(stats.average_points_per_day) },
+            { label: "Ø pro Woche", value: formatNumberCompact(stats.average_points_per_week) },
+            { label: "Ø pro Monat", value: formatNumberCompact(stats.average_points_per_month) },
+          ], { className: "request-card-kv" })}
+        </article>
+      </div>
+    </section>
+    <section class="dashboard-modal-section">
+      <h5>Letzte 6 Monate</h5>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Monat</th><th>Gesammelt</th><th>Eingelöst</th><th>Netto</th></tr></thead>
+          <tbody>
+            ${monthlySeries.length ? monthlySeries.map((entry) => `<tr>
+              <td>${safeHtmlText(entry.label)}</td>
+              <td>${entry.earned_points}</td>
+              <td>${entry.spent_points}</td>
+              <td>${entry.net_points >= 0 ? "+" : ""}${entry.net_points}</td>
+            </tr>`).join("") : renderTableEmptyRow(4, "Keine Daten")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="dashboard-modal-section">
+      <h5>Belohnungen am häufigsten eingereicht</h5>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Belohnung</th><th>Anfragen</th><th>Bestätigt</th><th>Offen</th><th>Abgelehnt</th></tr></thead>
+          <tbody>
+            ${rewardRequestRows.length ? rewardRequestRows.map((entry) => `<tr>
+              <td>${safeHtmlText(entry.reward_title)}</td>
+              <td>${entry.request_count}</td>
+              <td>${entry.approved_count}</td>
+              <td>${entry.pending_count}</td>
+              <td>${entry.rejected_count}</td>
+            </tr>`).join("") : renderTableEmptyRow(5, "Keine Belohnungsanfragen")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <section class="dashboard-modal-section">
+      <h5>Punkteausgaben je Belohnung</h5>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Belohnung</th><th>Punkte</th><th>Anteil</th></tr></thead>
+          <tbody>
+            ${rewardSpentRows.length ? rewardSpentRows.map((entry) => `<tr>
+              <td>${safeHtmlText(entry.reward_title)}</td>
+              <td>${entry.points_spent}</td>
+              <td>${formatNumberCompact(entry.share_percent, { decimals: 1 })}%</td>
+            </tr>`).join("") : renderTableEmptyRow(3, "Noch keine Punkte eingelöst")}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+function openChildPointsDetailsModal() {
+  if (!isChildRole()) return;
+  openDashboardDetailModal(
+    "Punkt-Details",
+    buildChildPointsDetailsModal(),
+    "Erweiterte Statistikansicht",
+    { type: "child-points" }
+  );
+}
+
+function renderChildPointsInsights({ animateTrend = true } = {}) {
+  const section = byId("dashboard-child-points-section");
+  if (!section) return;
+  if (!isChildRole()) {
+    toggleHidden("dashboard-child-points-section", true);
+    return;
+  }
+  toggleHidden("dashboard-child-points-section", false);
+
+  const stats = state.childPointsStats;
+  if (!stats) {
+    byId("child-points-current").textContent = "0";
+    byId("child-points-lifetime").textContent = "0";
+    byId("child-points-avg-day").textContent = "0";
+    byId("child-points-avg-week").textContent = "0";
+    byId("child-points-avg-month").textContent = "0";
+    renderChildPointsTrendChart({ animate: false });
+    renderChildPointsPieChart();
+    return;
+  }
+
+  byId("child-points-current").textContent = formatNumberCompact(stats.current_points, { decimals: 0 });
+  byId("child-points-lifetime").textContent = formatNumberCompact(stats.lifetime_earned_points, { decimals: 0 });
+  byId("child-points-avg-day").textContent = formatNumberCompact(stats.average_points_per_day);
+  byId("child-points-avg-week").textContent = formatNumberCompact(stats.average_points_per_week);
+  byId("child-points-avg-month").textContent = formatNumberCompact(stats.average_points_per_month);
+
+  renderChildPointsTrendChart({ animate: animateTrend });
+  renderChildPointsPieChart();
 }
 
 function isManagerRole() {
@@ -2108,6 +2424,10 @@ function refreshDashboardModalContext() {
   }
   if (context.type === "child") {
     openChildDashboardModal(context.view);
+    return;
+  }
+  if (context.type === "child-points") {
+    openChildPointsDetailsModal();
   }
 }
 
@@ -2141,6 +2461,7 @@ function applyRoleVisibility() {
   toggleHidden("dashboard-pending-section", child);
   toggleHidden("dashboard-parent-open-summary-section", child);
   toggleHidden("dashboard-child-focus-section", !child);
+  toggleHidden("dashboard-child-points-section", !child);
   toggleHidden("dashboard-missed-card", child);
   toggleHidden("stat-card-child-points", !child);
   syncDashboardStatsCardOrder();
@@ -2741,6 +3062,17 @@ async function handleChildTaskActionButton(button) {
   const taskId = Number(button.dataset.taskId);
   if (!taskId) return;
   const action = button.dataset.taskAction || "submit_done";
+
+  if (action === "unclaim_special") {
+    const confirmed = window.confirm("Sonderaufgabe wirklich zurücklegen? Sie wird aus deinen Aufgaben entfernt und wieder freigegeben.");
+    if (!confirmed) return;
+    try {
+      await unclaimSpecialTaskById(taskId);
+    } catch (error) {
+      log("Sonderaufgabe zurücklegen fehlgeschlagen", { error: error.message });
+    }
+    return;
+  }
 
   if (action === "report_missed") {
     try {
@@ -3703,6 +4035,18 @@ async function loadPointsHistory(userId) {
   renderPointsHistory();
 }
 
+async function loadChildPointsStats() {
+  if (!isChildRole() || !state.me) {
+    state.childPointsStats = null;
+    renderChildPointsInsights({ animateTrend: false });
+    return;
+  }
+  const familyId = getSelectedFamilyId();
+  if (!familyId) return;
+  state.childPointsStats = await api(`/families/${familyId}/points/stats/${state.me.id}`);
+  renderChildPointsInsights({ animateTrend: true });
+}
+
 function resetHomeAssistantSettingsForm() {
   state.haSettings = null;
   state.haUserConfigs = [];
@@ -4265,6 +4609,16 @@ async function refreshFamilyData({ silent = false } = {}) {
   try {
     await loadMembers();
     await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances()]);
+    if (isChildRole()) {
+      await loadChildPointsStats().catch((error) => {
+        state.childPointsStats = null;
+        renderChildPointsInsights({ animateTrend: false });
+        log("Kinder-Punktestatistik laden Fehler", { error: error.message });
+      });
+    } else {
+      state.childPointsStats = null;
+      renderChildPointsInsights({ animateTrend: false });
+    }
     if (isManagerRole()) {
       await loadNotificationChannelStatus().catch((error) =>
         log("Kanalstatus laden Fehler", { error: error.message })
@@ -4487,6 +4841,10 @@ async function logout() {
   state.specialTaskTemplates = [];
   state.availableSpecialTasks = [];
   state.pointsHistory = [];
+  state.childPointsStats = null;
+  state.childPointsTrendMode = "daily";
+  state.childPointsPieMode = "requests";
+  state.childPointsSelectedRewardId = null;
   state.tasksSort = "updated_desc";
   state.specialTasksSort = "updated_desc";
   state.tasksSearch = "";
@@ -4763,6 +5121,12 @@ async function deleteSpecialTaskTemplate(templateId) {
 async function claimSpecialTaskTemplate(templateId) {
   if (!isChildRole()) return;
   await api(`/special-tasks/templates/${templateId}/claim`, { method: "POST" });
+  await refreshFamilyData();
+}
+
+async function unclaimSpecialTaskById(taskId) {
+  if (!isChildRole()) return;
+  await api(`/tasks/${taskId}/special-unclaim`, { method: "POST" });
   await refreshFamilyData();
 }
 
@@ -5654,6 +6018,49 @@ if (childUpcomingFocusCard) {
 const childMissedFocusCard = byId("dashboard-child-missed-focus");
 if (childMissedFocusCard) {
   childMissedFocusCard.addEventListener("click", () => openChildDashboardModal("missed"));
+}
+const childPointsMoreBtn = byId("child-points-more-btn");
+if (childPointsMoreBtn) {
+  childPointsMoreBtn.addEventListener("click", openChildPointsDetailsModal);
+}
+const childPointsTrendModeWrap = byId("child-points-trend-mode");
+if (childPointsTrendModeWrap) {
+  childPointsTrendModeWrap.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-child-points-trend-mode]");
+    if (!button) return;
+    const mode = button.dataset.childPointsTrendMode || "daily";
+    if (mode === state.childPointsTrendMode) return;
+    state.childPointsTrendMode = mode;
+    renderChildPointsTrendChart({ animate: true });
+  });
+}
+const childPointsPieModeWrap = byId("child-points-pie-mode");
+if (childPointsPieModeWrap) {
+  childPointsPieModeWrap.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-child-points-pie-mode]");
+    if (!button) return;
+    const mode = button.dataset.childPointsPieMode || "requests";
+    if (mode === state.childPointsPieMode) return;
+    state.childPointsPieMode = mode;
+    state.childPointsSelectedRewardId = null;
+    renderChildPointsPieChart();
+  });
+}
+const childPointsPieLegend = byId("child-points-pie-legend");
+if (childPointsPieLegend) {
+  childPointsPieLegend.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-child-points-reward-id]");
+    if (!button) return;
+    selectChildPointsReward(button.dataset.childPointsRewardId);
+  });
+}
+const childPointsPieSvg = byId("child-points-pie-svg");
+if (childPointsPieSvg) {
+  childPointsPieSvg.addEventListener("click", (event) => {
+    const segment = event.target.closest("circle[data-child-points-reward-id]");
+    if (!segment) return;
+    selectChildPointsReward(segment.dataset.childPointsRewardId);
+  });
 }
 const pendingCardOverdue = byId("pending-card-overdue");
 if (pendingCardOverdue) {

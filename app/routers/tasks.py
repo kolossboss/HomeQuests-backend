@@ -1351,6 +1351,49 @@ def claim_special_task(
     return task
 
 
+@router.post("/tasks/{task_id}/special-unclaim")
+def unclaim_special_task(
+    task_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
+    if task.special_template_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nur angenommene Sonderaufgaben können zurückgelegt werden")
+
+    membership_context = get_membership_or_403(db, task.family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.child})
+
+    if task.assignee_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur zugewiesenes Kind darf diese Sonderaufgabe zurücklegen")
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sonderaufgabe kann in diesem Status nicht zurückgelegt werden")
+
+    family_id_value = task.family_id
+    task_id_value = task.id
+    template_id_value = task.special_template_id
+    db.delete(task)
+    emit_live_event(
+        db,
+        family_id=family_id_value,
+        event_type="task.deleted",
+        payload={
+            "task_id": task_id_value,
+            "source": "special_task",
+            "reason": "special_unclaim",
+            "special_template_id": template_id_value,
+        },
+    )
+    db.commit()
+    return {
+        "deleted": True,
+        "task_id": task_id_value,
+        "special_template_id": template_id_value,
+    }
+
+
 @router.delete("/tasks/{task_id}")
 def delete_task(
     task_id: int,
