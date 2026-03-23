@@ -1,5 +1,10 @@
 # Changelog
 
+## v2026.03.23-02 (2026-03-23)
+
+- Aufgaben: flexible Wochenaufgaben werden jetzt robuster nach einem semantischen Schlüssel gruppiert und Duplikate sauberer bereinigt.
+- Aufgaben: inaktive wiederkehrende Aufgaben erzeugen keine Nachfolger mehr, und die Wartungslogik ist gegen fehlerhafte Folgeeinträge gehärtet.
+
 ## v2026.03.23-01 (2026-03-23)
 
 - Punkte/Analytics: neue Statistikdaten fuer Kinderpunkte, Trends und Belohnungs-Auswertungen in der API ergaenzt.
