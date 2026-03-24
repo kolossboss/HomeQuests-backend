@@ -1614,6 +1614,11 @@ def delete_task_instance(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Aufgabe kann in diesem Status nicht als einzelne Instanz gelöscht werden",
         )
+    if task.recurrence_type != RecurrenceTypeEnum.none.value and not task.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deaktivierte wiederkehrende Aufgabe kann nicht als einzelne Instanz gelöscht werden",
+        )
 
     next_task: Task | None = None
     if task.recurrence_type != RecurrenceTypeEnum.none.value and task.is_active:
