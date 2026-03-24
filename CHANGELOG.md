@@ -1,5 +1,10 @@
 # Changelog
 
+## v2026.03.24-01 (2026-03-24)
+
+- Aufgaben: deaktivierte wiederkehrende Aufgaben koennen nicht mehr als einzelne Instanz geloescht werden.
+- Dashboard/Manager: inaktive wiederkehrende Aufgaben werden in den Manager-Ansichten sauber herausgefiltert.
+
 ## v2026.03.23-03 (2026-03-23)
 
 - Wartung: Familienbezogene Aufgabenwartung laeuft jetzt mit Locking, damit parallele Jobs nicht doppelt eingreifen.

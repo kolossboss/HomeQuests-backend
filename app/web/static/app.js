@@ -1491,6 +1491,16 @@ function getVisibleTasksForDashboard() {
   );
 }
 
+function getManagerDashboardTasks() {
+  return state.tasks.filter(
+    (task) =>
+      task.is_active !== false ||
+      task.status === "submitted" ||
+      task.status === "missed_submitted" ||
+      task.status === "approved"
+  );
+}
+
 function isSectionOpen(sectionId) {
   const element = byId(sectionId);
   return Boolean(element) && !element.classList.contains("hidden");
@@ -2053,6 +2063,7 @@ function getDashboardOverdueTasks(tasks = getVisibleTasksForDashboard()) {
   const now = new Date();
   return newestRecurringEntries(
     tasks.filter((task) =>
+      task.is_active !== false &&
       (task.status === "open" || task.status === "rejected") &&
       task.due_at &&
       new Date(task.due_at) < now
@@ -2291,11 +2302,12 @@ function openChildDashboardModal(view) {
 
 function openManagerTaskModal(mode) {
   if (!isManagerRole()) return;
-  const openTasks = state.tasks.filter((task) => task.status === "open");
-  const submittedTasks = state.tasks.filter((task) => task.status === "submitted");
-  const missedTasks = state.tasks.filter((task) => task.status === "missed_submitted");
-  const overdueTasks = getDashboardOverdueTasks(state.tasks);
-  const weekOpenTasks = getOpenThisWeekTasks(state.tasks);
+  const managerTasks = getManagerDashboardTasks();
+  const openTasks = managerTasks.filter((task) => task.status === "open");
+  const submittedTasks = managerTasks.filter((task) => task.status === "submitted");
+  const missedTasks = managerTasks.filter((task) => task.status === "missed_submitted");
+  const overdueTasks = getDashboardOverdueTasks(managerTasks);
+  const weekOpenTasks = getOpenThisWeekTasks(managerTasks);
 
   if (mode === "open") {
     openDashboardDetailModal(
@@ -2806,7 +2818,7 @@ function renderDashboardPendingRequests() {
   const submittedTasks = pendingTasks.filter((task) => task.status === "submitted");
   const missedTasks = pendingTasks.filter((task) => task.status === "missed_submitted");
   const pendingRewards = getPendingRewardRequests();
-  const overdueTasks = getDashboardOverdueTasks(state.tasks);
+  const overdueTasks = getDashboardOverdueTasks(getManagerDashboardTasks());
 
   const pendingOverdueCount = byId("pending-overdue-count");
   const pendingSubmittedCount = byId("pending-submitted-count");
