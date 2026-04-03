@@ -1,5 +1,9 @@
 # Changelog
 
+## v2026.04.03-01 (2026-04-03)
+
+- Aufgaben: der naechste Zyklus fuer einmalige und taegliche Aufgaben startet jetzt kalenderbasiert um Mitternacht.
+
 ## v2026.03.24-01 (2026-03-24)
 
 - Aufgaben: deaktivierte wiederkehrende Aufgaben koennen nicht mehr als einzelne Instanz geloescht werden.
