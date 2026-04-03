@@ -772,7 +772,7 @@ def _next_cycle_boundary(task: Task) -> datetime | None:
         return None
     # Zykluswechsel soll kalenderbasiert am neuen Tag starten (00:00),
     # nicht erst zur nächsten Fälligkeits-Uhrzeit.
-    if task.recurrence_type == RecurrenceTypeEnum.none.value:
+    if task.recurrence_type in {RecurrenceTypeEnum.none.value, RecurrenceTypeEnum.daily.value}:
         return due.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
 
     next_due = _next_due(due, task.recurrence_type, task.active_weekdays)
