@@ -43,6 +43,47 @@ class BootstrapStatusOut(BaseModel):
     bootstrap_required: bool
 
 
+class BootstrapBackupFileOut(BaseModel):
+    file_name: str
+    file_path: str
+    size_bytes: int
+    modified_at_utc: datetime
+
+
+class BootstrapBackupListOut(BaseModel):
+    backup_supported: bool
+    restore_command_available: bool
+    backup_allowed_dirs: list[str]
+    upload_max_bytes: int
+    files: list[BootstrapBackupFileOut]
+
+
+class BootstrapRestoreRequest(BaseModel):
+    backup_file: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("backup_file")
+    @classmethod
+    def normalize_backup_file(cls, value: str) -> str:
+        return value.strip()
+
+
+class BootstrapRestoreOut(BaseModel):
+    restored: bool
+    backup_file_path: str
+    duration_seconds: float
+    restored_at_utc: datetime
+    database_engine: str
+    user_count: int
+
+
+class BootstrapBackupUploadOut(BaseModel):
+    uploaded: bool
+    file_name: str
+    file_path: str
+    size_bytes: int
+    uploaded_at_utc: datetime
+
+
 class UserOut(BaseModel):
     id: int
     email: EmailStr | None
@@ -659,6 +700,8 @@ class SpecialTaskTemplateOut(BaseModel):
 class SpecialTaskAvailabilityOut(SpecialTaskTemplateOut):
     used_count: int
     remaining_count: int
+    available_now: bool = True
+    unavailable_reason: str | None = None
 
 
 class SystemTestNotificationRequest(BaseModel):
@@ -710,6 +753,100 @@ class SystemEventOut(BaseModel):
     event_type: str
     payload: dict[str, object] | None = None
     created_at: datetime
+
+
+class SystemDbDiagnosticsOut(BaseModel):
+    duplicate_series_groups: int
+    duplicate_series_rows: int
+    weekly_flexible_duplicate_groups: int
+    weekly_flexible_duplicate_rows: int
+    inactive_open_like_count: int
+    stale_none_without_due_open_count: int
+
+
+class SystemDbToolsStatusOut(BaseModel):
+    database_engine: str
+    backup_supported: bool
+    backup_command_available: bool
+    restore_command_available: bool
+    backup_allowed_dirs: list[str]
+    backup_default_dir: str
+    backup_timeout_seconds: int
+    cleanup_max_passes: int
+    diagnostics: SystemDbDiagnosticsOut
+    server_time_utc: datetime
+
+
+class SystemDbDirectoryEntryOut(BaseModel):
+    name: str
+    path: str
+
+
+class SystemDbDirectoryBrowseOut(BaseModel):
+    allowed_roots: list[str]
+    current_path: str
+    parent_path: str | None = None
+    directories: list[SystemDbDirectoryEntryOut]
+
+
+class SystemDbDirectoryCreateRequest(BaseModel):
+    parent_dir: str = Field(min_length=1, max_length=1024)
+    directory_name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("parent_dir", "directory_name")
+    @classmethod
+    def normalize_directory_fields(cls, value: str) -> str:
+        return value.strip()
+
+
+class SystemDbDirectoryCreateOut(BaseModel):
+    created_path: str
+    browse: SystemDbDirectoryBrowseOut
+
+
+class SystemDbBackupRequest(BaseModel):
+    target_dir: str | None = Field(default=None, max_length=1024)
+    filename_prefix: str = Field(default="homequests", min_length=1, max_length=80)
+
+    @field_validator("target_dir", mode="before")
+    @classmethod
+    def normalize_target_dir(cls, value):
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+class SystemDbBackupOut(BaseModel):
+    ok: bool
+    file_path: str
+    file_size_bytes: int
+    duration_seconds: float
+    created_at_utc: datetime
+    database_engine: str
+
+
+class SystemDbCleanupRequest(BaseModel):
+    max_passes: int | None = Field(default=None, ge=1, le=30)
+
+
+class SystemDbCleanupOut(BaseModel):
+    ok: bool
+    requested_max_passes: int
+    executed_passes: int
+    changed_passes: int
+    family_id: int
+    diagnostics_before: SystemDbDiagnosticsOut
+    diagnostics_after: SystemDbDiagnosticsOut
+    started_at_utc: datetime
+    finished_at_utc: datetime
+
+
+class SystemDbAnalyzeOut(BaseModel):
+    ok: bool
+    database_engine: str
+    started_at_utc: datetime
+    finished_at_utc: datetime
 
 
 class HomeAssistantSettingsUpdateRequest(BaseModel):

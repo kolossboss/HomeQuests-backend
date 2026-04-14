@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.04.14-01 (2026-04-14)
+
+- System: neue DB-Tools fuer Backup, Restore, Cleanup und Diagnose im System-Tab ergaenzt.
+- Bootstrap: Upload und Wiederherstellung von `.dump`-Backups fuer Erstinstallationen hinzugefuegt.
+- Runtime/Container: `postgresql-client` und `python-multipart` fuer Backup- und Upload-Workflows eingebunden.
+
 ## v2026.04.03-01 (2026-04-03)
 
 - Aufgaben: der naechste Zyklus fuer einmalige und taegliche Aufgaben startet jetzt kalenderbasiert um Mitternacht.

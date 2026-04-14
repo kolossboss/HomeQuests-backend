@@ -5,7 +5,7 @@ from threading import Lock
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import or_, text
+from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from ..database import engine, get_db
@@ -788,7 +788,6 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
         .filter(
             Task.family_id == family_id,
             Task.is_active == True,  # noqa: E712
-            Task.due_at.is_not(None),
             Task.recurrence_type.in_(
                 [
                     RecurrenceTypeEnum.none.value,
@@ -796,6 +795,10 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
                     RecurrenceTypeEnum.weekly.value,
                     RecurrenceTypeEnum.monthly.value,
                 ]
+            ),
+            or_(
+                Task.due_at.is_not(None),
+                and_(Task.recurrence_type == RecurrenceTypeEnum.none.value, Task.due_at.is_(None)),
             ),
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
         )
@@ -806,11 +809,21 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
     changed = False
     for task in candidates:
         due = _as_utc_naive(task.due_at)
-        if not due or due >= now:
-            continue
-        boundary = _next_cycle_boundary(task)
-        if boundary is None or now < boundary:
-            continue
+        if due is None:
+            if task.recurrence_type != RecurrenceTypeEnum.none.value:
+                continue
+            created = _as_utc_naive(task.created_at)
+            if created is None:
+                continue
+            boundary = created.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            if now < boundary:
+                continue
+        else:
+            if due >= now:
+                continue
+            boundary = _next_cycle_boundary(task)
+            if boundary is None or now < boundary:
+                continue
 
         db.add(
             TaskSubmission(
@@ -1418,6 +1431,7 @@ def delete_special_task_template(
 @router.get("/families/{family_id}/special-tasks/available", response_model=list[SpecialTaskAvailabilityOut])
 def list_available_special_tasks(
     family_id: int,
+    include_unavailable: bool = Query(default=False),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1434,8 +1448,8 @@ def list_available_special_tasks(
     result: list[SpecialTaskAvailabilityOut] = []
     now = datetime.utcnow()
     for template in templates:
-        available_now, _ = _special_task_is_available_now(template, now)
-        if not available_now:
+        available_now, unavailable_reason = _special_task_is_available_now(template, now)
+        if not available_now and not include_unavailable:
             continue
         used = _special_task_usage_count(db, template.id, template.interval_type)
         remaining = max(template.max_claims_per_interval - used, 0)
@@ -1455,6 +1469,8 @@ def list_available_special_tasks(
                 updated_at=template.updated_at,
                 used_count=used,
                 remaining_count=remaining,
+                available_now=available_now,
+                unavailable_reason=unavailable_reason,
             )
         )
     return result

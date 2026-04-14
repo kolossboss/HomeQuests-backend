@@ -1,12 +1,32 @@
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..database import get_db
+from ..database import SessionLocal, engine, get_db
+from ..db_tools import (
+    DbToolsError,
+    backup_allowed_dirs,
+    backup_supported,
+    list_backup_files,
+    pg_restore_available,
+    restore_backup,
+    store_uploaded_backup,
+)
 from ..deps import get_current_user
 from ..models import Family, FamilyMembership, RoleEnum, User
-from ..schemas import BootstrapRequest, BootstrapStatusOut, LoginRequest, TokenResponse, UserOut
+from ..schemas import (
+    BootstrapBackupFileOut,
+    BootstrapBackupListOut,
+    BootstrapBackupUploadOut,
+    BootstrapRequest,
+    BootstrapRestoreOut,
+    BootstrapRestoreRequest,
+    BootstrapStatusOut,
+    LoginRequest,
+    TokenResponse,
+    UserOut,
+)
 from ..security import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -37,6 +57,115 @@ def _set_auth_cookie(response: Response, token: str, request: Request) -> None:
 def bootstrap_status(db: Session = Depends(get_db)):
     has_user = db.query(User.id).first() is not None
     return BootstrapStatusOut(bootstrap_required=not has_user)
+
+
+@router.get("/bootstrap-backups", response_model=BootstrapBackupListOut)
+def bootstrap_backups(db: Session = Depends(get_db)):
+    has_user = db.query(User.id).first() is not None
+    if has_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
+
+    files = list_backup_files(limit=200)
+    return BootstrapBackupListOut(
+        backup_supported=backup_supported(),
+        restore_command_available=pg_restore_available(),
+        backup_allowed_dirs=[str(entry) for entry in backup_allowed_dirs()],
+        upload_max_bytes=int(settings.db_backup_upload_max_bytes),
+        files=[
+            BootstrapBackupFileOut(
+                file_name=item.file_name,
+                file_path=item.file_path,
+                size_bytes=item.size_bytes,
+                modified_at_utc=item.modified_at_utc,
+            )
+            for item in files
+        ],
+    )
+
+
+@router.post("/bootstrap-backups/upload", response_model=BootstrapBackupUploadOut)
+def bootstrap_backup_upload(
+    file: UploadFile = File(...),
+    target_dir: str | None = Form(default=None),
+    db: Session = Depends(get_db),
+):
+    try:
+        has_user = db.query(User.id).first() is not None
+        if has_user:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
+
+        if not file.filename:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dateiname fehlt")
+
+        saved = store_uploaded_backup(
+            file_obj=file.file,
+            original_filename=file.filename,
+            target_dir=(target_dir or None),
+            max_bytes=settings.db_backup_upload_max_bytes,
+        )
+    except DbToolsError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc) or "Upload fehlgeschlagen") from exc
+    finally:
+        file.file.close()
+
+    return BootstrapBackupUploadOut(
+        uploaded=True,
+        file_name=saved.file_name,
+        file_path=saved.file_path,
+        size_bytes=saved.size_bytes,
+        uploaded_at_utc=saved.modified_at_utc,
+    )
+
+
+def _bootstrap_restore_error_status(message: str) -> int:
+    user_errors = (
+        "Backup-Datei",
+        "Backup-Ziel",
+        "Nur .dump",
+        "Ungültige DATABASE_URL",
+        "Restore ist aktuell nur für PostgreSQL",
+        "pg_restore ist im Backend-Container nicht verfügbar",
+    )
+    if any(token in message for token in user_errors):
+        return status.HTTP_400_BAD_REQUEST
+    return status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+@router.post("/bootstrap-restore", response_model=BootstrapRestoreOut)
+def bootstrap_restore(payload: BootstrapRestoreRequest, db: Session = Depends(get_db)):
+    has_user = db.query(User.id).first() is not None
+    if has_user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
+
+    # Laufende DB-Sessions schließen, damit pg_restore konsistent schreiben kann.
+    db.close()
+    engine.dispose()
+    try:
+        result = restore_backup(backup_file=payload.backup_file)
+    except DbToolsError as exc:
+        detail = str(exc) or "Restore fehlgeschlagen"
+        raise HTTPException(status_code=_bootstrap_restore_error_status(detail), detail=detail) from exc
+
+    verify_db = SessionLocal()
+    try:
+        user_count = int(verify_db.query(func.count(User.id)).scalar() or 0)
+    finally:
+        verify_db.close()
+
+    if user_count < 1:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Restore abgeschlossen, aber es wurden keine Nutzer gefunden.",
+        )
+
+    return BootstrapRestoreOut(
+        restored=True,
+        backup_file_path=result.backup_file_path,
+        duration_seconds=result.duration_seconds,
+        restored_at_utc=result.restored_at_utc,
+        database_engine=result.database_engine,
+        user_count=user_count,
+    )
 
 
 @router.post("/bootstrap", response_model=TokenResponse)

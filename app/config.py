@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     secret_encryption_key: str | None = None
     push_worker_enabled: bool = True
     push_worker_interval_seconds: int = 60
+    db_backup_allowed_dirs: list[str] = ["/tmp/homequests-backups"]
+    db_backup_default_dir: str | None = "/tmp/homequests-backups"
+    db_backup_timeout_seconds: int = 180
+    db_cleanup_max_passes: int = 8
+    db_backup_upload_max_bytes: int = 536_870_912
 
     @field_validator("secret_key")
     @classmethod
@@ -71,6 +76,76 @@ class Settings(BaseSettings):
     def validate_push_worker_interval_seconds(cls, value: int) -> int:
         if value < 15:
             raise ValueError("PUSH_WORKER_INTERVAL_SECONDS muss mindestens 15 Sekunden sein")
+        return value
+
+    @field_validator("db_backup_allowed_dirs", mode="before")
+    @classmethod
+    def parse_db_backup_allowed_dirs(cls, value):
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return []
+            return [entry.strip() for entry in raw.split(",") if entry.strip()]
+        if isinstance(value, list):
+            return [str(entry).strip() for entry in value if str(entry).strip()]
+        return value
+
+    @field_validator("db_backup_allowed_dirs")
+    @classmethod
+    def validate_db_backup_allowed_dirs(cls, value: list[str]) -> list[str]:
+        if not value:
+            raise ValueError("DB_BACKUP_ALLOWED_DIRS darf nicht leer sein")
+        normalized: list[str] = []
+        for entry in value:
+            path = entry.strip()
+            if not path.startswith("/"):
+                raise ValueError("DB_BACKUP_ALLOWED_DIRS muss absolute Pfade enthalten")
+            if path not in normalized:
+                normalized.append(path)
+        return normalized
+
+    @field_validator("db_backup_default_dir")
+    @classmethod
+    def validate_db_backup_default_dir(cls, value: str | None, info) -> str | None:
+        if value is None:
+            return None
+        path = value.strip()
+        if not path:
+            return None
+        if not path.startswith("/"):
+            raise ValueError("DB_BACKUP_DEFAULT_DIR muss ein absoluter Pfad sein")
+        allowed = info.data.get("db_backup_allowed_dirs") or []
+        if allowed and not any(path == base or path.startswith(f"{base.rstrip('/')}/") for base in allowed):
+            raise ValueError("DB_BACKUP_DEFAULT_DIR muss unter DB_BACKUP_ALLOWED_DIRS liegen")
+        return path
+
+    @field_validator("db_backup_timeout_seconds")
+    @classmethod
+    def validate_db_backup_timeout_seconds(cls, value: int) -> int:
+        if value < 15:
+            raise ValueError("DB_BACKUP_TIMEOUT_SECONDS muss mindestens 15 Sekunden sein")
+        if value > 1800:
+            raise ValueError("DB_BACKUP_TIMEOUT_SECONDS darf maximal 1800 Sekunden sein")
+        return value
+
+    @field_validator("db_cleanup_max_passes")
+    @classmethod
+    def validate_db_cleanup_max_passes(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("DB_CLEANUP_MAX_PASSES muss mindestens 1 sein")
+        if value > 30:
+            raise ValueError("DB_CLEANUP_MAX_PASSES darf maximal 30 sein")
+        return value
+
+    @field_validator("db_backup_upload_max_bytes")
+    @classmethod
+    def validate_db_backup_upload_max_bytes(cls, value: int) -> int:
+        minimum = 1 * 1024 * 1024
+        maximum = 10 * 1024 * 1024 * 1024
+        if value < minimum:
+            raise ValueError("DB_BACKUP_UPLOAD_MAX_BYTES muss mindestens 1 MB sein")
+        if value > maximum:
+            raise ValueError("DB_BACKUP_UPLOAD_MAX_BYTES darf maximal 10 GB sein")
         return value
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
