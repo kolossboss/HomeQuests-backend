@@ -27,6 +27,7 @@ const state = {
   haSettings: null,
   haUserConfigs: [],
   channelStatus: null,
+  dbToolsStatus: null,
   systemRuntime: null,
   systemEvents: [],
   tasksSort: "updated_desc",
@@ -40,12 +41,16 @@ const state = {
   specialTaskEditorInitialSnapshot: "",
   rewardEditorInitialSnapshot: "",
   dashboardModalContext: null,
+  bootstrapBackups: [],
+  bootstrapBackupAllowedDirs: [],
+  bootstrapUploadMaxBytes: 0,
+  dbDirectoryBrowse: null,
+  dbDirectoryTree: null,
 };
 
 const authPanel = document.getElementById("auth-panel");
 const appPanel = document.getElementById("app-panel");
 const familySelect = document.getElementById("family-select");
-const userInfo = document.getElementById("user-info");
 const logOutput = document.getElementById("log-output");
 const inlineEditorSectionIds = [
   "member-editor-section",
@@ -73,6 +78,8 @@ const FIELD_ERROR_MESSAGES = {
   "boot-email": "Bitte eine gültige E-Mail-Adresse eingeben.",
   "boot-password": "Passwort muss mindestens 3 Zeichen haben.",
   "boot-password-confirm": "Passwörter müssen identisch sein.",
+  "bootstrap-backup-manual": "Bitte eine Backup-Datei wählen oder einen Dateinamen/Pfad eingeben.",
+  "bootstrap-backup-upload-file": "Bitte eine .dump-Datei auswählen.",
   "member-name": "Name ist erforderlich.",
   "member-email": "Bitte eine gültige E-Mail-Adresse eingeben.",
   "member-password": "Passwort muss mindestens 3 Zeichen haben.",
@@ -121,6 +128,10 @@ const FIELD_ERROR_MESSAGES = {
   "ha-base-url": "Bitte eine gültige Home-Assistant URL eingeben.",
   "ha-token": "Bitte Token eingeben.",
   "ha-user-service": "Für aktivierte Nutzer ist ein Service erforderlich.",
+  "db-backup-dir-custom": "Bitte einen gültigen absoluten Backup-Pfad eingeben.",
+  "db-backup-dir-selected": "Bitte einen gültigen Backup-Pfad auswählen.",
+  "db-backup-prefix": "Bitte ein gültiges Backup-Präfix eingeben.",
+  "db-cleanup-max-passes": "Bitte eine gültige Anzahl Pässe eingeben.",
 };
 const LOG_MAX_LINES = 1200;
 const LIVE_REFRESH_DEBOUNCE_MS = 350;
@@ -143,10 +154,149 @@ let uiLoadingCounter = 0;
 let uiStatusTimer = null;
 let membersPanelOriginalParent = null;
 let membersPanelOriginalNextSibling = null;
-let membersSystemModalOpen = false;
+let membersPanelEmbedded = false;
+let activeSystemView = "members";
+let activeParentTaskView = "tasks";
+let parentTaskSpecialOriginalParent = null;
+let parentTaskSpecialOriginalNextSibling = null;
 
 function byId(id) {
   return document.getElementById(id);
+}
+
+function syncAppShellMode() {
+  const shellEnabled = document.body.classList.contains("app-shell-active");
+  const desktopViewport = window.matchMedia("(min-width: 1181px)").matches;
+  document.body.classList.toggle("app-active", shellEnabled && desktopViewport);
+  document.body.classList.toggle("app-mobile-active", shellEnabled && !desktopViewport);
+}
+
+function setAppShellActive(active) {
+  document.body.classList.toggle("app-shell-active", Boolean(active));
+  syncAppShellMode();
+  applyNarrowViewportScrollFix();
+}
+
+function clearInlineScrollFix() {
+  const html = document.documentElement;
+  html.style.removeProperty("height");
+  html.style.removeProperty("min-height");
+  html.style.removeProperty("width");
+  html.style.removeProperty("overflow-x");
+  html.style.removeProperty("overflow-y");
+
+  document.body.style.removeProperty("height");
+  document.body.style.removeProperty("min-height");
+  document.body.style.removeProperty("position");
+  document.body.style.removeProperty("overflow-x");
+  document.body.style.removeProperty("overflow-y");
+  document.body.style.removeProperty("overscroll-behavior-y");
+  document.body.style.removeProperty("-webkit-overflow-scrolling");
+  document.body.style.removeProperty("touch-action");
+
+  const container = document.querySelector(".container");
+  if (container) {
+    container.style.removeProperty("width");
+    container.style.removeProperty("max-width");
+    container.style.removeProperty("height");
+    container.style.removeProperty("min-height");
+    container.style.removeProperty("margin");
+    container.style.removeProperty("overflow-x");
+    container.style.removeProperty("overflow-y");
+    container.style.removeProperty("overflow");
+    container.style.removeProperty("touch-action");
+    container.style.removeProperty("-webkit-overflow-scrolling");
+  }
+
+  const appPanelNode = byId("app-panel");
+  if (appPanelNode) {
+    appPanelNode.style.removeProperty("display");
+    appPanelNode.style.removeProperty("flex-direction");
+    appPanelNode.style.removeProperty("height");
+    appPanelNode.style.removeProperty("min-height");
+    appPanelNode.style.removeProperty("max-height");
+    appPanelNode.style.removeProperty("overflow");
+    appPanelNode.style.removeProperty("grid-template-columns");
+    appPanelNode.style.removeProperty("grid-template-rows");
+    appPanelNode.style.removeProperty("grid-template-areas");
+  }
+
+  document.querySelectorAll("#app-panel .toolbar, #app-panel .app-state-stack, #app-panel .tabs, #app-panel .tab-panel, #app-panel .tab-panel.active").forEach((panel) => {
+    panel.style.removeProperty("position");
+    panel.style.removeProperty("top");
+    panel.style.removeProperty("height");
+    panel.style.removeProperty("min-height");
+    panel.style.removeProperty("max-height");
+    panel.style.removeProperty("overflow");
+  });
+
+  document.querySelectorAll("#app-panel .tab-panel.active").forEach((panel) => {
+    panel.style.removeProperty("display");
+    panel.style.removeProperty("flex-direction");
+  });
+}
+
+function applyNarrowViewportScrollFix() {
+  const narrowViewport = window.matchMedia("(max-width: 1180px)").matches;
+  const shellEnabled = document.body.classList.contains("app-shell-active");
+  if (!narrowViewport || !shellEnabled) {
+    clearInlineScrollFix();
+    return;
+  }
+  const html = document.documentElement;
+  html.style.width = "100%";
+  html.style.height = "auto";
+  html.style.minHeight = "100%";
+  html.style.overflowX = "hidden";
+  html.style.overflowY = "auto";
+
+  document.body.style.position = "static";
+  document.body.style.height = "auto";
+  document.body.style.minHeight = "100%";
+  document.body.style.overflowX = "hidden";
+  document.body.style.overflowY = "auto";
+  document.body.style.overscrollBehaviorY = "auto";
+  document.body.style.setProperty("-webkit-overflow-scrolling", "touch");
+  document.body.style.touchAction = "auto";
+
+  const container = document.querySelector(".container");
+  if (container) {
+    container.style.width = "100%";
+    container.style.maxWidth = "100%";
+    container.style.height = "auto";
+    container.style.minHeight = "0";
+    container.style.margin = "0 auto";
+    container.style.overflow = "visible";
+    container.style.touchAction = "auto";
+    container.style.setProperty("-webkit-overflow-scrolling", "touch");
+  }
+
+  const appPanelNode = byId("app-panel");
+  if (appPanelNode) {
+    appPanelNode.style.display = "flex";
+    appPanelNode.style.flexDirection = "column";
+    appPanelNode.style.height = "auto";
+    appPanelNode.style.minHeight = "0";
+    appPanelNode.style.maxHeight = "none";
+    appPanelNode.style.overflow = "visible";
+    appPanelNode.style.gridTemplateColumns = "none";
+    appPanelNode.style.gridTemplateRows = "none";
+    appPanelNode.style.gridTemplateAreas = "none";
+  }
+
+  document.querySelectorAll("#app-panel .toolbar, #app-panel .app-state-stack, #app-panel .tabs, #app-panel .tab-panel, #app-panel .tab-panel.active").forEach((panel) => {
+    panel.style.position = "static";
+    panel.style.top = "auto";
+    panel.style.height = "auto";
+    panel.style.minHeight = "0";
+    panel.style.maxHeight = "none";
+    panel.style.overflow = "visible";
+  });
+
+  document.querySelectorAll("#app-panel .tab-panel.active").forEach((panel) => {
+    panel.style.display = "flex";
+    panel.style.flexDirection = "column";
+  });
 }
 
 function escapeHtml(value) {
@@ -311,6 +461,9 @@ function log(message, data = null) {
 function toggleHidden(id, hidden) {
   const element = byId(id);
   if (element) element.classList.toggle("hidden", Boolean(hidden));
+  if (inlineEditorSectionIds.includes(id)) {
+    syncInlineEditorModalVisibility();
+  }
 }
 
 function getFieldErrorHost(input) {
@@ -626,6 +779,7 @@ function specialTaskScheduleMeta(entry) {
 }
 
 function isSpecialTaskAvailableNow(entry) {
+  if (typeof entry?.available_now === "boolean") return entry.available_now;
   if (entry.interval_type !== "daily") return true;
   const weekdays = (entry.active_weekdays && entry.active_weekdays.length) ? entry.active_weekdays : [0, 1, 2, 3, 4, 5, 6];
   const now = new Date();
@@ -637,6 +791,29 @@ function isSpecialTaskAvailableNow(entry) {
   dueAt.setSeconds(0, 0);
   dueAt.setHours(dueParts.hours, dueParts.minutes, 0, 0);
   return now <= dueAt;
+}
+
+function specialTaskActionState(entry) {
+  const availableNow = isSpecialTaskAvailableNow(entry);
+  if (!availableNow) {
+    return {
+      disabled: true,
+      buttonText: "Nicht verfügbar",
+      statusText: entry.unavailable_reason || "Aktuell nicht verfügbar",
+    };
+  }
+  if (entry.remaining_count <= 0) {
+    return {
+      disabled: true,
+      buttonText: "Limit erreicht",
+      statusText: "Intervall-Limit erreicht",
+    };
+  }
+  return {
+    disabled: false,
+    buttonText: "Annehmen",
+    statusText: "Jetzt annehmbar",
+  };
 }
 
 function syncSpecialTaskCreateTimingUI() {
@@ -1723,6 +1900,10 @@ function connectLiveUpdates(familyId) {
           });
         }
       }
+      if (String(payload.event_type || "").startsWith("system.db.")) {
+        const info = payload.payload || {};
+        log(`DB-Ereignis: ${payload.event_type}`, info);
+      }
       queueLiveRefresh(payload.event_type || "family_update");
     } catch (error) {
       log("Live-Event Parse Fehler", { error: error.message });
@@ -1787,55 +1968,159 @@ function startSpecialTaskRefreshTicker() {
   }, 60000);
 }
 
-function openMembersSystemModal() {
-  if (!canManageMembers()) return;
-  const modal = byId("members-system-modal");
-  const modalContent = byId("members-system-modal-content");
+function ensureMembersPanelEmbedded() {
+  const host = byId("system-members-inline-content");
   const membersPanel = byId("tab-members");
-  if (!modal || !modalContent || !membersPanel) return;
-  if (membersSystemModalOpen) return;
+  if (!host || !membersPanel) return;
 
   if (!membersPanelOriginalParent) {
     membersPanelOriginalParent = membersPanel.parentElement;
     membersPanelOriginalNextSibling = membersPanel.nextElementSibling;
   }
 
-  membersPanel.classList.add("active");
-  modalContent.appendChild(membersPanel);
-  modal.classList.remove("hidden");
-  membersSystemModalOpen = true;
-  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  if (membersPanel.parentElement !== host) {
+    host.appendChild(membersPanel);
+  }
+
+  membersPanel.classList.remove("tab-panel");
+  membersPanel.classList.add("active", "system-members-panel");
+  membersPanelEmbedded = true;
 }
 
 function closeMembersSystemModal() {
-  if (!membersSystemModalOpen) return;
-  const modal = byId("members-system-modal");
-  const membersPanel = byId("tab-members");
-  if (!membersPanel || !membersPanelOriginalParent) {
-    if (modal) modal.classList.add("hidden");
-    membersSystemModalOpen = false;
-    return;
+  return;
+}
+
+function syncInlineEditorModalVisibility() {
+  const modal = byId("inline-editor-modal");
+  if (!modal) return;
+  const anyVisible = inlineEditorSectionIds.some((sectionId) => isElementVisible(sectionId));
+  toggleHidden("inline-editor-modal", !anyVisible);
+  document.body.classList.toggle("editor-modal-open", anyVisible);
+}
+
+function closeActiveInlineEditorModal() {
+  if (isSectionOpen("task-editor-section")) closeTaskEditor();
+  else if (isSectionOpen("special-task-editor-section")) closeSpecialTaskEditor();
+  else if (isSectionOpen("reward-editor-section")) closeRewardEditor();
+  else if (isSectionOpen("member-editor-section")) closeMemberEditor();
+  else if (isSectionOpen("points-adjust-section")) closePointsAdjust();
+  else {
+    restoreAllInlineEditorSections();
+    syncInlineEditorModalVisibility();
+  }
+}
+
+function setParentTaskView(view, { force = false } = {}) {
+  const allowed = ["tasks", "special"];
+  const targetView = allowed.includes(view) ? view : "tasks";
+  if (!force && targetView === activeParentTaskView) return;
+  activeParentTaskView = targetView;
+
+  document.querySelectorAll(".parent-task-nav-btn").forEach((button) => {
+    const isActive = button.dataset.parentTaskView === targetView;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+  document.querySelectorAll(".parent-task-pane").forEach((pane) => {
+    pane.classList.toggle("active", pane.id === `parent-task-pane-${targetView}`);
+  });
+}
+
+function syncParentTaskShellLayout() {
+  const shell = byId("parent-task-shell");
+  const tasksPane = byId("parent-task-pane-tasks");
+  const specialPane = byId("parent-task-pane-special");
+  const specialSection = byId("manager-special-task-section");
+  const manager = isManagerRole();
+
+  if (!shell || !tasksPane || !specialPane || !specialSection) return;
+
+  if (!parentTaskSpecialOriginalParent) {
+    parentTaskSpecialOriginalParent = specialSection.parentElement;
+    parentTaskSpecialOriginalNextSibling = specialSection.nextElementSibling;
   }
 
-  if (membersPanelOriginalNextSibling && membersPanelOriginalNextSibling.parentElement === membersPanelOriginalParent) {
-    membersPanelOriginalParent.insertBefore(membersPanel, membersPanelOriginalNextSibling);
+  toggleHidden("parent-task-shell", !manager);
+  toggleHidden("tab-btn-special-tasks", manager);
+
+  if (manager) {
+    const managerSectionIds = [
+      "task-create-toolbar",
+      "task-create-section",
+      "task-review-cards-section",
+      "tasks-table-section",
+      "task-history-section",
+      "task-editor-section",
+    ];
+    managerSectionIds.forEach((id) => {
+      const section = byId(id);
+      if (section && section.parentElement !== tasksPane) {
+        tasksPane.appendChild(section);
+      }
+    });
+
+    if (specialSection.parentElement !== specialPane) {
+      specialPane.appendChild(specialSection);
+    }
+
+    if (getActiveTabName() === "special-tasks") {
+      switchTab("tasks");
+    }
+    setParentTaskView(activeParentTaskView, { force: true });
   } else {
-    membersPanelOriginalParent.appendChild(membersPanel);
+    if (parentTaskSpecialOriginalParent && specialSection.parentElement !== parentTaskSpecialOriginalParent) {
+      if (
+        parentTaskSpecialOriginalNextSibling &&
+        parentTaskSpecialOriginalNextSibling.parentElement === parentTaskSpecialOriginalParent
+      ) {
+        parentTaskSpecialOriginalParent.insertBefore(specialSection, parentTaskSpecialOriginalNextSibling);
+      } else {
+        parentTaskSpecialOriginalParent.appendChild(specialSection);
+      }
+    }
+    setParentTaskView("tasks", { force: true });
   }
-  // Outside the modal the members panel must stay hidden until explicitly opened.
-  membersPanel.classList.remove("active");
+}
 
-  if (modal) modal.classList.add("hidden");
-  membersSystemModalOpen = false;
+function setSystemView(view, { force = false } = {}) {
+  const allowedViews = ["members", "channels", "dbtools", "logs"];
+  const targetView = allowedViews.includes(view) ? view : "members";
+  if (!force && targetView === activeSystemView) return;
+  activeSystemView = targetView;
+
+  const navButtons = Array.from(document.querySelectorAll(".system-nav-btn"));
+  const panes = Array.from(document.querySelectorAll(".system-pane"));
+  if (!navButtons.length || !panes.length) return;
+
+  navButtons.forEach((button) => {
+    const isActive = button.dataset.systemView === targetView;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+  });
+
+  panes.forEach((pane) => {
+    pane.classList.toggle("active", pane.id === `system-pane-${targetView}`);
+  });
 }
 
 function switchTab(name) {
-  if (membersSystemModalOpen) {
-    closeMembersSystemModal();
-  }
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${name}`));
+  if (name === "system") {
+    setSystemView(activeSystemView, { force: true });
+    ensureMembersPanelEmbedded();
+  }
+  if (name === "tasks" && isManagerRole()) {
+    setParentTaskView(activeParentTaskView, { force: true });
+  }
+  const activePanel = byId(`tab-${name}`);
+  if (activePanel && typeof activePanel.scrollTo === "function") {
+    activePanel.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }
   window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  syncAppShellMode();
+  applyNarrowViewportScrollFix();
 }
 
 function getActiveTabName() {
@@ -1929,6 +2214,7 @@ function restoreInlineEditorSection(sectionId) {
   if (section) {
     section.classList.remove("inline-editor-mounted");
   }
+  syncInlineEditorModalVisibility();
 }
 
 function restoreAllInlineEditorSections() {
@@ -1940,7 +2226,19 @@ function mountInlineEditorSectionBelowTrigger(sectionId, triggerButton) {
   const section = home?.section;
   if (!section) return;
 
+  restoreAllInlineEditorSections();
   restoreInlineEditorSection(sectionId);
+  const modal = byId("inline-editor-modal");
+  const modalContent = byId("inline-editor-modal-content");
+  const modalTitle = byId("inline-editor-modal-title");
+  if (modal && modalContent) {
+    modalContent.appendChild(section);
+    section.classList.add("inline-editor-mounted");
+    const head = section.querySelector("h4, h5");
+    if (modalTitle) modalTitle.textContent = head ? head.textContent.trim() : "Bearbeiten";
+    syncInlineEditorModalVisibility();
+    return;
+  }
   if (!triggerButton) return;
 
   const card = triggerButton.closest(".entity-card");
@@ -1978,6 +2276,32 @@ function mountInlineEditorSectionBelowTrigger(sectionId, triggerButton) {
   requestAnimationFrame(() => {
     section.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
+}
+
+function openInlineEditorSection(sectionId, triggerButton = null) {
+  const section = byId(sectionId);
+  if (!section) return;
+
+  const modal = byId("inline-editor-modal");
+  const modalContent = byId("inline-editor-modal-content");
+  const modalTitle = byId("inline-editor-modal-title");
+
+  if (modal && modalContent) {
+    restoreAllInlineEditorSections();
+    restoreInlineEditorSection(sectionId);
+    modalContent.appendChild(section);
+    section.classList.add("inline-editor-mounted");
+
+    const head = section.querySelector("h4, h5");
+    if (modalTitle) modalTitle.textContent = head ? head.textContent.trim() : "Bearbeiten";
+
+    toggleHidden(sectionId, false);
+    syncInlineEditorModalVisibility();
+    return;
+  }
+
+  mountInlineEditorSectionBelowTrigger(sectionId, triggerButton);
+  toggleHidden(sectionId, false);
 }
 
 function syncDashboardStatsCardOrder() {
@@ -2030,6 +2354,7 @@ function getChildTaskBuckets(userId) {
   tomorrowStart.setDate(tomorrowStart.getDate() + 1);
   const actionableTasks = newestRecurringEntries(ownVisibleTasks
     .filter((task) => task.status === "open" || task.status === "rejected")
+    .filter((task) => !(task.recurrence_type === "none" && !task.due_at))
     .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)), "earliest_due");
   const weekTasks = actionableTasks.filter(
     (task) => task.recurrence_type === "weekly" && !(task.due_at && new Date(task.due_at) < now)
@@ -2159,13 +2484,13 @@ function renderDashboardRewardCards(entries, emptyText, { reviewMode = false } =
 }
 
 function childDashboardSpecialCardsMarkup() {
-  const available = (state.availableSpecialTasks || []).filter((entry) => isSpecialTaskAvailableNow(entry));
+  const available = (state.availableSpecialTasks || []);
   if (!available.length) return "";
   return `<section class="dashboard-modal-section">
     <h5>Sonderaufgaben</h5>
     <div class="dashboard-modal-grid">${available.map((entry) => {
-      const disabled = entry.remaining_count <= 0 ? "disabled" : "";
-      const buttonText = entry.remaining_count <= 0 ? "Limit erreicht" : "Annehmen";
+      const actionState = specialTaskActionState(entry);
+      const disabled = actionState.disabled ? "disabled" : "";
       const dailyMeta = entry.interval_type === "daily"
         ? ` • Tage: ${weekdaysText((entry.active_weekdays && entry.active_weekdays.length) ? entry.active_weekdays : [0, 1, 2, 3, 4, 5, 6])}`
         : "";
@@ -2178,10 +2503,11 @@ function childDashboardSpecialCardsMarkup() {
     { label: "Punkte", value: `${entry.points}` },
     { label: "Intervall", value: `${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta}` },
     { label: "Verfügbar", value: `${entry.remaining_count}/${entry.max_claims_per_interval}` },
+    { label: "Status", value: actionState.statusText },
   ], { className: "request-card-kv" })}
         <p class="request-card-note">${safeHtmlText(entry.description, "Ohne Beschreibung")}</p>
         <div class="request-card-actions">
-          <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
+          <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${actionState.buttonText}</button>
         </div>
       </article>`;
     }).join("")}</div>
@@ -2453,16 +2779,17 @@ function openTasksTabWithSection(sectionId = null) {
 
 function applyRoleVisibility() {
   const child = isChildRole();
+  const manager = isManagerRole();
 
   toggleHidden("tab-btn-members", child);
   toggleHidden("tab-btn-system", child);
   toggleHidden("tab-members", child);
   toggleHidden("tab-system", child);
+  toggleHidden("logout-btn", !child);
+  toggleHidden("tab-btn-special-tasks", manager);
   toggleHidden("system-members-section", !canManageMembers());
-  toggleHidden("open-members-system-modal-btn", !canManageMembers());
-  if (!canManageMembers()) {
-    closeMembersSystemModal();
-  }
+  if (canManageMembers()) ensureMembersPanelEmbedded();
+  syncParentTaskShellLayout();
 
   toggleHidden("toggle-member-create-btn", !canManageMembers());
   if (!canManageMembers()) {
@@ -2484,7 +2811,8 @@ function applyRoleVisibility() {
   }
   toggleHidden("tasks-table-section", child);
   toggleHidden("task-history-section", child);
-  toggleHidden("task-review-cards-section", child);
+  // Aufgaben-Prüfungen laufen ausschließlich über das Dashboard.
+  toggleHidden("task-review-cards-section", true);
   closeTaskEditor();
   toggleHidden("manager-special-task-section", child);
   toggleHidden("child-special-task-section", !child);
@@ -2530,6 +2858,7 @@ function applyRoleVisibility() {
 async function initAuthPanel() {
   authPanel.classList.remove("hidden");
   appPanel.classList.add("hidden");
+  setAppShellActive(false);
   hideUiStatus();
   clearAuthStatus();
   toggleHidden("login-section", true);
@@ -2538,12 +2867,23 @@ async function initAuthPanel() {
   if (byId("member-password-visible")) byId("member-password-visible").checked = false;
   setPasswordInputVisibility(["boot-password", "boot-password-confirm"], false);
   setPasswordInputVisibility(["member-password", "member-password-confirm"], false);
+  state.bootstrapBackups = [];
+  state.bootstrapBackupAllowedDirs = [];
+  state.bootstrapUploadMaxBytes = 0;
+  if (byId("bootstrap-backup-manual")) byId("bootstrap-backup-manual").value = "";
+  if (byId("bootstrap-backup-upload-file")) byId("bootstrap-backup-upload-file").value = "";
+  renderBootstrapBackups();
+  renderBootstrapUploadTargets();
+  setBootstrapRestoreStatus("Noch kein Restore ausgeführt.", false);
 
   try {
     setUiLoading(true, "Anmeldung wird vorbereitet ...");
     const status = await api("/auth/bootstrap-status");
     if (status.bootstrap_required) {
       toggleHidden("bootstrap-section", false);
+      await loadBootstrapBackups().catch((error) => {
+        setBootstrapRestoreStatus(`Backups konnten nicht geladen werden: ${error.message}`, true);
+      });
     } else {
       toggleHidden("login-section", false);
     }
@@ -2554,6 +2894,140 @@ async function initAuthPanel() {
   } finally {
     setUiLoading(false);
   }
+}
+
+function setBootstrapRestoreStatus(message, isError = false) {
+  const target = byId("bootstrap-restore-status");
+  if (!target) return;
+  target.textContent = message;
+  target.classList.toggle("error-text", Boolean(isError));
+}
+
+function renderBootstrapBackups() {
+  const select = byId("bootstrap-backup-select");
+  if (!select) return;
+  const options = state.bootstrapBackups.map((entry) => {
+    const modified = entry.modified_at_utc ? formatDateTime(entry.modified_at_utc) : "-";
+    const sizeMb = Number(entry.size_bytes || 0) / (1024 * 1024);
+    const sizeLabel = Number.isFinite(sizeMb) ? `${sizeMb.toFixed(1)} MB` : "-";
+    return {
+      value: entry.file_path,
+      label: `${entry.file_name} • ${modified} • ${sizeLabel}`,
+    };
+  });
+  fillSelect("bootstrap-backup-select", options, true, options.length ? "Backup auswählen" : "Keine Backups gefunden");
+}
+
+function renderBootstrapUploadTargets() {
+  const options = (state.bootstrapBackupAllowedDirs || []).map((entry) => ({
+    value: entry,
+    label: entry,
+  }));
+  fillSelect("bootstrap-upload-target", options, true, options.length ? "Standardziel verwenden" : "Kein Ziel verfügbar");
+}
+
+async function loadBootstrapBackups() {
+  const payload = await api("/auth/bootstrap-backups");
+  state.bootstrapBackups = payload.files || [];
+  state.bootstrapBackupAllowedDirs = payload.backup_allowed_dirs || [];
+  state.bootstrapUploadMaxBytes = Number(payload.upload_max_bytes || 0);
+  renderBootstrapBackups();
+  renderBootstrapUploadTargets();
+  const maxMb = state.bootstrapUploadMaxBytes > 0
+    ? `${(state.bootstrapUploadMaxBytes / (1024 * 1024)).toFixed(0)} MB`
+    : "-";
+  const statusLine = [
+    `Backup unterstützt: ${payload.backup_supported ? "ja" : "nein"}`,
+    `Restore verfügbar: ${payload.restore_command_available ? "ja" : "nein"}`,
+    `Dateien: ${state.bootstrapBackups.length}`,
+    `Upload-Limit: ${maxMb}`,
+  ].join(" • ");
+  setBootstrapRestoreStatus(statusLine, false);
+}
+
+function resolveBootstrapBackupSelection() {
+  const manual = String(byId("bootstrap-backup-manual")?.value || "").trim();
+  if (manual) return manual;
+  const selected = String(byId("bootstrap-backup-select")?.value || "").trim();
+  return selected || "";
+}
+
+async function runBootstrapRestore() {
+  clearInvalid(["bootstrap-backup-manual"]);
+  clearAuthStatus();
+  const backupFile = resolveBootstrapBackupSelection();
+  if (!backupFile) {
+    setInvalid(byId("bootstrap-backup-manual"), true);
+    throw new Error("Bitte Backup-Datei auswählen oder Dateiname/Pfad angeben.");
+  }
+
+  setBootstrapRestoreStatus("Restore läuft ...", false);
+  const response = await api("/auth/bootstrap-restore", {
+    method: "POST",
+    body: { backup_file: backupFile },
+  });
+  log("Bootstrap Restore erfolgreich", response);
+  setBootstrapRestoreStatus(
+    `Restore erfolgreich (${response.user_count} Nutzer wiederhergestellt). Bitte einloggen.`,
+    false
+  );
+  showAuthStatus("Backup wurde wiederhergestellt. Bitte mit deinem bestehenden Konto einloggen.");
+  await initAuthPanel();
+}
+
+async function runBootstrapUpload() {
+  clearInvalid(["bootstrap-backup-upload-file"]);
+  const fileInput = byId("bootstrap-backup-upload-file");
+  if (!fileInput || !fileInput.files || fileInput.files.length < 1) {
+    setInvalid(fileInput, true);
+    throw new Error("Bitte eine .dump-Datei auswählen.");
+  }
+
+  const selected = fileInput.files[0];
+  const fileName = String(selected.name || "").toLowerCase();
+  if (!fileName.endsWith(".dump")) {
+    setInvalid(fileInput, true);
+    throw new Error("Nur .dump Backups können hochgeladen werden.");
+  }
+  if (state.bootstrapUploadMaxBytes > 0 && Number(selected.size) > state.bootstrapUploadMaxBytes) {
+    setInvalid(fileInput, true);
+    throw new Error(`Datei überschreitet Upload-Limit (${Math.round(state.bootstrapUploadMaxBytes / (1024 * 1024))} MB).`);
+  }
+
+  const uploadTarget = String(byId("bootstrap-upload-target")?.value || "").trim();
+  const formData = new FormData();
+  formData.append("file", selected, selected.name);
+  if (uploadTarget) formData.append("target_dir", uploadTarget);
+
+  setBootstrapRestoreStatus("Upload läuft ...", false);
+  const response = await fetch("/auth/bootstrap-backups/upload", {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+  });
+
+  const raw = await response.text();
+  let payload = {};
+  if (raw) {
+    try {
+      payload = JSON.parse(raw);
+    } catch (_) {
+      payload = {};
+    }
+  }
+
+  if (!response.ok) {
+    const detail = payload?.detail || raw || `HTTP ${response.status}`;
+    const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
+    setInvalid(fileInput, true);
+    throw new Error(detailText);
+  }
+
+  fileInput.value = "";
+  setBootstrapRestoreStatus(`Upload erfolgreich: ${payload.file_name}`, false);
+  log("Bootstrap Backup Upload erfolgreich", payload);
+  await loadBootstrapBackups();
+  if (byId("bootstrap-backup-manual")) byId("bootstrap-backup-manual").value = payload.file_path || "";
 }
 
 function syncTaskCreateTimingUI() {
@@ -2723,8 +3197,7 @@ function fillMemberEditorForm() {
 function openMemberEditor(memberId, triggerButton = null) {
   state.selectedMemberId = memberId;
   fillMemberEditorForm();
-  mountInlineEditorSectionBelowTrigger("member-editor-section", triggerButton);
-  toggleHidden("member-editor-section", false);
+  openInlineEditorSection("member-editor-section", triggerButton);
 }
 
 function closeMemberEditor() {
@@ -3168,8 +3641,7 @@ function openSpecialTaskEditor(templateId, triggerButton = null) {
   fillSpecialTaskEditorForm();
   state.specialTaskEditorInitialSnapshot = specialTaskEditorSnapshot();
   state.specialTaskEditorDirty = false;
-  mountInlineEditorSectionBelowTrigger("special-task-editor-section", triggerButton);
-  toggleHidden("special-task-editor-section", false);
+  openInlineEditorSection("special-task-editor-section", triggerButton);
   updateSpecialTaskEditButtons();
 }
 
@@ -3275,12 +3747,12 @@ function renderSpecialTaskTemplates() {
 
 function renderChildSpecialTaskCards() {
   if (!isChildRole()) return;
-  const list = (state.availableSpecialTasks || []).filter((entry) => isSpecialTaskAvailableNow(entry));
+  const list = (state.availableSpecialTasks || []);
   byId("child-special-task-cards").innerHTML = list.length
     ? list
       .map((entry) => {
-        const disabled = entry.remaining_count <= 0 ? "disabled" : "";
-        const buttonText = entry.remaining_count <= 0 ? "Limit erreicht" : "Annehmen";
+        const actionState = specialTaskActionState(entry);
+        const disabled = actionState.disabled ? "disabled" : "";
         const dailyMeta = entry.interval_type === "daily"
           ? ` • Tage: ${weekdaysText((entry.active_weekdays && entry.active_weekdays.length) ? entry.active_weekdays : [0, 1, 2, 3, 4, 5, 6])}`
           : "";
@@ -3293,10 +3765,11 @@ function renderChildSpecialTaskCards() {
         { label: "Punkte", value: `${entry.points}` },
         { label: "Intervall", value: `${specialIntervalLabel(entry.interval_type)}${dailyMeta}${dueMeta}` },
         { label: "Verfügbar", value: `${entry.remaining_count}/${entry.max_claims_per_interval}` },
+        { label: "Status", value: actionState.statusText },
       ], { className: "request-card-kv" })}
           <p class="request-card-note">${safeHtmlText(entry.description, "Ohne Beschreibung")}</p>
           <div class="request-card-actions">
-            <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${buttonText}</button>
+            <button class="btn-success" data-special-task-claim-id="${entry.id}" ${disabled}>${actionState.buttonText}</button>
           </div>
         </article>`;
       })
@@ -3343,8 +3816,7 @@ function openTaskEditor(taskId, triggerButton = null) {
   fillTaskEditorForm();
   state.taskEditorInitialSnapshot = taskEditorSnapshot();
   state.taskEditorDirty = false;
-  mountInlineEditorSectionBelowTrigger("task-editor-section", triggerButton);
-  toggleHidden("task-editor-section", false);
+  openInlineEditorSection("task-editor-section", triggerButton);
   updateTaskEditButtons();
 }
 
@@ -3850,8 +4322,7 @@ function openRewardEditor(rewardId, triggerButton = null) {
   fillRewardEditorForm();
   state.rewardEditorInitialSnapshot = rewardEditorSnapshot();
   state.rewardEditorDirty = false;
-  mountInlineEditorSectionBelowTrigger("reward-editor-section", triggerButton);
-  toggleHidden("reward-editor-section", false);
+  openInlineEditorSection("reward-editor-section", triggerButton);
   updateRewardEditButtons();
 }
 
@@ -3979,7 +4450,7 @@ async function loadSpecialTasks() {
 
   if (isChildRole()) {
     state.specialTaskTemplates = [];
-    state.availableSpecialTasks = await api(`/families/${familyId}/special-tasks/available`);
+    state.availableSpecialTasks = await api(`/families/${familyId}/special-tasks/available?include_unavailable=true`);
     renderChildSpecialTaskCards();
     byId("special-task-manager-cards").innerHTML = "";
     return;
@@ -4232,8 +4703,10 @@ function renderSystemRuntime() {
     return;
   }
 
-  versionTarget.textContent = state.systemRuntime.app_version || "-";
-  buildTarget.textContent = state.systemRuntime.app_build_ref ? `(Build: ${state.systemRuntime.app_build_ref})` : "";
+  const version = state.systemRuntime.app_version || "-";
+  const build = state.systemRuntime.app_build_ref || "";
+  versionTarget.textContent = build ? `${version} (${build})` : version;
+  buildTarget.textContent = "";
 }
 
 function renderSystemEvents() {
@@ -4272,6 +4745,513 @@ async function loadSystemEvents() {
   }
   state.systemEvents = await api(`/families/${familyId}/system/events?limit=${limit}`);
   renderSystemEvents();
+}
+
+function renderDbToolsStatus() {
+  const statusTarget = byId("db-tools-status");
+  const outputTarget = byId("db-tools-output");
+  const dirSelect = byId("db-backup-dir-select");
+  const cleanupPassesInput = byId("db-cleanup-max-passes");
+  if (!statusTarget || !outputTarget || !dirSelect || !cleanupPassesInput) return;
+
+  if (!state.dbToolsStatus) {
+    statusTarget.textContent = "DB-Tools Status nicht geladen.";
+    fillSelect("db-backup-dir-select", [], true, "Kein Ziel verfügbar");
+    syncDbBackupPathDisplay();
+    outputTarget.textContent = "Noch keine Ausführung.";
+    outputTarget.classList.add("muted");
+    return;
+  }
+
+  const payload = state.dbToolsStatus;
+  const supported = payload.backup_supported && payload.backup_command_available;
+  statusTarget.textContent = [
+    `Engine: ${payload.database_engine}`,
+    `Backup verfügbar: ${supported ? "ja" : "nein"}`,
+    `Restore verfügbar: ${payload.restore_command_available ? "ja" : "nein"}`,
+    `Standardpfad: ${payload.backup_default_dir}`,
+    `Cleanup max: ${payload.cleanup_max_passes}`,
+  ].join(" • ");
+
+  const options = (payload.backup_allowed_dirs || []).map((entry) => ({ value: entry, label: entry }));
+  fillSelect("db-backup-dir-select", options, false);
+  if (payload.backup_default_dir) {
+    dirSelect.value = payload.backup_default_dir;
+  }
+  cleanupPassesInput.value = String(payload.cleanup_max_passes || 4);
+  syncDbBackupPathDisplay();
+
+  const diagnostics = payload.diagnostics || {};
+  outputTarget.textContent =
+    `Diagnose:\n` +
+    `- Doppelte Seriengruppen: ${diagnostics.duplicate_series_groups ?? 0}\n` +
+    `- Doppelte Serienzeilen: ${diagnostics.duplicate_series_rows ?? 0}\n` +
+    `- Weekly-Flex Duplikatgruppen: ${diagnostics.weekly_flexible_duplicate_groups ?? 0}\n` +
+    `- Weekly-Flex Duplikatzeilen: ${diagnostics.weekly_flexible_duplicate_rows ?? 0}\n` +
+    `- Deaktiviert aber offen: ${diagnostics.inactive_open_like_count ?? 0}\n` +
+    `- Terminlose alte Einmal-Aufgaben offen: ${diagnostics.stale_none_without_due_open_count ?? 0}`;
+  outputTarget.classList.remove("muted");
+}
+
+function appendDbToolsOutput(title, payload) {
+  const outputTarget = byId("db-tools-output");
+  if (!outputTarget) return;
+  const timestamp = new Date().toLocaleString("de-DE");
+  const body = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  const previous = String(outputTarget.textContent || "").trim();
+  outputTarget.textContent = `${timestamp} ${title}\n${body}${previous ? `\n\n${previous}` : ""}`;
+  outputTarget.classList.remove("muted");
+}
+
+async function loadDbToolsStatus() {
+  const familyId = getSelectedFamilyId();
+  if (!familyId || !isManagerRole()) {
+    state.dbToolsStatus = null;
+    renderDbToolsStatus();
+    return;
+  }
+  state.dbToolsStatus = await api(`/families/${familyId}/system/db-tools/status`);
+  renderDbToolsStatus();
+}
+
+function setDbPathBrowserStatus(message = "", isError = false) {
+  const target = byId("db-path-browser-status");
+  if (!target) return;
+  target.textContent = message || "";
+  target.classList.toggle("error", Boolean(isError));
+}
+
+function setDbPathBrowserResult(message = "", isError = false) {
+  const target = byId("db-path-browser-result");
+  if (!target) return;
+  target.textContent = message || "";
+  target.classList.toggle("error", Boolean(isError));
+}
+
+function normalizeDbPath(path) {
+  const raw = String(path || "").trim();
+  if (!raw) return "";
+  return raw.replace(/\/+$/, "") || "/";
+}
+
+function getDbDirectoryTreeState() {
+  if (!state.dbDirectoryTree) {
+    state.dbDirectoryTree = {
+      allowedRoots: [],
+      entriesByPath: {},
+      expandedByPath: {},
+      loadingByPath: {},
+      selectedPath: "",
+    };
+  }
+  return state.dbDirectoryTree;
+}
+
+function findDbMatchingRoot(path, roots) {
+  const normalizedPath = normalizeDbPath(path);
+  if (!normalizedPath) return "";
+  const normalizedRoots = (roots || []).map((root) => normalizeDbPath(root));
+  const matches = normalizedRoots.filter((root) => {
+    if (!root) return false;
+    if (normalizedPath === root) return true;
+    return normalizedPath.startsWith(root.endsWith("/") ? root : `${root}/`);
+  });
+  if (!matches.length) return "";
+  return matches.sort((a, b) => b.length - a.length)[0];
+}
+
+function buildDbPathChain(root, targetPath) {
+  const normalizedRoot = normalizeDbPath(root);
+  const normalizedTarget = normalizeDbPath(targetPath);
+  if (!normalizedRoot || !normalizedTarget) return [];
+  if (normalizedRoot === normalizedTarget) return [normalizedRoot];
+
+  const relative = normalizedTarget.slice(normalizedRoot.length).replace(/^\/+/, "");
+  const segments = relative ? relative.split("/").filter(Boolean) : [];
+  const chain = [normalizedRoot];
+  let cursor = normalizedRoot;
+  segments.forEach((segment) => {
+    cursor = `${cursor.replace(/\/+$/, "")}/${segment}`;
+    chain.push(normalizeDbPath(cursor));
+  });
+  return chain;
+}
+
+function getDbPathLabel(path, fallbackName = "Ordner") {
+  const normalized = normalizeDbPath(path);
+  if (!normalized) return fallbackName;
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : normalized;
+}
+
+function syncDbBackupPathDisplay() {
+  const customInput = byId("db-backup-dir-custom");
+  const selectedInput = byId("db-backup-dir-selected");
+  const selectInput = byId("db-backup-dir-select");
+  if (!selectedInput) return;
+  const customValue = customInput ? normalizeDbPath(customInput.value) : "";
+  const selectedFallback = selectInput ? normalizeDbPath(selectInput.value) : "";
+  if (customValue) {
+    selectedInput.value = customValue;
+    selectedInput.placeholder = "";
+  } else {
+    selectedInput.value = "";
+    selectedInput.placeholder = selectedFallback ? `Standard: ${selectedFallback}` : "Kein eigener Pfad gewählt";
+  }
+}
+
+function applyDbBackupPath(path) {
+  const normalized = normalizeDbPath(path);
+  const customInput = byId("db-backup-dir-custom");
+  const selectedInput = byId("db-backup-dir-selected");
+  if (customInput) {
+    customInput.value = normalized;
+    setInvalid(customInput, false);
+  }
+  if (selectedInput) {
+    selectedInput.value = normalized;
+    selectedInput.placeholder = normalized ? "" : selectedInput.placeholder;
+    setInvalid(selectedInput, false);
+  }
+  const tree = getDbDirectoryTreeState();
+  tree.selectedPath = normalized;
+  setDbPathBrowserStatus(normalized ? `Backup-Ziel gewählt: ${normalized}` : "");
+}
+
+function renderDbTreeNode(path, label, depth = 0, isRoot = false) {
+  const tree = getDbDirectoryTreeState();
+  const normalizedPath = normalizeDbPath(path);
+  const selected = tree.selectedPath === normalizedPath;
+  const expanded = Boolean(tree.expandedByPath[normalizedPath]);
+  const isLoading = Boolean(tree.loadingByPath[normalizedPath]);
+  const entries = tree.entriesByPath[normalizedPath];
+  const isLoaded = Array.isArray(entries);
+  const canToggle = isLoading || !isLoaded || entries.length > 0;
+  const displayLabel = label || getDbPathLabel(normalizedPath, "Ordner");
+  const safePath = safeHtmlText(normalizedPath);
+  const nextDepth = depth + 1;
+
+  let childrenMarkup = "";
+  if (expanded) {
+    if (isLoading) {
+      childrenMarkup = `<div class="db-tree-info" style="--depth:${nextDepth}">Lade Unterordner…</div>`;
+    } else if (!isLoaded) {
+      childrenMarkup = `<div class="db-tree-info" style="--depth:${nextDepth}">Klicke auf ▸ zum Laden.</div>`;
+    } else if (!entries.length) {
+      childrenMarkup = `<div class="db-tree-info" style="--depth:${nextDepth}">Keine Unterordner</div>`;
+    } else {
+      childrenMarkup = entries
+        .map((entry) => renderDbTreeNode(entry.path, entry.name || getDbPathLabel(entry.path, "Ordner"), nextDepth, false))
+        .join("");
+    }
+  }
+
+  return `<div class="db-tree-node">
+    <div class="db-tree-row ${selected ? "active" : ""}" style="--depth:${depth}">
+      <button type="button" class="db-tree-toggle btn-secondary" data-db-tree-toggle="${safePath}" ${canToggle ? "" : "disabled"}>${expanded ? "▾" : "▸"}</button>
+      <button type="button" class="db-tree-select" data-db-tree-select="${safePath}">${safeHtmlText(displayLabel)}</button>
+      ${isRoot ? `<span class="db-tree-path">${safePath}</span>` : ""}
+    </div>
+    ${expanded ? `<div class="db-tree-children">${childrenMarkup}</div>` : ""}
+  </div>`;
+}
+
+function renderDbDirectoryBrowser() {
+  const treeWrap = byId("db-path-browser-tree");
+  const selectedInput = byId("db-path-browser-selected");
+  if (!treeWrap || !selectedInput) return;
+
+  const tree = getDbDirectoryTreeState();
+  const selectedPath = normalizeDbPath(tree.selectedPath);
+  selectedInput.value = selectedPath;
+
+  const roots = Array.isArray(tree.allowedRoots) ? tree.allowedRoots.filter(Boolean) : [];
+  if (!roots.length) {
+    treeWrap.innerHTML = `<div class="db-tree-empty">Keine erlaubten Backup-Basisordner gefunden.</div>`;
+    return;
+  }
+  treeWrap.innerHTML = roots
+    .map((root) => renderDbTreeNode(root, root, 0, true))
+    .join("");
+}
+
+async function loadDbDirectoryNode(path = null, { force = false } = {}) {
+  const familyId = getSelectedFamilyId();
+  if (!familyId || !isManagerRole()) return null;
+
+  const tree = getDbDirectoryTreeState();
+  const requestedPath = normalizeDbPath(path);
+  if (requestedPath && !force && Array.isArray(tree.entriesByPath[requestedPath])) {
+    return null;
+  }
+
+  const query = requestedPath ? `?path=${encodeURIComponent(requestedPath)}` : "";
+  const browse = await api(`/families/${familyId}/system/db-tools/directories${query}`);
+  const currentPath = normalizeDbPath(browse.current_path);
+  const entries = Array.isArray(browse.directories)
+    ? browse.directories.map((entry) => ({
+      name: entry.name || getDbPathLabel(entry.path, "Ordner"),
+      path: normalizeDbPath(entry.path),
+    }))
+    : [];
+  tree.allowedRoots = Array.isArray(browse.allowed_roots)
+    ? browse.allowed_roots.map((root) => normalizeDbPath(root)).filter(Boolean)
+    : [];
+  tree.entriesByPath[currentPath] = entries;
+  if (!tree.selectedPath) tree.selectedPath = requestedPath || currentPath;
+  state.dbDirectoryBrowse = browse;
+  return browse;
+}
+
+async function ensureDbPathExpanded(path) {
+  const tree = getDbDirectoryTreeState();
+  const normalizedPath = normalizeDbPath(path);
+  if (!normalizedPath) return;
+  const rootPath = findDbMatchingRoot(normalizedPath, tree.allowedRoots);
+  if (!rootPath) return;
+
+  const chain = buildDbPathChain(rootPath, normalizedPath);
+  for (const chainPath of chain) {
+    tree.expandedByPath[chainPath] = true;
+    if (!Array.isArray(tree.entriesByPath[chainPath])) {
+      tree.loadingByPath[chainPath] = true;
+      renderDbDirectoryBrowser();
+      try {
+        await loadDbDirectoryNode(chainPath, { force: true });
+      } finally {
+        delete tree.loadingByPath[chainPath];
+      }
+    }
+  }
+  tree.selectedPath = normalizedPath;
+}
+
+async function toggleDbTreePath(path) {
+  const tree = getDbDirectoryTreeState();
+  const normalizedPath = normalizeDbPath(path);
+  if (!normalizedPath) return;
+  const expanded = Boolean(tree.expandedByPath[normalizedPath]);
+  tree.expandedByPath[normalizedPath] = !expanded;
+  if (!expanded && !Array.isArray(tree.entriesByPath[normalizedPath])) {
+    tree.loadingByPath[normalizedPath] = true;
+    renderDbDirectoryBrowser();
+    try {
+      await loadDbDirectoryNode(normalizedPath, { force: true });
+    } finally {
+      delete tree.loadingByPath[normalizedPath];
+    }
+  }
+  renderDbDirectoryBrowser();
+}
+
+function closeDbPathBrowserModal() {
+  toggleHidden("db-path-browser-modal", true);
+  setDbPathBrowserResult("");
+}
+
+async function openDbPathBrowserModal() {
+  if (!isManagerRole()) return;
+  toggleHidden("db-path-browser-modal", false);
+  setDbPathBrowserResult("");
+  setDbPathBrowserStatus("");
+
+  state.dbDirectoryTree = null;
+  const preferredPath = normalizeDbPath(getDbBackupTargetDir());
+  const fallbackRoot = normalizeDbPath(state.dbToolsStatus?.backup_allowed_dirs?.[0] || "");
+  const initialTarget = preferredPath || fallbackRoot || null;
+  let initial = null;
+  try {
+    initial = await loadDbDirectoryNode(initialTarget, { force: true });
+  } catch (error) {
+    if (!preferredPath) throw error;
+    const customInput = byId("db-backup-dir-custom");
+    if (customInput) customInput.value = "";
+    syncDbBackupPathDisplay();
+    setDbPathBrowserStatus("Gespeicherter eigener Pfad war ungültig. Standardpfade werden geladen.");
+    initial = await loadDbDirectoryNode(fallbackRoot || null, { force: true });
+  }
+  const tree = getDbDirectoryTreeState();
+  if (preferredPath) {
+    await ensureDbPathExpanded(preferredPath).catch(() => null);
+  } else if (initial?.current_path) {
+    tree.selectedPath = normalizeDbPath(initial.current_path);
+  }
+  renderDbDirectoryBrowser();
+}
+
+async function createDbDirectoryFromBrowser() {
+  const familyId = getSelectedFamilyId();
+  const input = byId("db-path-browser-new-dir-name");
+  const tree = getDbDirectoryTreeState();
+  if (!familyId || !isManagerRole() || !input) return;
+  const directoryName = String(input.value || "").trim();
+  if (!directoryName) {
+    setDbPathBrowserResult("Bitte einen Ordnernamen eingeben.", true);
+    return;
+  }
+
+  const parentPath = normalizeDbPath(tree.selectedPath || getDbBackupTargetDir() || tree.allowedRoots?.[0] || "");
+  if (!parentPath) {
+    setDbPathBrowserResult("Bitte zuerst einen Zielordner auswählen.", true);
+    return;
+  }
+
+  const response = await api(`/families/${familyId}/system/db-tools/directories/create`, {
+    method: "POST",
+    body: {
+      parent_dir: parentPath,
+      directory_name: directoryName,
+    },
+  });
+  input.value = "";
+
+  tree.expandedByPath[parentPath] = true;
+  await loadDbDirectoryNode(parentPath, { force: true });
+  const createdPath = normalizeDbPath(response.created_path || "");
+  if (createdPath) {
+    tree.selectedPath = createdPath;
+    await ensureDbPathExpanded(createdPath);
+    applyDbBackupPath(createdPath);
+    setDbPathBrowserResult(`Ordner erstellt: ${createdPath}`);
+  } else {
+    setDbPathBrowserResult("Ordner erstellt.");
+  }
+  renderDbDirectoryBrowser();
+}
+
+function getDbBackupTargetDir() {
+  const customInput = byId("db-backup-dir-custom");
+  const customValue = customInput ? normalizeDbPath(customInput.value) : "";
+  if (customValue) return customValue;
+  const selectInput = byId("db-backup-dir-select");
+  return selectInput ? normalizeDbPath(selectInput.value) : "";
+}
+
+function parseDownloadFilename(contentDisposition, fallbackFilePath) {
+  const fallback = String(fallbackFilePath || "homequests_backup.dump").split("/").pop() || "homequests_backup.dump";
+  const raw = String(contentDisposition || "");
+  const utfMatch = raw.match(/filename\\*=UTF-8''([^;]+)/i);
+  if (utfMatch && utfMatch[1]) {
+    try {
+      return decodeURIComponent(utfMatch[1]).replace(/[/\\\\]/g, "_");
+    } catch (_) {
+      return utfMatch[1].replace(/[/\\\\]/g, "_");
+    }
+  }
+  const asciiMatch = raw.match(/filename=\"?([^\";]+)\"?/i);
+  if (asciiMatch && asciiMatch[1]) return asciiMatch[1].replace(/[/\\\\]/g, "_");
+  return fallback.replace(/[/\\\\]/g, "_");
+}
+
+async function downloadDbBackupFile(backupFilePath) {
+  const familyId = getSelectedFamilyId();
+  if (!familyId) return;
+  const url = `/families/${familyId}/system/db-tools/backup/download?backup_file=${encodeURIComponent(backupFilePath)}`;
+  const response = await fetch(url, { credentials: "same-origin" });
+  if (!response.ok) {
+    const raw = await response.text();
+    let detail = raw || `HTTP ${response.status}`;
+    try {
+      const payload = raw ? JSON.parse(raw) : {};
+      detail = payload?.detail || detail;
+    } catch (_) {
+      // raw string bleibt erhalten
+    }
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+  }
+
+  const blob = await response.blob();
+  const fileName = parseDownloadFilename(response.headers.get("Content-Disposition"), backupFilePath);
+  const objectUrl = window.URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    window.URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function runDbBackup({ downloadAfterCreate = false } = {}) {
+  if (!isManagerRole()) return;
+  clearInvalid(["db-backup-prefix", "db-backup-dir-custom", "db-backup-dir-selected"]);
+
+  const familyId = getSelectedFamilyId();
+  const prefixInput = byId("db-backup-prefix");
+  const targetDir = getDbBackupTargetDir();
+  if (!familyId || !prefixInput) return;
+
+  const filenamePrefix = String(prefixInput.value || "").trim();
+  if (!filenamePrefix) {
+    setInvalid(prefixInput, true);
+    throw new Error("Bitte ein Dateipräfix angeben.");
+  }
+
+  const customDirInput = byId("db-backup-dir-custom");
+  const selectedDirInput = byId("db-backup-dir-selected");
+  if (customDirInput) {
+    const customDirValue = normalizeDbPath(customDirInput.value);
+    if (customDirValue && !customDirValue.startsWith("/")) {
+      setInvalid(customDirInput, true);
+      if (selectedDirInput) setInvalid(selectedDirInput, true);
+      throw new Error("Eigener Backup-Pfad muss absolut sein (z. B. /tmp/homequests-backups/archiv).");
+    }
+  }
+
+  const response = await api(`/families/${familyId}/system/db-tools/backup`, {
+    method: "POST",
+    body: {
+      target_dir: targetDir || null,
+      filename_prefix: filenamePrefix,
+    },
+  });
+  appendDbToolsOutput("Backup erstellt", response);
+  log("DB Backup erstellt", response);
+  if (downloadAfterCreate && response?.file_path) {
+    await downloadDbBackupFile(response.file_path);
+    appendDbToolsOutput("Backup-Download gestartet", { file_path: response.file_path });
+    log("DB Backup Download gestartet", { file_path: response.file_path });
+  }
+  await loadDbToolsStatus();
+}
+
+async function runDbCleanup() {
+  if (!isManagerRole()) return;
+  clearInvalid(["db-cleanup-max-passes"]);
+
+  const familyId = getSelectedFamilyId();
+  const maxPassesInput = byId("db-cleanup-max-passes");
+  if (!familyId || !maxPassesInput) return;
+
+  const maxPasses = Number(maxPassesInput.value || 0);
+  if (!Number.isFinite(maxPasses) || maxPasses < 1 || maxPasses > 30) {
+    setInvalid(maxPassesInput, true);
+    throw new Error("Cleanup-Pässe müssen zwischen 1 und 30 liegen.");
+  }
+
+  const response = await api(`/families/${familyId}/system/db-tools/cleanup`, {
+    method: "POST",
+    body: { max_passes: maxPasses },
+  });
+  appendDbToolsOutput("Cleanup abgeschlossen", response);
+  log("DB Cleanup ausgeführt", response);
+  await loadDbToolsStatus();
+}
+
+async function runDbAnalyze() {
+  if (!isManagerRole()) return;
+  const familyId = getSelectedFamilyId();
+  if (!familyId) return;
+
+  const response = await api(`/families/${familyId}/system/db-tools/analyze`, {
+    method: "POST",
+  });
+  appendDbToolsOutput("ANALYZE abgeschlossen", response);
+  log("DB ANALYZE ausgeführt", response);
+  await loadDbToolsStatus();
 }
 
 function summarizeChannelStatus(channel, channelData, activeChannel) {
@@ -4647,10 +5627,15 @@ async function refreshFamilyData({ silent = false } = {}) {
       await loadSystemEvents().catch((error) =>
         log("Ereignis-Log laden Fehler", { error: error.message })
       );
+      await loadDbToolsStatus().catch((error) =>
+        log("DB-Tools Status laden Fehler", { error: error.message })
+      );
     } else {
       resetHomeAssistantSettingsForm();
+      state.dbToolsStatus = null;
       state.systemRuntime = null;
       state.systemEvents = [];
+      renderDbToolsStatus();
       renderSystemRuntime();
       renderSystemEvents();
     }
@@ -4692,8 +5677,7 @@ async function refreshFamilyData({ silent = false } = {}) {
 
     renderSelectedRewardContribution();
 
-    const emailPart = state.me.email ? ` (${state.me.email})` : "";
-    userInfo.textContent = `Angemeldet als ${state.me.display_name}${emailPart} | Rolle: ${roleLabel(state.currentRole)}`;
+    // Header user info removed by design; all actions stay available in System > Mitglieder.
   } finally {
     if (!silent) setUiLoading(false);
     dataRefreshInFlight = false;
@@ -4727,6 +5711,7 @@ async function refreshSession() {
 
     authPanel.classList.add("hidden");
     appPanel.classList.remove("hidden");
+    setAppShellActive(true);
 
     await refreshFamilyData();
     startLiveUpdates();
@@ -4832,7 +5817,9 @@ async function logout() {
   } catch (_) {
     // Local cleanup still runs below.
   }
+  closeDbPathBrowserModal();
   closeMembersSystemModal();
+  syncInlineEditorModalVisibility();
   restoreAllInlineEditorSections();
   stopLiveUpdates({ resetCursor: true });
   stopSpecialTaskRefreshTicker();
@@ -4850,6 +5837,8 @@ async function logout() {
   state.selectedPointsUserId = null;
   state.haSettings = null;
   state.haUserConfigs = [];
+  state.dbDirectoryBrowse = null;
+  state.dbDirectoryTree = null;
   state.specialTaskTemplates = [];
   state.availableSpecialTasks = [];
   state.pointsHistory = [];
@@ -5292,6 +6281,7 @@ async function updateTask() {
   const title = titleInput.value.trim();
   const assignee_id = Number(assigneeInput.value);
   const points = Number(pointsInput.value || 0);
+  const currentTask = state.tasks.find((entry) => entry.id === taskId) || null;
   const recurrence_type = byId("task-editor-recurrence").value;
   const always_submittable = byId("task-editor-always-submittable").value === "true";
   const active_weekdays = recurrence_type === "daily" ? getSelectedWeekdays("task-editor-weekdays") : [];
@@ -5369,6 +6359,14 @@ async function updateTask() {
     due_at = toLocalIsoNoTimezoneOrNull(dueRaw);
   }
 
+  const statusInput = byId("task-editor-status");
+  const statusRaw = String(statusInput?.value || "").trim();
+  const allowedStatuses = new Set(["open", "submitted", "missed_submitted", "approved", "rejected"]);
+  const fallbackStatus = allowedStatuses.has(String(currentTask?.status || ""))
+    ? String(currentTask.status)
+    : "open";
+  const status = allowedStatuses.has(statusRaw) ? statusRaw : fallbackStatus;
+
   await api(`/tasks/${taskId}`, {
     method: "PUT",
     body: {
@@ -5383,7 +6381,7 @@ async function updateTask() {
       penalty_enabled,
       penalty_points,
       is_active: byId("task-editor-active").value === "true",
-      status: byId("task-editor-status").value,
+      status,
       recurrence_type,
     },
   });
@@ -5764,8 +6762,7 @@ function openPointsAdjust(userId, triggerButton = null) {
   byId("points-adjust-user-label").textContent = `Nutzer: ${getPointsUserDisplayName(userId)}`;
   byId("points-adjust-delta").value = "";
   byId("points-adjust-description").value = "";
-  mountInlineEditorSectionBelowTrigger("points-adjust-section", triggerButton);
-  toggleHidden("points-adjust-section", false);
+  openInlineEditorSection("points-adjust-section", triggerButton);
 }
 
 function closePointsAdjust() {
@@ -5960,6 +6957,12 @@ if (familySelect) {
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 });
+document.querySelectorAll(".system-nav-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    const view = button.dataset.systemView || "members";
+    setSystemView(view);
+  });
+});
 
 document.addEventListener("input", (event) => {
   const target = event.target;
@@ -6100,20 +7103,33 @@ const dashboardDetailModalClose = byId("dashboard-detail-modal-close");
 if (dashboardDetailModalClose) {
   dashboardDetailModalClose.addEventListener("click", closeDashboardDetailModal);
 }
-const membersSystemModal = byId("members-system-modal");
-if (membersSystemModal) {
-  membersSystemModal.addEventListener("click", (event) => {
-    if (event.target === membersSystemModal) closeMembersSystemModal();
+const inlineEditorModal = byId("inline-editor-modal");
+if (inlineEditorModal) {
+  inlineEditorModal.addEventListener("click", (event) => {
+    if (event.target === inlineEditorModal) closeActiveInlineEditorModal();
   });
 }
-const membersSystemModalCloseBtn = byId("members-system-modal-close-btn");
-if (membersSystemModalCloseBtn) {
-  membersSystemModalCloseBtn.addEventListener("click", closeMembersSystemModal);
+const inlineEditorModalCloseBtn = byId("inline-editor-modal-close-btn");
+if (inlineEditorModalCloseBtn) {
+  inlineEditorModalCloseBtn.addEventListener("click", closeActiveInlineEditorModal);
 }
-const openMembersSystemModalBtn = byId("open-members-system-modal-btn");
-if (openMembersSystemModalBtn) {
-  openMembersSystemModalBtn.addEventListener("click", openMembersSystemModal);
+const dbPathBrowserModal = byId("db-path-browser-modal");
+if (dbPathBrowserModal) {
+  dbPathBrowserModal.addEventListener("click", (event) => {
+    if (event.target === dbPathBrowserModal) closeDbPathBrowserModal();
+  });
 }
+const dbPathBrowserCloseBtn = byId("db-path-browser-close-btn");
+if (dbPathBrowserCloseBtn) {
+  dbPathBrowserCloseBtn.addEventListener("click", closeDbPathBrowserModal);
+}
+document.querySelectorAll(".parent-task-nav-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    setParentTaskView(button.dataset.parentTaskView || "tasks");
+  });
+});
+const logoutSystemBtn = byId("logout-system-btn");
+if (logoutSystemBtn) logoutSystemBtn.addEventListener("click", logout);
 
 byId("tasks-manager-cards").addEventListener("click", async (event) => {
   const actionButton = event.target.closest("button[data-task-action]");
@@ -6525,7 +7541,28 @@ byId("bootstrap-btn").addEventListener("click", () =>
     log("Initialisierung Fehler", { error: error.message });
   })
 );
-byId("logout-btn").addEventListener("click", logout);
+byId("bootstrap-load-backups-btn").addEventListener("click", () =>
+  loadBootstrapBackups().catch((error) => {
+    setBootstrapRestoreStatus(error.message || "Backups laden fehlgeschlagen.", true);
+    log("Bootstrap Backups laden Fehler", { error: error.message });
+  })
+);
+byId("bootstrap-backup-upload-btn").addEventListener("click", () =>
+  runBootstrapUpload().catch((error) => {
+    setBootstrapRestoreStatus(error.message || "Upload fehlgeschlagen.", true);
+    showAuthStatus(error.message || "Upload fehlgeschlagen.");
+    log("Bootstrap Backup Upload Fehler", { error: error.message });
+  })
+);
+byId("bootstrap-restore-btn").addEventListener("click", () =>
+  runBootstrapRestore().catch((error) => {
+    setBootstrapRestoreStatus(error.message || "Restore fehlgeschlagen.", true);
+    showAuthStatus(error.message || "Restore fehlgeschlagen.");
+    log("Bootstrap Restore Fehler", { error: error.message });
+  })
+);
+const logoutBtn = byId("logout-btn");
+if (logoutBtn) logoutBtn.addEventListener("click", logout);
 
 byId("create-member-btn").addEventListener("click", () => createMember().catch((error) => log("Mitglied Fehler", { error: error.message })));
 byId("member-editor-save-btn").addEventListener("click", () => updateMember().catch((error) => log("Mitglied bearbeiten Fehler", { error: error.message })));
@@ -6602,6 +7639,67 @@ byId("system-events-copy-btn").addEventListener("click", () =>
 byId("system-events-limit").addEventListener("change", () =>
   loadSystemEvents().catch((error) => log("Ereignis-Log laden Fehler", { error: error.message }))
 );
+byId("db-tools-refresh-btn").addEventListener("click", () =>
+  loadDbToolsStatus().catch((error) => log("DB-Tools Status laden Fehler", { error: error.message }))
+);
+byId("db-backup-run-btn").addEventListener("click", () =>
+  runDbBackup().catch((error) => log("DB Backup Fehler", { error: error.message }))
+);
+byId("db-backup-download-btn").addEventListener("click", () =>
+  runDbBackup({ downloadAfterCreate: true }).catch((error) => log("DB Backup Download Fehler", { error: error.message }))
+);
+byId("db-cleanup-run-btn").addEventListener("click", () =>
+  runDbCleanup().catch((error) => log("DB Cleanup Fehler", { error: error.message }))
+);
+byId("db-analyze-run-btn").addEventListener("click", () =>
+  runDbAnalyze().catch((error) => log("DB Analyze Fehler", { error: error.message }))
+);
+byId("db-backup-path-browser-btn").addEventListener("click", () =>
+  openDbPathBrowserModal().catch((error) => {
+    setDbPathBrowserStatus(error.message || "Pfad-Editor konnte nicht geladen werden.", true);
+    log("DB Pfad-Editor Fehler", { error: error.message });
+  })
+);
+byId("db-backup-dir-select").addEventListener("change", () => {
+  const customInput = byId("db-backup-dir-custom");
+  if (customInput) customInput.value = "";
+  syncDbBackupPathDisplay();
+  setDbPathBrowserStatus("");
+});
+byId("db-path-browser-use-selected-btn").addEventListener("click", () => {
+  const selectedPath = normalizeDbPath(getDbDirectoryTreeState().selectedPath);
+  if (!selectedPath) {
+    setDbPathBrowserResult("Bitte zuerst einen Ordner auswählen.", true);
+    return;
+  }
+  applyDbBackupPath(selectedPath);
+  setDbPathBrowserResult(`Pfad übernommen: ${selectedPath}`);
+});
+byId("db-path-browser-create-dir-btn").addEventListener("click", () =>
+  createDbDirectoryFromBrowser().catch((error) => {
+    setDbPathBrowserResult(error.message || "Ordner konnte nicht erstellt werden.", true);
+    log("DB Ordner erstellen Fehler", { error: error.message });
+  })
+);
+byId("db-path-browser-tree").addEventListener("click", (event) => {
+  const toggleButton = event.target.closest("button[data-db-tree-toggle]");
+  if (toggleButton) {
+    const path = normalizeDbPath(toggleButton.dataset.dbTreeToggle || "");
+    toggleDbTreePath(path).catch((error) => {
+      setDbPathBrowserResult(error.message || "Ordner konnte nicht geöffnet werden.", true);
+      log("DB Ordner öffnen Fehler", { error: error.message });
+    });
+    return;
+  }
+
+  const selectButton = event.target.closest("button[data-db-tree-select]");
+  if (!selectButton) return;
+  const path = normalizeDbPath(selectButton.dataset.dbTreeSelect || "");
+  if (!path) return;
+  const tree = getDbDirectoryTreeState();
+  tree.selectedPath = path;
+  renderDbDirectoryBrowser();
+});
 ["apns", "home_assistant", "sse"].forEach((channel) => {
   byId(`channel-edit-${channel}-btn`).addEventListener("click", async (event) => {
     event.preventDefault();
@@ -6650,6 +7748,19 @@ byId("redeem-reward-btn").addEventListener("click", () =>
   })
 );
 
+window.addEventListener("resize", () => {
+  syncAppShellMode();
+  applyNarrowViewportScrollFix();
+});
+window.addEventListener("orientationchange", () => {
+  syncAppShellMode();
+  applyNarrowViewportScrollFix();
+});
+window.addEventListener("pageshow", () => {
+  syncAppShellMode();
+  applyNarrowViewportScrollFix();
+});
+
 initInlineEditorHomes();
 setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);
 setSelectedWeekdays("task-editor-weekdays", [0, 1, 2, 3, 4, 5, 6]);
@@ -6676,4 +7787,10 @@ syncTaskCreateTimingUI();
 syncTaskEditorTimingUI();
 syncSpecialTaskCreateTimingUI();
 syncSpecialTaskEditorTimingUI();
+setSystemView(activeSystemView, { force: true });
+syncParentTaskShellLayout();
+ensureMembersPanelEmbedded();
+syncInlineEditorModalVisibility();
+syncAppShellMode();
+applyNarrowViewportScrollFix();
 refreshSession().catch((error) => log("Initialisierung fehlgeschlagen", { error: error.message }));

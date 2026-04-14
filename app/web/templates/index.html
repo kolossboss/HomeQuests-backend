@@ -9,11 +9,14 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260322f" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260414g" />
   </head>
   <body>
     <main class="container">
       <header class="page-head">
+        <div class="page-head-fixedline">
+          <span class="app-head-brand">HomeQuests</span>
+        </div>
         <h1>{{ app_name }}</h1>
         <p class="muted">Familienorganisation mit Aufgaben, Kalender und Belohnungen</p>
       </header>
@@ -42,20 +45,44 @@
             <label class="checkbox-line"><input id="boot-password-visible" type="checkbox" /> Passwort anzeigen</label>
           </div>
           <button id="bootstrap-btn">Initialisieren</button>
+
+          <div class="section-block compact auth-restore-block">
+            <h3>Oder aus Backup wiederherstellen</h3>
+            <p class="muted">Empfohlen für Server-Neuaufsetzung. Danach bitte normal einloggen.</p>
+            <div class="form-grid auth-form">
+              <label>Backup-Datei
+                <select id="bootstrap-backup-select"></select>
+              </label>
+              <label>Alternativer Dateiname/Pfad (optional)
+                <input id="bootstrap-backup-manual" type="text" placeholder="z. B. homequests_20260413_120000.dump" />
+              </label>
+              <label>Upload-Ziel
+                <select id="bootstrap-upload-target"></select>
+              </label>
+              <label>Backup hochladen (.dump)
+                <input id="bootstrap-backup-upload-file" type="file" accept=".dump,application/octet-stream" />
+              </label>
+            </div>
+            <div class="row-wrap">
+              <button id="bootstrap-load-backups-btn" type="button" class="btn-secondary">Backups laden</button>
+              <button id="bootstrap-backup-upload-btn" type="button" class="btn-secondary">Backup hochladen</button>
+              <button id="bootstrap-restore-btn" type="button" class="btn-secondary">Backup wiederherstellen</button>
+            </div>
+            <p id="bootstrap-restore-status" class="muted">Noch kein Restore ausgeführt.</p>
+          </div>
         </div>
       </section>
 
       <section class="panel hidden" id="app-panel">
         <div class="toolbar">
-          <div>
-            <h2>Familienbereich</h2>
-            <p id="user-info" class="muted"></p>
+          <div class="toolbar-title-inline">
+            <h2>Control Center</h2>
           </div>
           <div class="toolbar-actions">
             <label id="family-select-wrap" class="hidden">Familie
               <select id="family-select"></select>
             </label>
-            <button id="logout-btn">Logout</button>
+            <button id="logout-btn" class="hidden" type="button">Logout</button>
           </div>
         </div>
 
@@ -393,8 +420,20 @@
 
         <section id="tab-tasks" class="tab-panel">
           <h3>Aufgaben</h3>
+          <div id="parent-task-shell" class="parent-task-shell hidden">
+            <div class="parent-task-sticky-head section-block">
+              <div class="parent-task-nav" role="tablist" aria-label="Aufgabenbereiche">
+                <button type="button" class="parent-task-nav-btn active" data-parent-task-view="tasks" aria-selected="true">Aufgaben</button>
+                <button type="button" class="parent-task-nav-btn" data-parent-task-view="special" aria-selected="false">Sonderaufgaben</button>
+              </div>
+            </div>
+            <div class="parent-task-panes">
+              <div id="parent-task-pane-tasks" class="parent-task-pane active"></div>
+              <div id="parent-task-pane-special" class="parent-task-pane"></div>
+            </div>
+          </div>
 
-          <div class="row-wrap">
+          <div id="task-create-toolbar" class="row-wrap">
             <button id="toggle-task-create-btn" type="button">Neue Aufgabe</button>
           </div>
 
@@ -596,6 +635,7 @@
                 <select id="task-editor-status">
                   <option value="open">offen</option>
                   <option value="submitted">wartet auf Bestätigung</option>
+                  <option value="missed_submitted">nicht erledigt gemeldet</option>
                   <option value="approved">bestätigt</option>
                   <option value="rejected">abgelehnt</option>
                 </select>
@@ -930,140 +970,214 @@
         </section>
 
         <section id="tab-system" class="tab-panel">
-          <h3>System</h3>
-          <p class="muted">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></p>
-          <p class="muted">Installierte Version: <strong id="system-version-value">-</strong> <span id="system-build-value"></span></p>
-
-          <div id="system-members-section" class="section-block">
-            <div class="section-head-row">
-              <h4>Mitglieder</h4>
-              <button id="open-members-system-modal-btn" type="button">Mitgliederverwaltung öffnen</button>
-            </div>
-            <p class="muted">Mitglieder anzeigen, bearbeiten und verwalten in einem eigenen Fenster.</p>
-          </div>
-
-          <div class="section-block">
-            <h4>Benachrichtigungskanäle</h4>
-            <p class="muted">Nur ein Kanal ist gleichzeitig aktiv. SSE für Live-Daten bleibt im Hintergrund bestehen, damit nichts bricht.</p>
-
-            <article class="channel-row" id="channel-row-apns">
-              <div>
-                <strong>APNs (Apple)</strong>
-                <p id="channel-status-apns" class="muted">Status wird geladen...</p>
+          <div class="system-shell">
+            <div class="system-sticky-head section-block">
+              <div class="system-head-row">
+                <div>
+                  <h3>System</h3>
+                  <p class="muted">Systemwartung, Integrationen und Diagnose.</p>
+                </div>
+                <div class="system-meta-row">
+                  <span class="system-meta-chip">OpenAPI: <a href="/docs" target="_blank" rel="noreferrer">/docs</a></span>
+                  <span class="system-meta-chip">Version: <strong id="system-version-value">-</strong> <span id="system-build-value"></span></span>
+                </div>
               </div>
-              <div class="row-wrap">
-                <div class="checkbox-line"><input id="channel-active-apns" type="checkbox" /><span>aktiv</span></div>
-                <button id="channel-edit-apns-btn" type="button">Bearbeiten</button>
-              </div>
-            </article>
-            <div id="channel-panel-apns" class="section-block hidden">
-              <p id="apns-detail-status" class="muted">Status wird geladen...</p>
-              <div class="form-grid compact">
-                <label>Testempfänger
-                  <select id="apns-test-recipient"></select>
-                </label>
-                <label>Titel<input id="apns-test-title" type="text" value="APNs Test" /></label>
-                <label>Nachricht<input id="apns-test-message" type="text" value="Testnachricht aus HomeQuests" /></label>
-              </div>
-              <div class="row-wrap">
-                <button id="apns-test-send-btn" type="button">Test senden</button>
-                <button id="apns-panel-close-btn" type="button" class="btn-secondary">Schließen</button>
-              </div>
-              <p id="apns-test-result" class="muted"></p>
-            </div>
-
-            <article class="channel-row" id="channel-row-home_assistant">
-              <div>
-                <strong>Home Assistant</strong>
-                <p id="channel-status-home_assistant" class="muted">Status wird geladen...</p>
-              </div>
-              <div class="row-wrap">
-                <div class="checkbox-line"><input id="channel-active-home_assistant" type="checkbox" /><span>aktiv</span></div>
-                <button id="channel-edit-home_assistant-btn" type="button">Bearbeiten</button>
-              </div>
-            </article>
-            <div id="channel-panel-home_assistant" class="section-block hidden">
-              <div class="form-grid compact">
-                <label>Base URL<input id="ha-base-url" type="text" placeholder="https://homeassistant.local:8123" /></label>
-                <label>Token<input id="ha-token" type="password" placeholder="********" /></label>
-                <label>SSL prüfen
-                  <select id="ha-verify-ssl">
-                    <option value="true">ja</option>
-                    <option value="false">nein</option>
-                  </select>
-                </label>
-              </div>
-              <p id="ha-settings-result" class="muted"></p>
-              <div class="row-wrap">
-                <button id="ha-save-btn" type="button">Speichern</button>
-                <button id="ha-panel-close-btn" type="button" class="btn-secondary">Speichern und schließen</button>
-              </div>
-
-              <h5>HA Nutzer</h5>
-              <p class="muted">Gerät und erlaubte Ereignisse pro Nutzer konfigurieren.</p>
-              <p id="ha-user-config-result" class="muted"></p>
-              <div class="table-wrap">
-                <table>
-                  <thead><tr><th>Name</th><th>Rolle</th><th>Service</th><th>Aktiv</th><th>Ereignisse</th><th>Aktionen</th></tr></thead>
-                  <tbody id="ha-user-config-body"></tbody>
-                </table>
+              <div class="system-nav" role="tablist" aria-label="Systembereiche">
+                <button type="button" class="system-nav-btn active" data-system-view="members" aria-selected="true">Mitglieder</button>
+                <button type="button" class="system-nav-btn" data-system-view="channels" aria-selected="false">Benachrichtigungskanäle</button>
+                <button type="button" class="system-nav-btn" data-system-view="dbtools" aria-selected="false">Datenbank-Tools</button>
+                <button type="button" class="system-nav-btn" data-system-view="logs" aria-selected="false">Logs</button>
               </div>
             </div>
 
-            <article class="channel-row" id="channel-row-sse">
-              <div>
-                <strong>SSE (Benachrichtigung)</strong>
-                <p id="channel-status-sse" class="muted">Status wird geladen...</p>
+            <div class="system-panes">
+              <div id="system-pane-members" class="system-pane active">
+                <div id="system-members-section" class="section-block">
+                  <div class="section-head-row">
+                    <h4>Mitglieder</h4>
+                    <button id="logout-system-btn" type="button" class="btn-secondary">Logout</button>
+                  </div>
+                  <p class="muted">Mitglieder anzeigen, bearbeiten und verwalten direkt auf dieser Seite.</p>
+                  <div id="system-members-inline-content" class="system-members-inline-content"></div>
+                </div>
               </div>
-              <div class="row-wrap">
-                <div class="checkbox-line"><input id="channel-active-sse" type="checkbox" /><span>aktiv</span></div>
-                <button id="channel-edit-sse-btn" type="button">Bearbeiten</button>
+
+              <div id="system-pane-channels" class="system-pane">
+                <div id="system-channels-section" class="section-block">
+                  <h4>Benachrichtigungskanäle</h4>
+                  <p class="muted">Nur ein Kanal ist gleichzeitig aktiv. SSE für Live-Daten bleibt im Hintergrund bestehen, damit nichts bricht.</p>
+
+                  <article class="channel-row" id="channel-row-apns">
+                    <div>
+                      <strong>APNs (Apple)</strong>
+                      <p id="channel-status-apns" class="muted">Status wird geladen...</p>
+                    </div>
+                    <div class="row-wrap">
+                      <div class="checkbox-line"><input id="channel-active-apns" type="checkbox" /><span>aktiv</span></div>
+                      <button id="channel-edit-apns-btn" type="button">Bearbeiten</button>
+                    </div>
+                  </article>
+                  <div id="channel-panel-apns" class="section-block hidden">
+                    <p id="apns-detail-status" class="muted">Status wird geladen...</p>
+                    <div class="form-grid compact">
+                      <label>Testempfänger
+                        <select id="apns-test-recipient"></select>
+                      </label>
+                      <label>Titel<input id="apns-test-title" type="text" value="APNs Test" /></label>
+                      <label>Nachricht<input id="apns-test-message" type="text" value="Testnachricht aus HomeQuests" /></label>
+                    </div>
+                    <div class="row-wrap">
+                      <button id="apns-test-send-btn" type="button">Test senden</button>
+                      <button id="apns-panel-close-btn" type="button" class="btn-secondary">Schließen</button>
+                    </div>
+                    <p id="apns-test-result" class="muted"></p>
+                  </div>
+
+                  <article class="channel-row" id="channel-row-home_assistant">
+                    <div>
+                      <strong>Home Assistant</strong>
+                      <p id="channel-status-home_assistant" class="muted">Status wird geladen...</p>
+                    </div>
+                    <div class="row-wrap">
+                      <div class="checkbox-line"><input id="channel-active-home_assistant" type="checkbox" /><span>aktiv</span></div>
+                      <button id="channel-edit-home_assistant-btn" type="button">Bearbeiten</button>
+                    </div>
+                  </article>
+                  <div id="channel-panel-home_assistant" class="section-block hidden">
+                    <div class="form-grid compact">
+                      <label>Base URL<input id="ha-base-url" type="text" placeholder="https://homeassistant.local:8123" /></label>
+                      <label>Token<input id="ha-token" type="password" placeholder="********" /></label>
+                      <label>SSL prüfen
+                        <select id="ha-verify-ssl">
+                          <option value="true">ja</option>
+                          <option value="false">nein</option>
+                        </select>
+                      </label>
+                    </div>
+                    <p id="ha-settings-result" class="muted"></p>
+                    <div class="row-wrap">
+                      <button id="ha-save-btn" type="button">Speichern</button>
+                      <button id="ha-panel-close-btn" type="button" class="btn-secondary">Speichern und schließen</button>
+                    </div>
+
+                    <h5>HA Nutzer</h5>
+                    <p class="muted">Gerät und erlaubte Ereignisse pro Nutzer konfigurieren.</p>
+                    <p id="ha-user-config-result" class="muted"></p>
+                    <div class="table-wrap">
+                      <table>
+                        <thead><tr><th>Name</th><th>Rolle</th><th>Service</th><th>Aktiv</th><th>Ereignisse</th><th>Aktionen</th></tr></thead>
+                        <tbody id="ha-user-config-body"></tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <article class="channel-row" id="channel-row-sse">
+                    <div>
+                      <strong>SSE (Benachrichtigung)</strong>
+                      <p id="channel-status-sse" class="muted">Status wird geladen...</p>
+                    </div>
+                    <div class="row-wrap">
+                      <div class="checkbox-line"><input id="channel-active-sse" type="checkbox" /><span>aktiv</span></div>
+                      <button id="channel-edit-sse-btn" type="button">Bearbeiten</button>
+                    </div>
+                  </article>
+                  <div id="channel-panel-sse" class="section-block hidden">
+                    <p id="sse-detail-status" class="muted">Status wird geladen...</p>
+                    <div class="form-grid compact">
+                      <label>Testempfänger
+                        <select id="sse-test-recipient"></select>
+                      </label>
+                      <label>Titel<input id="sse-test-title" type="text" value="SSE Test" /></label>
+                      <label>Nachricht<input id="sse-test-message" type="text" value="Testnachricht aus HomeQuests" /></label>
+                    </div>
+                    <div class="row-wrap">
+                      <button id="sse-test-send-btn" type="button">Test senden</button>
+                      <button id="sse-panel-close-btn" type="button" class="btn-secondary">Schließen</button>
+                    </div>
+                    <p id="sse-test-result" class="muted"></p>
+                  </div>
+                </div>
+
+                <div class="hidden">
+                  <select id="notification-channel"></select>
+                  <select id="ha-user-select"></select>
+                </div>
               </div>
-            </article>
-            <div id="channel-panel-sse" class="section-block hidden">
-              <p id="sse-detail-status" class="muted">Status wird geladen...</p>
-              <div class="form-grid compact">
-                <label>Testempfänger
-                  <select id="sse-test-recipient"></select>
-                </label>
-                <label>Titel<input id="sse-test-title" type="text" value="SSE Test" /></label>
-                <label>Nachricht<input id="sse-test-message" type="text" value="Testnachricht aus HomeQuests" /></label>
+
+              <div id="system-pane-dbtools" class="system-pane">
+                <div id="system-dbtools-section" class="section-block">
+                  <div class="section-head-row">
+                    <h4>Datenbank-Tools</h4>
+                    <button id="db-tools-refresh-btn" type="button" class="btn-secondary">Status laden</button>
+                  </div>
+                  <p id="db-tools-status" class="muted">Status wird geladen...</p>
+                  <p class="muted">`Status laden` prüft DB-Verfügbarkeit, Backup/Restore-Kommandos und zeigt Diagnosezahlen zu möglichen Aufgaben-Inkonsistenzen.</p>
+                  <div class="form-grid compact">
+                    <label>Backup-Zielordner
+                      <select id="db-backup-dir-select"></select>
+                    </label>
+                    <label>Eigener Backup-Pfad (optional)
+                      <input id="db-backup-dir-selected" type="text" readonly placeholder="Kein eigener Pfad gewählt" />
+                      <input id="db-backup-dir-custom" type="hidden" />
+                    </label>
+                    <label class="db-path-browser-action">
+                      Pfad-Editor
+                      <button id="db-backup-path-browser-btn" type="button" class="btn-secondary">Ordner wählen</button>
+                    </label>
+                    <label>Datei-Präfix
+                      <input id="db-backup-prefix" type="text" value="homequests" />
+                    </label>
+                    <label>Cleanup-Pässe
+                      <input id="db-cleanup-max-passes" type="number" min="1" max="30" value="4" />
+                    </label>
+                  </div>
+                  <p class="muted">Eigener Pfad muss absolut sein und innerhalb eines erlaubten Basispfads liegen.</p>
+                  <p id="db-path-browser-status" class="muted"></p>
+                  <p class="muted">Das Präfix beeinflusst nur den Dateinamen des Backups, nicht die Datenstruktur oder Restore-Kompatibilität.</p>
+                  <div class="row-wrap">
+                    <button id="db-backup-run-btn" type="button">Backup erstellen</button>
+                    <button id="db-backup-download-btn" type="button" class="btn-secondary">Backup erstellen und herunterladen</button>
+                    <button id="db-cleanup-run-btn" type="button" class="btn-secondary">Cleanup ausführen</button>
+                    <button id="db-analyze-run-btn" type="button" class="btn-secondary">ANALYZE ausführen</button>
+                  </div>
+                  <p class="muted">`Cleanup` startet sichere Wartungsläufe für Aufgabenzustände. `ANALYZE` aktualisiert PostgreSQL-Statistiken für bessere Query-Performance.</p>
+                  <pre id="db-tools-output" class="system-events-view muted">Noch keine Ausführung.</pre>
+                </div>
+
+                <div id="system-restore-hint-section" class="section-block">
+                  <h4>Restore-Hinweis</h4>
+                  <p class="muted">Wiederherstellen ist absichtlich nur in der Erstinitialisierung möglich (sicherer Schutz vor Überschreiben einer laufenden Familie).</p>
+                  <p class="muted">Ablauf: Backup hochladen/auswählen im Login-Bildschirm -> `Backup wiederherstellen` -> dann normal einloggen.</p>
+                </div>
               </div>
-              <div class="row-wrap">
-                <button id="sse-test-send-btn" type="button">Test senden</button>
-                <button id="sse-panel-close-btn" type="button" class="btn-secondary">Schließen</button>
+
+              <div id="system-pane-logs" class="system-pane">
+                <div id="system-webui-log-section" class="section-block">
+                  <h4>WebUI-Log (Browser)</h4>
+                  <p class="muted">Lokale Client-Logs aus dieser Browser-Sitzung (UI-Fehler, API-Fehlermeldungen, Klick-Aktionen).</p>
+                  <pre id="log-output"></pre>
+                </div>
+
+                <div id="system-events-log-section" class="section-block">
+                  <div class="section-head-row">
+                    <h4>Ereignis-Log (Server)</h4>
+                    <div class="row-wrap">
+                      <label class="compact-filter">Zeilen
+                        <select id="system-events-limit">
+                          <option value="50">50</option>
+                          <option value="100" selected>100</option>
+                          <option value="200">200</option>
+                          <option value="500">500</option>
+                        </select>
+                      </label>
+                      <button id="system-events-refresh-btn" type="button" class="btn-secondary">Neu laden</button>
+                      <button id="system-events-copy-btn" type="button" class="btn-secondary">Alles kopieren</button>
+                    </div>
+                  </div>
+                  <div id="system-events-view" class="system-events-view muted">Keine Ereignisse vorhanden.</div>
+                </div>
               </div>
-              <p id="sse-test-result" class="muted"></p>
             </div>
-          </div>
-
-          <div class="hidden">
-            <select id="notification-channel"></select>
-            <select id="ha-user-select"></select>
-          </div>
-
-          <div class="section-block">
-            <h4>Diagnose</h4>
-            <pre id="log-output"></pre>
-          </div>
-
-          <div class="section-block">
-            <div class="section-head-row">
-              <h4>Ereignis-Log (Server)</h4>
-              <div class="row-wrap">
-                <label class="compact-filter">Zeilen
-                  <select id="system-events-limit">
-                    <option value="50">50</option>
-                    <option value="100" selected>100</option>
-                    <option value="200">200</option>
-                    <option value="500">500</option>
-                  </select>
-                </label>
-                <button id="system-events-refresh-btn" type="button" class="btn-secondary">Neu laden</button>
-                <button id="system-events-copy-btn" type="button" class="btn-secondary">Alles kopieren</button>
-              </div>
-            </div>
-            <div id="system-events-view" class="system-events-view muted">Keine Ereignisse vorhanden.</div>
           </div>
         </section>
       </section>
@@ -1113,19 +1227,48 @@
       </div>
     </div>
 
-    <div id="members-system-modal" class="modal-overlay hidden">
-      <div class="modal-card members-system-modal-card">
+    <div id="inline-editor-modal" class="modal-overlay hidden">
+      <div class="modal-card editor-modal-card">
         <div class="modal-head">
           <div>
-            <h4>Mitgliederverwaltung</h4>
-            <p class="muted">Mitglieder ansehen, bearbeiten und verwalten.</p>
+            <h4 id="inline-editor-modal-title">Bearbeiten</h4>
           </div>
-          <button id="members-system-modal-close-btn" type="button" class="btn-secondary">Schließen</button>
+          <button id="inline-editor-modal-close-btn" type="button" class="btn-secondary">Schließen</button>
         </div>
-        <div id="members-system-modal-content"></div>
+        <div id="inline-editor-modal-content"></div>
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260322c"></script>
+    <div id="db-path-browser-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <div>
+            <h4>Backup Pfad-Editor</h4>
+            <p class="muted">Wähle einen erlaubten Zielordner über den Verzeichnisbaum.</p>
+          </div>
+          <button id="db-path-browser-close-btn" type="button" class="btn-secondary">Schließen</button>
+        </div>
+        <div class="section-block compact">
+          <div class="form-grid compact">
+            <label>Ausgewählter Pfad
+              <input id="db-path-browser-selected" type="text" readonly />
+            </label>
+          </div>
+          <div id="db-path-browser-tree" class="db-path-browser-tree"></div>
+          <div class="form-grid compact">
+            <label>Neuen Ordner anlegen
+              <input id="db-path-browser-new-dir-name" type="text" placeholder="z. B. april-backups" />
+            </label>
+          </div>
+          <div class="row-wrap">
+            <button id="db-path-browser-use-selected-btn" type="button">Gewählten Pfad übernehmen</button>
+            <button id="db-path-browser-create-dir-btn" type="button" class="btn-secondary">Ordner erstellen</button>
+          </div>
+          <p id="db-path-browser-result" class="muted"></p>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/app.js?v=20260414db14"></script>
   </body>
 </html>

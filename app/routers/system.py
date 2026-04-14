@@ -2,11 +2,26 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from ..config import settings as app_settings
 from ..database import get_db
+from ..db_tools import (
+    DbToolsError,
+    backup_allowed_dirs as db_backup_allowed_dirs,
+    backup_default_dir as db_backup_default_dir,
+    backup_supported as db_backup_supported,
+    create_backup_directory as db_create_backup_directory,
+    create_backup as db_create_backup,
+    database_engine_name as db_database_engine_name,
+    list_backup_directories as db_list_backup_directories,
+    pg_dump_available as db_pg_dump_available,
+    pg_restore_available as db_pg_restore_available,
+    resolve_backup_file_path as db_resolve_backup_file_path,
+)
 from ..deps import get_current_user
 from ..models import FamilyMembership, HomeAssistantSettings, LiveUpdateEvent, NotificationChannelEnum, PushDevice, RecurrenceTypeEnum, RoleEnum, Task, TaskStatusEnum, TaskSubmission, User
 from ..push_notifications import dispatch_home_assistant_notification, dispatch_remote_pushes_for_event
@@ -18,6 +33,17 @@ from ..schemas import (
     HomeAssistantSettingsUpdateRequest,
     HomeAssistantUserTestRequest,
     NotificationChannelUpdateRequest,
+    SystemDbDirectoryBrowseOut,
+    SystemDbDirectoryCreateOut,
+    SystemDbDirectoryCreateRequest,
+    SystemDbDirectoryEntryOut,
+    SystemDbAnalyzeOut,
+    SystemDbBackupOut,
+    SystemDbBackupRequest,
+    SystemDbCleanupOut,
+    SystemDbCleanupRequest,
+    SystemDbDiagnosticsOut,
+    SystemDbToolsStatusOut,
     SystemEventOut,
     SystemPracticalTestOut,
     SystemPracticalTestRequest,
@@ -27,8 +53,10 @@ from ..schemas import (
 )
 from ..secret_store import encrypt_secret
 from ..services import emit_live_event
+from .tasks import _run_family_task_maintenance
 
 router = APIRouter(tags=["system"])
+RUNTIME_BUILD_REF = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _get_or_create_home_assistant_settings(db: Session, family_id: int) -> HomeAssistantSettings:
@@ -93,6 +121,149 @@ def _decode_event_payload(raw_payload: str | None) -> dict[str, object] | None:
     return {"value": parsed}
 
 
+def _collect_db_diagnostics(db: Session, family_id: int) -> SystemDbDiagnosticsOut:
+    if db_database_engine_name() != "postgresql":
+        return SystemDbDiagnosticsOut(
+            duplicate_series_groups=0,
+            duplicate_series_rows=0,
+            weekly_flexible_duplicate_groups=0,
+            weekly_flexible_duplicate_rows=0,
+            inactive_open_like_count=0,
+            stale_none_without_due_open_count=0,
+        )
+
+    duplicate_series_groups = int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM (
+                    SELECT series_id
+                    FROM tasks
+                    WHERE family_id = :family_id
+                      AND is_active = true
+                      AND recurrence_type <> 'none'
+                      AND series_id IS NOT NULL
+                      AND status IN ('open','rejected','submitted')
+                    GROUP BY series_id
+                    HAVING COUNT(*) > 1
+                ) AS grouped
+                """
+            ),
+            {"family_id": family_id},
+        ).scalar()
+        or 0
+    )
+    duplicate_series_rows = int(
+        db.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(grouped.cnt), 0)
+                FROM (
+                    SELECT COUNT(*) AS cnt
+                    FROM tasks
+                    WHERE family_id = :family_id
+                      AND is_active = true
+                      AND recurrence_type <> 'none'
+                      AND series_id IS NOT NULL
+                      AND status IN ('open','rejected','submitted')
+                    GROUP BY series_id
+                    HAVING COUNT(*) > 1
+                ) AS grouped
+                """
+            ),
+            {"family_id": family_id},
+        ).scalar()
+        or 0
+    )
+    weekly_flexible_duplicate_groups = int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM (
+                    SELECT assignee_id, lower(trim(title)) AS title_norm, COALESCE(special_template_id, 0) AS template_id, date_trunc('week', created_at)
+                    FROM tasks
+                    WHERE family_id = :family_id
+                      AND is_active = true
+                      AND recurrence_type = 'weekly'
+                      AND due_at IS NULL
+                      AND status IN ('open','rejected')
+                    GROUP BY assignee_id, lower(trim(title)), COALESCE(special_template_id, 0), date_trunc('week', created_at)
+                    HAVING COUNT(*) > 1
+                ) AS grouped
+                """
+            ),
+            {"family_id": family_id},
+        ).scalar()
+        or 0
+    )
+    weekly_flexible_duplicate_rows = int(
+        db.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(grouped.cnt), 0)
+                FROM (
+                    SELECT COUNT(*) AS cnt
+                    FROM tasks
+                    WHERE family_id = :family_id
+                      AND is_active = true
+                      AND recurrence_type = 'weekly'
+                      AND due_at IS NULL
+                      AND status IN ('open','rejected')
+                    GROUP BY assignee_id, lower(trim(title)), COALESCE(special_template_id, 0), date_trunc('week', created_at)
+                    HAVING COUNT(*) > 1
+                ) AS grouped
+                """
+            ),
+            {"family_id": family_id},
+        ).scalar()
+        or 0
+    )
+    inactive_open_like_count = int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE family_id = :family_id
+                  AND is_active = false
+                  AND recurrence_type <> 'none'
+                  AND status IN ('open','rejected','submitted')
+                """
+            ),
+            {"family_id": family_id},
+        ).scalar()
+        or 0
+    )
+    stale_none_without_due_open_count = int(
+        db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM tasks
+                WHERE family_id = :family_id
+                  AND is_active = true
+                  AND recurrence_type = 'none'
+                  AND due_at IS NULL
+                  AND status IN ('open','rejected')
+                  AND created_at < (NOW() - INTERVAL '1 day')
+                """
+            ),
+            {"family_id": family_id},
+        ).scalar()
+        or 0
+    )
+    return SystemDbDiagnosticsOut(
+        duplicate_series_groups=duplicate_series_groups,
+        duplicate_series_rows=duplicate_series_rows,
+        weekly_flexible_duplicate_groups=weekly_flexible_duplicate_groups,
+        weekly_flexible_duplicate_rows=weekly_flexible_duplicate_rows,
+        inactive_open_like_count=inactive_open_like_count,
+        stale_none_without_due_open_count=stale_none_without_due_open_count,
+    )
+
+
 @router.get("/families/{family_id}/system/runtime", response_model=SystemRuntimeOut)
 def get_system_runtime(
     family_id: int,
@@ -104,8 +275,273 @@ def get_system_runtime(
     return SystemRuntimeOut(
         app_name=app_settings.app_name,
         app_version=app_settings.app_version,
-        app_build_ref=app_settings.app_build_ref,
+        app_build_ref=app_settings.app_build_ref or RUNTIME_BUILD_REF,
         server_time_utc=datetime.utcnow(),
+    )
+
+
+@router.get("/families/{family_id}/system/db-tools/status", response_model=SystemDbToolsStatusOut)
+def get_db_tools_status(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    engine_name = db_database_engine_name()
+    diagnostics = _collect_db_diagnostics(db, family_id)
+    default_dir = db_backup_default_dir()
+    return SystemDbToolsStatusOut(
+        database_engine=engine_name,
+        backup_supported=db_backup_supported(),
+        backup_command_available=db_pg_dump_available(),
+        restore_command_available=db_pg_restore_available(),
+        backup_allowed_dirs=[str(entry) for entry in db_backup_allowed_dirs()],
+        backup_default_dir=str(default_dir),
+        backup_timeout_seconds=app_settings.db_backup_timeout_seconds,
+        cleanup_max_passes=app_settings.db_cleanup_max_passes,
+        diagnostics=diagnostics,
+        server_time_utc=datetime.utcnow(),
+    )
+
+
+def _serialize_db_directory_browse(path_or_none: str | None = None) -> SystemDbDirectoryBrowseOut:
+    current, parent, directories = db_list_backup_directories(path_or_none)
+    return SystemDbDirectoryBrowseOut(
+        allowed_roots=[str(entry) for entry in db_backup_allowed_dirs()],
+        current_path=str(current),
+        parent_path=str(parent) if parent else None,
+        directories=[
+            SystemDbDirectoryEntryOut(name=entry.name, path=str(entry))
+            for entry in directories
+        ],
+    )
+
+
+@router.get("/families/{family_id}/system/db-tools/directories", response_model=SystemDbDirectoryBrowseOut)
+def browse_db_backup_directories(
+    family_id: int,
+    path: str | None = Query(default=None, max_length=1024),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+    try:
+        return _serialize_db_directory_browse(path)
+    except DbToolsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc) or "Verzeichnis konnte nicht geladen werden",
+        ) from exc
+
+
+@router.post(
+    "/families/{family_id}/system/db-tools/directories/create",
+    response_model=SystemDbDirectoryCreateOut,
+)
+def create_db_backup_directory(
+    family_id: int,
+    payload: SystemDbDirectoryCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    try:
+        created_path = db_create_backup_directory(
+            parent_dir=payload.parent_dir,
+            directory_name=payload.directory_name,
+        )
+        browse = _serialize_db_directory_browse(str(created_path))
+    except DbToolsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc) or "Ordner konnte nicht erstellt werden",
+        ) from exc
+
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="system.db.backup_directory_created",
+        payload={
+            "path": str(created_path),
+            "parent_dir": payload.parent_dir,
+            "created_by_id": current_user.id,
+        },
+    )
+    db.commit()
+    return SystemDbDirectoryCreateOut(
+        created_path=str(created_path),
+        browse=browse,
+    )
+
+
+@router.post("/families/{family_id}/system/db-tools/backup", response_model=SystemDbBackupOut)
+def run_db_backup(
+    family_id: int,
+    payload: SystemDbBackupRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    try:
+        result = db_create_backup(
+            target_dir=payload.target_dir,
+            filename_prefix=payload.filename_prefix,
+            timeout_seconds=app_settings.db_backup_timeout_seconds,
+        )
+    except DbToolsError as exc:
+        detail = str(exc) or "Backup fehlgeschlagen"
+        status_code = status.HTTP_400_BAD_REQUEST if (
+            "Backup-Ziel" in detail
+            or "Backup ist aktuell nur für PostgreSQL" in detail
+            or "Ungültige DATABASE_URL" in detail
+        ) else status.HTTP_500_INTERNAL_SERVER_ERROR
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="system.db.backup_created",
+        payload={
+            "file_path": result.file_path,
+            "file_size_bytes": result.file_size_bytes,
+            "duration_seconds": result.duration_seconds,
+            "created_by_id": current_user.id,
+        },
+    )
+    db.commit()
+    return SystemDbBackupOut(
+        ok=True,
+        file_path=result.file_path,
+        file_size_bytes=result.file_size_bytes,
+        duration_seconds=result.duration_seconds,
+        created_at_utc=result.created_at_utc,
+        database_engine=result.database_engine,
+    )
+
+
+@router.get("/families/{family_id}/system/db-tools/backup/download")
+def download_db_backup_file(
+    family_id: int,
+    backup_file: str = Query(..., min_length=1, max_length=1024),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    try:
+        resolved = db_resolve_backup_file_path(backup_file)
+    except DbToolsError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc) or "Backup-Datei ungültig") from exc
+
+    return FileResponse(
+        path=str(resolved),
+        media_type="application/octet-stream",
+        filename=resolved.name,
+    )
+
+
+@router.post("/families/{family_id}/system/db-tools/cleanup", response_model=SystemDbCleanupOut)
+def run_db_cleanup(
+    family_id: int,
+    payload: SystemDbCleanupRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    requested_passes = int(payload.max_passes or app_settings.db_cleanup_max_passes)
+    requested_passes = max(1, min(requested_passes, app_settings.db_cleanup_max_passes))
+    started = datetime.utcnow()
+    diagnostics_before = _collect_db_diagnostics(db, family_id)
+
+    executed_passes = 0
+    changed_passes = 0
+    for _ in range(requested_passes):
+        changed = _run_family_task_maintenance(db, family_id)
+        executed_passes += 1
+        if changed:
+            changed_passes += 1
+            db.commit()
+            continue
+        db.rollback()
+        break
+
+    diagnostics_after = _collect_db_diagnostics(db, family_id)
+    finished = datetime.utcnow()
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="system.db.cleanup_run",
+        payload={
+            "requested_max_passes": requested_passes,
+            "executed_passes": executed_passes,
+            "changed_passes": changed_passes,
+            "created_by_id": current_user.id,
+            "diagnostics_before": diagnostics_before.model_dump(),
+            "diagnostics_after": diagnostics_after.model_dump(),
+        },
+    )
+    db.commit()
+    return SystemDbCleanupOut(
+        ok=True,
+        requested_max_passes=requested_passes,
+        executed_passes=executed_passes,
+        changed_passes=changed_passes,
+        family_id=family_id,
+        diagnostics_before=diagnostics_before,
+        diagnostics_after=diagnostics_after,
+        started_at_utc=started,
+        finished_at_utc=finished,
+    )
+
+
+@router.post("/families/{family_id}/system/db-tools/analyze", response_model=SystemDbAnalyzeOut)
+def run_db_analyze(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    started = datetime.utcnow()
+    engine_name = db_database_engine_name()
+    if engine_name == "postgresql":
+        db.execute(text("ANALYZE"))
+        db.commit()
+    else:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"ANALYZE wird für DB-Engine '{engine_name}' derzeit nicht unterstützt",
+        )
+    finished = datetime.utcnow()
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="system.db.analyze_run",
+        payload={
+            "created_by_id": current_user.id,
+            "database_engine": engine_name,
+            "started_at_utc": started.isoformat(),
+            "finished_at_utc": finished.isoformat(),
+        },
+    )
+    db.commit()
+    return SystemDbAnalyzeOut(
+        ok=True,
+        database_engine=engine_name,
+        started_at_utc=started,
+        finished_at_utc=finished,
     )
 
 

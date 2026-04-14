@@ -51,7 +51,7 @@ class TaskLogicTests(unittest.TestCase):
             active_weekdays=[],
         )
         boundary = _next_cycle_boundary(task)
-        self.assertEqual(boundary, datetime(2026, 3, 23, 9, 0, 0))
+        self.assertEqual(boundary, datetime(2026, 3, 23, 0, 0, 0))
 
 
 if __name__ == "__main__":

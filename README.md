@@ -37,6 +37,7 @@ Weitere Punkte:
 2. [Update auf neue Version](#update-auf-neue-version)
 3. [Wichtiger Hinweis zu Daten](#wichtiger-hinweis-zu-daten)
 4. [Benachrichtigungen](#benachrichtigungen)
+5. [Datenbank-Tools (Backup/Cleanup)](#datenbank-tools-backupcleanup)
 
 ## Installation
 
@@ -255,6 +256,51 @@ Hinweise:
 - `SSE_ALLOW_QUERY_TOKEN=false` ist empfohlen. Dann akzeptiert der Live-Stream keine `?access_token=` URLs, sondern nur Authorization Header/Cookie.
 - Wenn beim Test `401 Unauthorized` kommt, sind URL oder Token in der Regel falsch.
 - In HomeQuests ist immer nur ein Benachrichtigungskanal gleichzeitig aktiv (`SSE`, `APNs` oder `Home Assistant`).
+
+## Datenbank-Tools (Backup/Cleanup/Restore)
+
+Im **System-Tab** der WebUI gibt es jetzt DB-Tools:
+- `Status laden`: Integritäts-/Duplikat-Diagnose für Aufgaben
+- `Backup erstellen`: PostgreSQL-Dump (`pg_dump`, Format `custom`)
+- `Backup erstellen und herunterladen`: erzeugt Backup serverseitig und lädt es direkt im Browser herunter (Zielordner lokal per Browser-Dialog)
+- `Cleanup ausführen`: sicheres Wartungs-Cleanup über die bestehende Task-Maintenance-Logik
+- `ANALYZE ausführen`: PostgreSQL `ANALYZE` für Statistik-Updates
+
+Restore:
+- Ein Restore ist über die **Erstinitialisierung** möglich (`Oder aus Backup wiederherstellen`).
+- Zusätzlich können `.dump`-Dateien direkt in der Erstinitialisierung hochgeladen werden (`Backup hochladen`).
+- API dazu:
+  - `GET /auth/bootstrap-backups`
+  - `POST /auth/bootstrap-backups/upload` (multipart/form-data)
+  - `POST /auth/bootstrap-restore`
+  - `GET /families/{family_id}/system/db-tools/backup/download?backup_file=...`
+- Restore ist nur erlaubt, wenn noch kein Benutzer existiert (Bootstrap-Phase), damit aktive Produktivdaten nicht überschrieben werden.
+
+Wichtige ENV-Variablen:
+- `DB_BACKUP_ALLOWED_DIRS` (Komma-getrennte absolute Basispfade)
+- `DB_BACKUP_DEFAULT_DIR` (muss unter `DB_BACKUP_ALLOWED_DIRS` liegen)
+- `DB_BACKUP_TIMEOUT_SECONDS` (Default `180`)
+- `DB_BACKUP_UPLOAD_MAX_BYTES` (Default `536870912`, also 512 MB)
+- `DB_CLEANUP_MAX_PASSES` (Default `8`)
+
+Hinweise:
+- Backup-Ziele sind aus Sicherheitsgründen auf `DB_BACKUP_ALLOWED_DIRS` begrenzt.
+- Wenn Backups auf dem Host persistent liegen sollen, den Zielpfad ins API-Container-Dateisystem mounten.
+- Cleanup löscht nicht blind Daten, sondern nutzt dieselbe Wartungslogik wie der laufende Betrieb.
+- Restore spielt den gesamten HomeQuests-Datenbankinhalt zurück (z. B. Nutzer, Passwort-Hashes, Rollen, Aufgaben, Historie, Belohnungen, Punkte, System-Events).
+- Nicht im Backup enthalten sind Docker-/Host-Secrets und externe Dateien außerhalb der Datenbank (z. B. APNs `.p8`, `.env`, Reverse-Proxy/TLS-Konfiguration).
+
+### Server-Neuaufsetzung mit Restore (empfohlen)
+
+1. Neue Instanz starten (leere DB, gleiche App-Version oder neuer).
+2. Sicherstellen, dass das Backup im erlaubten Pfad liegt (`DB_BACKUP_ALLOWED_DIRS`).
+3. WebUI öffnen:
+   - Erstinitialisierung sichtbar
+   - Entweder:
+     - `Backups laden` -> Backup wählen -> `Backup wiederherstellen`
+   - Oder:
+     - `.dump` via `Backup hochladen` laden -> anschließend `Backup wiederherstellen`
+4. Danach mit bestehendem Benutzerkonto einloggen.
 
 ## Wichtiger Hinweis zu Daten
 
