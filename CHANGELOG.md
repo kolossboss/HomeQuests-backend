@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.04.23-01 (2026-04-23)
+
+- Achievements: neues System fuer Katalog, Fortschritt, Freischaltungen, Rewards und Freeze-Windows hinzugefuegt.
+- WebUI/API: Achievement-Ansichten, Claim-Flow und passende Endpunkte fuer Familien- und Kinderansichten ergaenzt.
+- Backup/Doku: README und Compose um Backup-Mounts und DB-Backup-Optionen erweitert.
+
 ## v2026.04.14-01 (2026-04-14)
 
 - System: neue DB-Tools fuer Backup, Restore, Cleanup und Diagnose im System-Tab ergaenzt.

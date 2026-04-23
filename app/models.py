@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -61,6 +64,7 @@ class PointsSourceEnum(str, Enum):
     reward_contribution = "reward_contribution"
     task_penalty = "task_penalty"
     manual_adjustment = "manual_adjustment"
+    achievement_unlock = "achievement_unlock"
 
 
 class RewardContributionStatusEnum(str, Enum):
@@ -76,6 +80,38 @@ class NotificationChannelEnum(str, Enum):
     home_assistant = "home_assistant"
 
 
+class AchievementDifficultyEnum(str, Enum):
+    bronze = "bronze"
+    silver = "silver"
+    gold = "gold"
+    platinum = "platinum"
+
+
+class AchievementRuleKindEnum(str, Enum):
+    aggregate_count = "aggregate_count"
+    streak = "streak"
+
+
+class AchievementRewardKindEnum(str, Enum):
+    points_grant = "points_grant"
+    unlock_only = "unlock_only"
+
+
+class AchievementProgressStatusEnum(str, Enum):
+    locked = "locked"
+    in_progress = "in_progress"
+    unlocked = "unlocked"
+
+
+class AchievementFreezeScopeEnum(str, Enum):
+    streaks = "streaks"
+
+
+class AchievementTaskOutcomeEnum(str, Enum):
+    approved = "approved"
+    missed = "missed"
+
+
 class Family(Base):
     __tablename__ = "families"
 
@@ -88,9 +124,9 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
+    email: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True, index=True)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    ha_notify_service: Mapped[str | None] = mapped_column(String(255))
+    ha_notify_service: Mapped[Optional[str]] = mapped_column(String(255))
     ha_notifications_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ha_child_new_task: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     ha_manager_task_submitted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -118,19 +154,19 @@ class Task(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(180), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     assignee_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    due_at: Mapped[datetime | None] = mapped_column(DateTime)
+    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     reminder_offsets_minutes: Mapped[list[int]] = mapped_column(JSON, default=list, nullable=False)
     active_weekdays: Mapped[list[int]] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6], nullable=False)
     recurrence_type: Mapped[str] = mapped_column(String(16), default=RecurrenceTypeEnum.none.value, nullable=False)
-    series_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    series_id: Mapped[Optional[str]] = mapped_column(String(64), index=True)
     always_submittable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     penalty_enabled: Mapped[bool] = mapped_column(default=False, nullable=False)
     penalty_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    penalty_last_applied_at: Mapped[datetime | None] = mapped_column(DateTime)
-    special_template_id: Mapped[int | None] = mapped_column(
+    penalty_last_applied_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    special_template_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("special_task_templates.id", ondelete="SET NULL"),
         index=True,
     )
@@ -149,8 +185,8 @@ class TaskGenerationBlock(Base):
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     block_until: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
-    reason: Mapped[str | None] = mapped_column(String(120))
-    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(120))
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -161,7 +197,7 @@ class TaskSubmission(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
     submitted_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    note: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[Optional[str]] = mapped_column(Text)
     submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -172,7 +208,7 @@ class TaskApproval(Base):
     submission_id: Mapped[int] = mapped_column(ForeignKey("task_submissions.id", ondelete="CASCADE"), index=True)
     reviewed_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     decision: Mapped[ApprovalDecisionEnum] = mapped_column(SqlEnum(ApprovalDecisionEnum), nullable=False)
-    comment: Mapped[str | None] = mapped_column(Text)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
     reviewed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -182,8 +218,8 @@ class CalendarEvent(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(180), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    responsible_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    responsible_user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     start_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     end_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -196,7 +232,7 @@ class Reward(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(180), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     cost_points: Mapped[int] = mapped_column(Integer, nullable=False)
     is_shareable: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
@@ -211,10 +247,10 @@ class RewardRedemption(Base):
     reward_id: Mapped[int] = mapped_column(ForeignKey("rewards.id", ondelete="CASCADE"), index=True)
     requested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     status: Mapped[RedemptionStatusEnum] = mapped_column(SqlEnum(RedemptionStatusEnum), default=RedemptionStatusEnum.pending, nullable=False)
-    comment: Mapped[str | None] = mapped_column(Text)
-    reviewed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    reviewed_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
 class RewardContribution(Base):
@@ -230,7 +266,7 @@ class RewardContribution(Base):
         default=RewardContributionStatusEnum.reserved,
         nullable=False,
     )
-    redemption_id: Mapped[int | None] = mapped_column(ForeignKey("reward_redemptions.id", ondelete="SET NULL"), index=True)
+    redemption_id: Mapped[Optional[int]] = mapped_column(ForeignKey("reward_redemptions.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -245,7 +281,7 @@ class PointsLedger(Base):
     source_id: Mapped[int] = mapped_column(Integer, nullable=False)
     points_delta: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
 
@@ -255,12 +291,12 @@ class SpecialTaskTemplate(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(180), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     interval_type: Mapped[SpecialTaskIntervalEnum] = mapped_column(SqlEnum(SpecialTaskIntervalEnum), nullable=False)
     max_claims_per_interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     active_weekdays: Mapped[list[int]] = mapped_column(JSON, default=lambda: [0, 1, 2, 3, 4, 5, 6], nullable=False)
-    due_time_hhmm: Mapped[str | None] = mapped_column(String(5))
+    due_time_hhmm: Mapped[Optional[str]] = mapped_column(String(5))
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
@@ -273,7 +309,7 @@ class LiveUpdateEvent(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
-    payload_json: Mapped[str | None] = mapped_column(Text)
+    payload_json: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
@@ -284,10 +320,10 @@ class HomeAssistantSettings(Base):
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True, unique=True)
     ha_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     notification_channel: Mapped[str] = mapped_column(String(32), default=NotificationChannelEnum.sse.value, nullable=False)
-    ha_base_url: Mapped[str | None] = mapped_column(String(255))
-    ha_token: Mapped[str | None] = mapped_column(Text)
+    ha_base_url: Mapped[Optional[str]] = mapped_column(String(255))
+    ha_token: Mapped[Optional[str]] = mapped_column(Text)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    updated_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -323,9 +359,9 @@ class PushDeliveryLog(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
-    apns_id: Mapped[str | None] = mapped_column(String(255))
+    apns_id: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="sent", nullable=False)
-    error_reason: Mapped[str | None] = mapped_column(Text)
+    error_reason: Mapped[Optional[str]] = mapped_column(Text)
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
@@ -340,5 +376,110 @@ class HomeAssistantDeliveryLog(Base):
     dedupe_key: Mapped[str] = mapped_column(String(255), nullable=False)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="sent", nullable=False)
-    error_reason: Mapped[str | None] = mapped_column(Text)
+    error_reason: Mapped[Optional[str]] = mapped_column(Text)
     sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class AchievementDefinition(Base):
+    __tablename__ = "achievement_definitions"
+    __table_args__ = (UniqueConstraint("key", name="uq_achievement_definition_key"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="general")
+    icon_key: Mapped[str] = mapped_column(String(64), nullable=False, default="award")
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    difficulty: Mapped[AchievementDifficultyEnum] = mapped_column(SqlEnum(AchievementDifficultyEnum), nullable=False)
+    rule_kind: Mapped[AchievementRuleKindEnum] = mapped_column(SqlEnum(AchievementRuleKindEnum), nullable=False)
+    rule_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    reward_kind: Mapped[AchievementRewardKindEnum] = mapped_column(SqlEnum(AchievementRewardKindEnum), nullable=False)
+    reward_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    teaser: Mapped[Optional[str]] = mapped_column(String(255))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class AchievementProgress(Base):
+    __tablename__ = "achievement_progress"
+    __table_args__ = (UniqueConstraint("achievement_id", "user_id", name="uq_achievement_progress_user_achievement"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    achievement_id: Mapped[int] = mapped_column(ForeignKey("achievement_definitions.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    status: Mapped[AchievementProgressStatusEnum] = mapped_column(
+        SqlEnum(AchievementProgressStatusEnum),
+        default=AchievementProgressStatusEnum.locked,
+        nullable=False,
+    )
+    current_value: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    target_value: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    current_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    best_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    frozen_periods_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    progress_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    unlocked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    profile_claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    reward_granted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_evaluated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class AchievementUnlockEvent(Base):
+    __tablename__ = "achievement_unlock_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    achievement_id: Mapped[int] = mapped_column(ForeignKey("achievement_definitions.id", ondelete="CASCADE"), index=True)
+    progress_id: Mapped[int] = mapped_column(ForeignKey("achievement_progress.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    difficulty: Mapped[AchievementDifficultyEnum] = mapped_column(SqlEnum(AchievementDifficultyEnum), nullable=False)
+    reward_kind: Mapped[AchievementRewardKindEnum] = mapped_column(SqlEnum(AchievementRewardKindEnum), nullable=False)
+    reward_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    presentation_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    emitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    displayed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class AchievementFreezeWindow(Base):
+    __tablename__ = "achievement_freeze_windows"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    scope: Mapped[AchievementFreezeScopeEnum] = mapped_column(
+        SqlEnum(AchievementFreezeScopeEnum),
+        default=AchievementFreezeScopeEnum.streaks,
+        nullable=False,
+    )
+    reason: Mapped[Optional[str]] = mapped_column(String(255))
+    starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    ends_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class AchievementTaskRecord(Base):
+    __tablename__ = "achievement_task_records"
+    __table_args__ = (UniqueConstraint("task_id", name="uq_achievement_task_record_task"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    task_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    task_title: Mapped[str] = mapped_column(String(180), nullable=False)
+    special_template_id: Mapped[Optional[int]] = mapped_column(Integer, index=True)
+    recurrence_type: Mapped[str] = mapped_column(String(16), nullable=False, default=RecurrenceTypeEnum.none.value)
+    outcome: Mapped[AchievementTaskOutcomeEnum] = mapped_column(SqlEnum(AchievementTaskOutcomeEnum), nullable=False)
+    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
+    points_awarded: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

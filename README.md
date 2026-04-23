@@ -151,11 +151,21 @@ services:
       APNS_PRIVATE_KEY_PATH: ${APNS_PRIVATE_KEY_PATH:-}
       PUSH_WORKER_ENABLED: ${PUSH_WORKER_ENABLED:-false}
       PUSH_WORKER_INTERVAL_SECONDS: ${PUSH_WORKER_INTERVAL_SECONDS:-60}
+      DB_BACKUP_ALLOWED_DIRS: ${DB_BACKUP_ALLOWED_DIRS:-/data/backups,/tmp/homequests-backups}
+      DB_BACKUP_DEFAULT_DIR: ${DB_BACKUP_DEFAULT_DIR:-/data/backups}
+      DB_BACKUP_TIMEOUT_SECONDS: ${DB_BACKUP_TIMEOUT_SECONDS:-180}
+      DB_BACKUP_UPLOAD_MAX_BYTES: ${DB_BACKUP_UPLOAD_MAX_BYTES:-536870912}
+      DB_CLEANUP_MAX_PASSES: ${DB_CLEANUP_MAX_PASSES:-8}
     ports:
       - "${API_PORT:-8010}:8000"
+    volumes:
+      # Standard: persistentes Docker-Volume fuer Backups.
+      # Optional Host-Pfad setzen: BACKUP_MOUNT_SOURCE=/opt/homequests/backups
+      - ${BACKUP_MOUNT_SOURCE:-homequests_backup_data}:/data/backups
 
 volumes:
   homequests_postgres_data:
+  homequests_backup_data:
 YAML
 ```
 

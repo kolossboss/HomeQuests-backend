@@ -10,6 +10,10 @@ const state = {
   events: [],
   rewards: [],
   redemptions: [],
+  achievementsOverview: null,
+  achievementTargetUserId: null,
+  achievementCelebration: null,
+  achievementActionInFlight: null,
   rewardContributionProgressById: {},
   expandedChildRewardId: null,
   selectedRewardContribution: null,
@@ -149,7 +153,9 @@ let liveConnected = false;
 let liveFamilyId = null;
 let liveCursor = 0;
 let specialTaskRefreshTimer = null;
+let shellSyncFrame = 0;
 let dataRefreshInFlight = false;
+let achievementUnlockBannerTimer = null;
 let uiLoadingCounter = 0;
 let uiStatusTimer = null;
 let membersPanelOriginalParent = null;
@@ -296,6 +302,15 @@ function applyNarrowViewportScrollFix() {
   document.querySelectorAll("#app-panel .tab-panel.active").forEach((panel) => {
     panel.style.display = "flex";
     panel.style.flexDirection = "column";
+  });
+}
+
+function scheduleShellSync() {
+  if (shellSyncFrame) return;
+  shellSyncFrame = window.requestAnimationFrame(() => {
+    shellSyncFrame = 0;
+    syncAppShellMode();
+    applyNarrowViewportScrollFix();
   });
 }
 
@@ -843,8 +858,57 @@ function pointsSourceLabel(sourceType) {
     reward_contribution: "Belohnungsbeitrag",
     task_penalty: "Minuspunkte Aufgabe",
     manual_adjustment: "Manuelle Anpassung",
+    achievement_unlock: "Achievement-Belohnung",
   };
   return map[sourceType] || sourceType;
+}
+
+function achievementDifficultyLabel(difficulty) {
+  const map = {
+    bronze: "Bronze",
+    silver: "Silber",
+    gold: "Gold",
+    platinum: "Platin",
+  };
+  return map[difficulty] || difficulty || "-";
+}
+
+function achievementDifficultyAccent(difficulty) {
+  const map = {
+    bronze: "#b47d49",
+    silver: "#a9b7c9",
+    gold: "#e8b923",
+    platinum: "#73d0e6",
+  };
+  return map[difficulty] || "#0a84ff";
+}
+
+function achievementStatusLabel(status) {
+  const map = {
+    locked: "Gesperrt",
+    in_progress: "In Arbeit",
+    unlocked: "Freigeschaltet",
+  };
+  return map[status] || status || "-";
+}
+
+function achievementIcon(iconKey) {
+  const map = {
+    spark: "✨",
+    "check-stack": "✅",
+    "calendar-week": "📅",
+    flash: "⚡",
+    shield: "🛡️",
+    rocket: "🚀",
+    "coin-stack": "🪙",
+    starburst: "🌟",
+    trophy: "🏆",
+    "gear-check": "🛠️",
+    crown: "👑",
+    "crown-check": "👑",
+    "calendar-star": "🗓️",
+  };
+  return map[iconKey] || "🏅";
 }
 
 function pointsDeltaLabel(delta) {
@@ -1898,6 +1962,12 @@ function connectLiveUpdates(familyId) {
             task_id: info.task_id,
             assignee_id: info.assignee_id,
           });
+        }
+      }
+      if (payload.event_type === "achievement.unlocked") {
+        const info = payload.payload || {};
+        if (state.me && Number(info.user_id || 0) === Number(state.me.id)) {
+          showAchievementUnlockBanner(info);
         }
       }
       if (String(payload.event_type || "").startsWith("system.db.")) {
@@ -4530,6 +4600,420 @@ async function loadChildPointsStats() {
   renderChildPointsInsights({ animateTrend: true });
 }
 
+function achievementRuleSummary(item) {
+  if (item?.progress_payload?.summary) return safeHtmlText(item.progress_payload.summary);
+  if (item?.teaser) return safeHtmlText(item.teaser);
+  return "Noch keine Fortschrittsdaten";
+}
+
+function renderAchievementFreezeList() {
+  const target = byId("achievement-freeze-list");
+  if (!target) return;
+  const freezes = state.achievementsOverview?.freeze_windows || [];
+  target.innerHTML = freezes.length
+    ? freezes
+      .map((entry) => `<article class="achievement-freeze-item">
+        <strong>${safeHtmlText(entry.reason || "Freeze aktiv")}</strong>
+        <p class="muted">${fmtDate(entry.starts_at)} bis ${fmtDate(entry.ends_at)}</p>
+      </article>`)
+      .join("")
+    : renderEmptyState("Kein Freeze aktiv", "Aktuell pausiert kein Urlaub- oder Freeze-Zeitraum eine Streak.");
+}
+
+function renderAchievementCards() {
+  const target = byId("achievement-cards");
+  const newTarget = byId("achievement-new-cards");
+  const giftTarget = byId("achievement-gift-cards");
+  const completedTarget = byId("achievement-completed-cards");
+  if (!target) return;
+  const items = state.achievementsOverview?.items || [];
+  const canClaimOwnAchievements = isChildRole() && Number(state.achievementsOverview?.user_id || 0) === Number(state.me?.id || 0);
+
+  const newItems = items.filter((item) => item.is_profile_claimable);
+  const giftItems = items.filter((item) => item.is_reward_claimable);
+  const completedItems = items.filter((item) => item.profile_claimed_at && !item.is_reward_claimable);
+  const catalogItems = items.filter((item) => !item.is_profile_claimable && !item.is_reward_claimable && !item.profile_claimed_at);
+
+  if (newTarget) {
+    newTarget.innerHTML = newItems.length
+      ? newItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
+      : renderEmptyState("Nichts Neues", "Sobald du eine Errungenschaft freischaltest, erscheint sie hier.");
+  }
+  if (giftTarget) {
+    giftTarget.innerHTML = giftItems.length
+      ? giftItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
+      : renderEmptyState("Keine Geschenke", "Punkte-Geschenke erscheinen hier, nachdem du eine Errungenschaft ins Profil übernommen hast.");
+  }
+  if (completedTarget) {
+    completedTarget.innerHTML = completedItems.length
+      ? completedItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
+      : renderEmptyState("Noch keine Profil-Auszeichnungen", "Übernimm eine freigeschaltete Errungenschaft, dann landet sie hier.");
+  }
+  target.innerHTML = catalogItems.length
+    ? catalogItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
+    : renderEmptyState("Katalog leer", "Alle sichtbaren Errungenschaften sind schon in anderen Bereichen einsortiert.");
+}
+
+function renderAchievementCard(item, canClaimOwnAchievements) {
+  const accent = achievementDifficultyAccent(item.difficulty);
+  const rewardText = item.reward_points > 0 ? `${item.reward_points} Punkte` : "Nur Freischaltung";
+  const streakText = item.current_streak > 0 ? `Serie ${item.current_streak}` : achievementRuleSummary(item);
+  const progressText = `${item.current_value} / ${item.target_value || 0}`;
+  const profileClaimable = item.is_profile_claimable;
+  const rewardClaimable = item.is_reward_claimable;
+  const claimState = profileClaimable
+    ? "Bereit fürs Profil"
+    : item.profile_claimed_at
+      ? "Im Profil"
+      : achievementStatusLabel(item.status);
+  const cardAction = canClaimOwnAchievements && profileClaimable
+    ? "claim-profile"
+    : canClaimOwnAchievements && rewardClaimable
+      ? "claim-reward"
+      : "";
+  const actionHtml = canClaimOwnAchievements && profileClaimable
+    ? `<button type="button" class="achievement-claim-btn" data-achievement-action="claim-profile" data-achievement-id="${item.achievement_id}">Ins Profil drehen</button>`
+    : canClaimOwnAchievements && rewardClaimable
+      ? `<button type="button" class="achievement-gift-btn" data-achievement-action="claim-reward" data-achievement-id="${item.achievement_id}" data-points="${item.reward_points || 0}">
+          <span class="achievement-gift-box" aria-hidden="true">🎁</span>
+          Geschenk öffnen
+        </button>`
+      : item.reward_granted_at
+        ? `<p class="achievement-action-done">Geschenk geöffnet und Punkte gutgeschrieben</p>`
+        : item.profile_claimed_at
+          ? `<p class="achievement-action-done">In deinem Profil gespeichert</p>`
+          : "";
+  return `<article class="achievement-card ${item.status === "unlocked" ? "is-unlocked" : "is-locked"} ${profileClaimable ? "is-profile-claimable" : ""} ${rewardClaimable ? "is-reward-claimable" : ""} ${cardAction ? "is-clickable" : ""}" data-achievement-id="${item.achievement_id}" data-achievement-card-action="${cardAction}" ${cardAction ? 'role="button" tabindex="0"' : ""} style="--achievement-accent:${accent};">
+    <div class="achievement-card-head">
+      <div>
+        <div class="achievement-icon">${achievementIcon(item.icon_key)}</div>
+      </div>
+      <div>
+        <p class="achievement-card-title">${safeHtmlText(item.name)}</p>
+        <p class="achievement-card-sub">${safeHtmlText(item.description)}</p>
+      </div>
+    </div>
+    <div class="achievement-card-badges">
+      <span class="achievement-badge">${safeHtmlText(achievementDifficultyLabel(item.difficulty))}</span>
+      <span class="achievement-badge is-status" style="background:${accent};">${safeHtmlText(claimState)}</span>
+      <span class="achievement-badge">${safeHtmlText(rewardText)}</span>
+    </div>
+    <div class="achievement-progress">
+      <div class="achievement-progress-track">
+        <div class="achievement-progress-bar" style="width:${Math.max(0, Math.min(item.progress_percent || 0, 100))}%;"></div>
+      </div>
+      <div class="achievement-progress-meta">
+        <span>${safeHtmlText(progressText)}</span>
+        <span>${safeHtmlText(streakText)}</span>
+      </div>
+    </div>
+    <div class="entity-card-kv">
+      <div class="entity-card-kv-row"><dt>Regel</dt><dd>${achievementRuleSummary(item)}</dd></div>
+      <div class="entity-card-kv-row"><dt>Freigeschaltet</dt><dd>${item.unlocked_at ? fmtDate(item.unlocked_at) : "Noch nicht"}</dd></div>
+      <div class="entity-card-kv-row"><dt>Profil</dt><dd>${item.profile_claimed_at ? fmtDate(item.profile_claimed_at) : "Noch nicht übernommen"}</dd></div>
+    </div>
+    ${actionHtml ? `<div class="achievement-card-actions">${actionHtml}</div>` : ""}
+  </article>`;
+}
+
+function renderChildAchievementFocus() {
+  const card = byId("dashboard-child-achievements-focus");
+  const countNode = byId("dashboard-child-achievements-count");
+  const metaNode = byId("dashboard-child-achievements-meta");
+  if (!card || !countNode || !metaNode) return;
+
+  if (!isChildRole()) {
+    toggleHidden("dashboard-child-achievements-focus", true);
+    return;
+  }
+
+  toggleHidden("dashboard-child-achievements-focus", false);
+  const overview = state.achievementsOverview;
+  const unclaimed = Number(overview?.unclaimed_count || 0);
+  const gifts = Number(overview?.reward_pending_count || 0);
+  const totalActionable = unclaimed + gifts;
+  countNode.textContent = String(totalActionable);
+  card.classList.toggle("has-achievement-news", totalActionable > 0);
+  if (gifts > 0) {
+    metaNode.textContent = `${gifts} Geschenk(e) warten auf dich`;
+  } else if (unclaimed > 0) {
+    metaNode.textContent = `${unclaimed} neue Auszeichnung(en) fürs Profil`;
+  } else {
+    metaNode.textContent = "Keine neuen Auszeichnungen";
+  }
+}
+
+function renderAchievements() {
+  const overview = state.achievementsOverview;
+  const summaryPill = byId("achievements-summary-pill");
+  const unlockedCount = byId("achievements-unlocked-count");
+  const lockedCount = byId("achievements-locked-count");
+  const lastReward = byId("achievements-last-reward");
+
+  const memberOptions = state.members
+    .filter((entry) => entry.is_active !== false)
+    .filter((entry) => isChildRole() ? entry.user_id === state.me?.id : entry.role === "child" || state.members.length === 1)
+    .map((entry) => ({
+      value: entry.user_id,
+      label: `${entry.display_name} (${roleLabel(entry.role)})`,
+    }));
+  fillSelect("achievement-user-select", memberOptions, false);
+  if (byId("achievement-user-select")) {
+    byId("achievement-user-select").value = String(state.achievementTargetUserId || "");
+  }
+  toggleHidden("achievement-user-select-wrap", isChildRole());
+
+  if (!overview) {
+    if (summaryPill) summaryPill.textContent = "Noch keine Achievements geladen.";
+    if (unlockedCount) unlockedCount.textContent = "0";
+    if (lockedCount) lockedCount.textContent = "0";
+    if (lastReward) lastReward.textContent = "-";
+    renderAchievementFreezeList();
+    renderAchievementCards();
+    renderChildAchievementFocus();
+    return;
+  }
+
+  if (summaryPill) {
+    summaryPill.textContent = `${overview.user_display_name}: ${overview.unlocked_count} von ${overview.total_count} freigeschaltet`;
+  }
+  const items = Array.isArray(overview.items) ? overview.items : [];
+  const profileCount = items.filter((item) => item.profile_claimed_at).length;
+  if (unlockedCount) unlockedCount.textContent = String(overview.unclaimed_count || 0);
+  if (lockedCount) lockedCount.textContent = String(overview.reward_pending_count || 0);
+  if (lastReward) lastReward.textContent = String(profileCount);
+  renderAchievementFreezeList();
+  renderAchievementCards();
+  renderChildAchievementFocus();
+}
+
+async function loadAchievements() {
+  const familyId = getSelectedFamilyId();
+  if (!familyId || !state.me) return;
+
+  if (isChildRole()) {
+    state.achievementTargetUserId = state.me.id;
+  } else {
+    const candidateChildren = state.members.filter((entry) => entry.role === "child" && entry.is_active !== false);
+    const fallbackMember = candidateChildren[0] || state.members[0] || null;
+    if (!state.achievementTargetUserId || !state.members.some((entry) => entry.user_id === state.achievementTargetUserId)) {
+      state.achievementTargetUserId = fallbackMember ? fallbackMember.user_id : null;
+    }
+  }
+
+  if (!state.achievementTargetUserId) {
+    state.achievementsOverview = null;
+    renderAchievements();
+    return;
+  }
+
+  const path = isChildRole()
+    ? `/families/${familyId}/achievements/me`
+    : `/families/${familyId}/achievements/users/${state.achievementTargetUserId}`;
+  state.achievementsOverview = await api(path);
+  renderAchievements();
+}
+
+function showAchievementUnlockBanner(payload) {
+  const banner = byId("achievement-unlock-banner");
+  const presentation = payload?.presentation || {};
+  const reward = payload?.reward || {};
+  const accent = presentation.accent_color || achievementDifficultyAccent(payload?.difficulty);
+  const title = presentation.title || "Auszeichnung freigeschaltet";
+  const subtitle = reward.points > 0
+    ? `${payload?.name || presentation.subtitle || "Neue Errungenschaft"} • Geschenk wartet`
+    : (payload?.name || presentation.subtitle || "Neue Errungenschaft");
+
+  if (banner) {
+    byId("achievement-unlock-banner-icon").textContent = achievementIcon(presentation.icon_key || payload?.icon_key);
+    byId("achievement-unlock-banner-title").textContent = title;
+    byId("achievement-unlock-banner-subtitle").textContent = subtitle;
+    banner.style.borderColor = accent;
+    banner.style.boxShadow = `0 22px 50px rgba(0, 0, 0, 0.34), 0 0 0 1px ${accent}33 inset`;
+    banner.classList.remove("hidden");
+    banner.onclick = () => openAchievementsFocus({ section: "new", achievementId: payload?.achievement_id });
+    if (achievementUnlockBannerTimer) window.clearTimeout(achievementUnlockBannerTimer);
+    achievementUnlockBannerTimer = window.setTimeout(() => {
+      banner.classList.add("hidden");
+      state.achievementCelebration = null;
+    }, 5200);
+  }
+
+  state.achievementCelebration = payload || null;
+  showAchievementUnlockToast({
+    title,
+    subtitle,
+    iconKey: presentation.icon_key || payload?.icon_key,
+    accent,
+  });
+}
+
+function showAchievementUnlockToast({ title, subtitle, iconKey, accent }) {
+  document.querySelectorAll(".achievement-unlock-toast").forEach((node) => node.remove());
+  const toast = document.createElement("button");
+  toast.type = "button";
+  toast.className = "achievement-unlock-toast";
+  toast.style.setProperty("--achievement-toast-accent", accent || "#ffd60a");
+  toast.innerHTML = `<span class="achievement-unlock-toast-icon">${achievementIcon(iconKey)}</span>
+    <span class="achievement-unlock-toast-copy">
+      <strong>${safeHtmlText(title)}</strong>
+      <small>${safeHtmlText(subtitle)}</small>
+    </span>
+    <span class="achievement-unlock-toast-cta">Ansehen</span>`;
+  toast.addEventListener("click", () => {
+    openAchievementsFocus({ section: "new" });
+    toast.remove();
+  });
+  document.body.appendChild(toast);
+  window.setTimeout(() => toast.classList.add("is-leaving"), 6500);
+  window.setTimeout(() => toast.remove(), 7000);
+}
+
+async function openAchievementsFocus({ section = "new", achievementId = null } = {}) {
+  switchTab("achievements");
+  await loadAchievements().catch((error) => log("Achievements Fokus laden Fehler", { error: error.message }));
+
+  const sectionIdByName = {
+    new: "achievement-new-section",
+    gifts: "achievement-gifts-section",
+    completed: "achievement-completed-section",
+    catalog: "achievement-cards",
+  };
+  const card = achievementId ? document.querySelector(`.achievement-card[data-achievement-id="${achievementId}"]`) : null;
+  const target = card || byId(sectionIdByName[section] || "achievement-new-section") || byId("tab-achievements");
+  if (target && typeof target.scrollIntoView === "function") {
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.classList.add("achievement-focus-pulse");
+    window.setTimeout(() => target.classList.remove("achievement-focus-pulse"), 1500);
+  }
+}
+
+function animateAchievementProfileClaim(card) {
+  if (!card) return Promise.resolve();
+  card.classList.add("is-claiming-profile");
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      card.classList.remove("is-claiming-profile");
+      card.classList.add("is-profile-claimed-flash");
+      window.setTimeout(() => {
+        card.classList.remove("is-profile-claimed-flash");
+        resolve();
+      }, 780);
+    }, 1150);
+  });
+}
+
+function animateAchievementGiftOpen(button) {
+  const card = button?.closest(".achievement-card");
+  if (card) card.classList.add("is-opening-gift");
+  if (button) button.classList.add("is-opening-gift");
+  return new Promise((resolve) => {
+    window.setTimeout(() => {
+      if (card) card.classList.remove("is-opening-gift");
+      if (button) button.classList.remove("is-opening-gift");
+      resolve();
+    }, 920);
+  });
+}
+
+function showAchievementPointRain(anchor, points) {
+  if (points <= 0) return;
+  const overlay = document.createElement("div");
+  overlay.className = "achievement-point-rain";
+  const rect = anchor?.getBoundingClientRect?.();
+  const left = rect ? rect.left + rect.width / 2 : window.innerWidth / 2;
+  const top = rect ? rect.top + rect.height / 2 : window.innerHeight / 2;
+  overlay.style.left = `${left}px`;
+  overlay.style.top = `${top}px`;
+  const labels = [points, Math.max(5, Math.round(points / 2)), Math.max(1, Math.round(points / 4)), points].map((value) => `+${value}`);
+  overlay.innerHTML = labels
+    .map((label, index) => `<span style="--drop-index:${index}; --drop-x:${(index - 1.5) * 28}px;">${safeHtmlText(label)}</span>`)
+    .join("");
+  document.body.appendChild(overlay);
+  window.setTimeout(() => overlay.remove(), 1400);
+}
+
+function animateNumberNode(node, fromValue, toValue, durationMs = 1200) {
+  if (!node) return Promise.resolve();
+  const start = performance.now();
+  const delta = toValue - fromValue;
+  return new Promise((resolve) => {
+    function frame(now) {
+      const progress = Math.min((now - start) / durationMs, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      node.textContent = String(Math.round(fromValue + delta * eased));
+      if (progress < 1) {
+        window.requestAnimationFrame(frame);
+      } else {
+        node.textContent = String(toValue);
+        resolve();
+      }
+    }
+    window.requestAnimationFrame(frame);
+  });
+}
+
+async function showAchievementLootOverlay({ title, iconKey, pointsDelta, balanceBefore, balanceAfter }) {
+  const overlay = document.createElement("div");
+  overlay.className = "achievement-loot-overlay";
+  overlay.innerHTML = `<div class="achievement-loot-card">
+    <p class="achievement-loot-kicker">Loot erhalten</p>
+    <div class="achievement-loot-icon">${achievementIcon(iconKey)}</div>
+    <h3>${safeHtmlText(title || "Errungenschafts-Geschenk")}</h3>
+    <div class="achievement-loot-points">+<span id="achievement-loot-add">0</span></div>
+    <div class="achievement-loot-balance">
+      <span>Kontostand</span>
+      <strong><span id="achievement-loot-before">${balanceBefore}</span> → <span id="achievement-loot-after">${balanceBefore}</span></strong>
+    </div>
+    <div class="achievement-loot-coins" aria-hidden="true">
+      <span></span><span></span><span></span><span></span><span></span><span></span>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  await new Promise((resolve) => window.setTimeout(resolve, 220));
+  await Promise.all([
+    animateNumberNode(overlay.querySelector("#achievement-loot-add"), 0, pointsDelta, 1100),
+    animateNumberNode(overlay.querySelector("#achievement-loot-after"), balanceBefore, balanceAfter, 1300),
+  ]);
+  await new Promise((resolve) => window.setTimeout(resolve, 1050));
+  overlay.classList.add("is-leaving");
+  await new Promise((resolve) => window.setTimeout(resolve, 360));
+  overlay.remove();
+}
+
+async function claimAchievementProfile(achievementId, trigger) {
+  const card = trigger?.closest(".achievement-card") || document.querySelector(`.achievement-card[data-achievement-id="${achievementId}"]`);
+  await animateAchievementProfileClaim(card);
+  const response = await api(`/families/${getSelectedFamilyId()}/achievements/${achievementId}/claim-profile`, { method: "POST" });
+  state.achievementsOverview = response.overview;
+  renderAchievements();
+}
+
+async function claimAchievementReward(achievementId, trigger) {
+  const item = (state.achievementsOverview?.items || []).find((entry) => Number(entry.achievement_id) === Number(achievementId));
+  const balanceBefore = Number(getOwnBalance() || 0);
+  await animateAchievementGiftOpen(trigger);
+  const response = await api(`/families/${getSelectedFamilyId()}/achievements/${achievementId}/claim-reward`, { method: "POST" });
+  state.achievementsOverview = response.overview;
+  const pointsDelta = Number(response.points_delta || 0);
+  const balanceAfter = balanceBefore + pointsDelta;
+  if (pointsDelta > 0) {
+    showAchievementPointRain(trigger, pointsDelta);
+    await showAchievementLootOverlay({
+      title: item?.name || "Errungenschafts-Geschenk",
+      iconKey: item?.icon_key || "trophy",
+      pointsDelta,
+      balanceBefore,
+      balanceAfter,
+    });
+  }
+  await loadPointsBalances();
+  if (isChildRole() && state.me) {
+    await loadPointsHistory(state.me.id).catch((error) => log("Punkte-Historie nach Achievement-Geschenk Fehler", { error: error.message }));
+  }
+  renderAchievements();
+}
+
 function resetHomeAssistantSettingsForm() {
   state.haSettings = null;
   state.haUserConfigs = [];
@@ -5600,7 +6084,7 @@ async function refreshFamilyData({ silent = false } = {}) {
   if (!silent) setUiLoading(true, "Familiendaten werden aktualisiert ...");
   try {
     await loadMembers();
-    await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances()]);
+    await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances(), loadAchievements()]);
     if (isChildRole()) {
       await loadChildPointsStats().catch((error) => {
         state.childPointsStats = null;
@@ -6957,6 +7441,71 @@ if (familySelect) {
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => switchTab(button.dataset.tab));
 });
+const achievementUserSelect = byId("achievement-user-select");
+if (achievementUserSelect) {
+  achievementUserSelect.addEventListener("change", async (event) => {
+    state.achievementTargetUserId = Number(event.target.value || 0) || null;
+    await loadAchievements();
+  });
+}
+document.querySelectorAll(".achievement-board").forEach((board) => {
+  board.addEventListener("click", async (event) => {
+    const actionButton = event.target.closest("button[data-achievement-action]");
+    const actionCard = event.target.closest(".achievement-card[data-achievement-card-action]");
+    const actionSource = actionButton || actionCard;
+    if (!actionSource || !board.contains(actionSource)) return;
+    const achievementId = Number(actionSource.dataset.achievementId || 0);
+    const action = actionSource.dataset.achievementAction || actionSource.dataset.achievementCardAction;
+    if (!achievementId || !action) return;
+
+    const actionKey = `${action}:${achievementId}`;
+    if (state.achievementActionInFlight) return;
+    state.achievementActionInFlight = actionKey;
+    const busyButton = actionButton || actionCard.querySelector("button[data-achievement-action]");
+    if (busyButton) {
+      busyButton.disabled = true;
+      busyButton.setAttribute("aria-busy", "true");
+    }
+    try {
+      if (action === "claim-profile") {
+        await claimAchievementProfile(achievementId, actionSource);
+        await openAchievementsFocus({ section: "gifts", achievementId });
+      } else if (action === "claim-reward") {
+        await claimAchievementReward(achievementId, actionSource);
+        await openAchievementsFocus({ section: "completed", achievementId });
+      }
+    } catch (error) {
+      log("Achievement Aktion Fehler", { error: error.message, achievement_id: achievementId, action });
+    } finally {
+      state.achievementActionInFlight = null;
+      if (busyButton) {
+        busyButton.disabled = false;
+        busyButton.removeAttribute("aria-busy");
+      }
+    }
+  });
+});
+document.querySelectorAll(".achievement-board").forEach((board) => {
+  board.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest(".achievement-card[data-achievement-card-action]");
+    if (!card || !board.contains(card)) return;
+    event.preventDefault();
+    card.click();
+  });
+});
+const childAchievementsFocusCard = byId("dashboard-child-achievements-focus");
+if (childAchievementsFocusCard) {
+  childAchievementsFocusCard.addEventListener("click", () => {
+    const overview = state.achievementsOverview;
+    const targetSection = Number(overview?.unclaimed_count || 0) > 0
+      ? "new"
+      : Number(overview?.reward_pending_count || 0) > 0
+        ? "gifts"
+        : "catalog";
+    openAchievementsFocus({ section: targetSection });
+  });
+}
 document.querySelectorAll(".system-nav-btn").forEach((button) => {
   button.addEventListener("click", () => {
     const view = button.dataset.systemView || "members";
@@ -7748,18 +8297,9 @@ byId("redeem-reward-btn").addEventListener("click", () =>
   })
 );
 
-window.addEventListener("resize", () => {
-  syncAppShellMode();
-  applyNarrowViewportScrollFix();
-});
-window.addEventListener("orientationchange", () => {
-  syncAppShellMode();
-  applyNarrowViewportScrollFix();
-});
-window.addEventListener("pageshow", () => {
-  syncAppShellMode();
-  applyNarrowViewportScrollFix();
-});
+window.addEventListener("resize", scheduleShellSync);
+window.addEventListener("orientationchange", scheduleShellSync);
+window.addEventListener("pageshow", scheduleShellSync);
 
 initInlineEditorHomes();
 setSelectedWeekdays("task-weekdays", [0, 1, 2, 3, 4, 5, 6]);

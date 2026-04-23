@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 
@@ -5,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ..achievement_engine import evaluate_achievements_for_user
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import (
@@ -33,7 +36,11 @@ from ..services import emit_live_event, get_points_balance
 
 router = APIRouter(tags=["points"])
 
-TREND_EARNED_SOURCES = {PointsSourceEnum.task_approval, PointsSourceEnum.manual_adjustment}
+TREND_EARNED_SOURCES = {
+    PointsSourceEnum.task_approval,
+    PointsSourceEnum.manual_adjustment,
+    PointsSourceEnum.achievement_unlock,
+}
 TREND_SPENT_SOURCES = {PointsSourceEnum.reward_redemption, PointsSourceEnum.reward_contribution}
 
 
@@ -541,6 +548,14 @@ def adjust_points(
         family_id=family_id,
         event_type="points.adjusted",
         payload={"user_id": payload.user_id, "points_delta": payload.points_delta, "entry_id": entry.id},
+    )
+    evaluate_achievements_for_user(
+        db,
+        family_id=family_id,
+        user_id=payload.user_id,
+        triggered_by_id=current_user.id,
+        reason="points_manual_adjustment",
+        emit_events=True,
     )
     db.commit()
     db.refresh(entry)

@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260414g" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260423-achievements1" />
   </head>
   <body>
     <main class="container">
@@ -104,6 +104,7 @@
           <button id="tab-btn-special-tasks" data-tab="special-tasks" class="tab"><span>Sonderaufgaben</span></button>
           <button id="tab-btn-events" data-tab="events" class="tab"><span>Kalender</span></button>
           <button id="tab-btn-rewards" data-tab="rewards" class="tab"><span>Belohnungen</span></button>
+          <button id="tab-btn-achievements" data-tab="achievements" class="tab"><span>Errungenschaften</span></button>
           <button id="tab-btn-points" data-tab="points" class="tab"><span>Punkte</span></button>
           <button id="tab-btn-system" data-tab="system" class="tab"><span>System</span></button>
         </nav>
@@ -172,6 +173,11 @@
                 <p class="child-focus-kicker">Verpasst</p>
                 <p id="dashboard-child-missed-count" class="child-focus-count">0</p>
                 <p id="dashboard-child-missed-meta" class="child-focus-meta">Keine verpassten Aufgaben</p>
+              </article>
+              <article id="dashboard-child-achievements-focus" class="child-focus-card is-clickable focus-achievement">
+                <p class="child-focus-kicker">Errungenschaften</p>
+                <p id="dashboard-child-achievements-count" class="child-focus-count">0</p>
+                <p id="dashboard-child-achievements-meta" class="child-focus-meta">Keine neuen Auszeichnungen</p>
               </article>
             </div>
           </div>
@@ -415,6 +421,91 @@
               <button id="member-editor-save-btn">Änderungen speichern</button>
               <button id="member-editor-cancel-btn">Abbrechen</button>
             </div>
+          </div>
+        </section>
+
+        <section id="tab-achievements" class="tab-panel">
+          <div class="dashboard-hero achievements-hero">
+            <div>
+              <p class="eyebrow">Auszeichnungen</p>
+              <h3>Achievement-Katalog</h3>
+              <p class="muted">Freischaltungen, Fortschritt, Schwierigkeit und Belohnungen pro Kind.</p>
+            </div>
+            <p id="achievements-summary-pill" class="hero-pill">Noch keine Achievements geladen.</p>
+          </div>
+
+          <div id="achievement-unlock-banner" class="achievement-unlock-banner hidden" aria-live="polite">
+            <div class="achievement-unlock-banner-icon" id="achievement-unlock-banner-icon">🏆</div>
+            <div class="achievement-unlock-banner-copy">
+              <strong id="achievement-unlock-banner-title">Auszeichnung freigeschaltet</strong>
+              <p id="achievement-unlock-banner-subtitle">Neue Errungenschaft</p>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-head-row">
+              <div>
+                <h4>Übersicht</h4>
+                <p class="muted">Das Kind sieht gesperrte, laufende und bereits freigeschaltete Achievements in einer gemeinsamen Ansicht.</p>
+              </div>
+              <label id="achievement-user-select-wrap">Kind
+                <select id="achievement-user-select"></select>
+              </label>
+            </div>
+            <div class="achievements-summary-grid">
+              <article class="achievement-summary-card">
+                <span>Neu</span>
+                <strong id="achievements-unlocked-count">0</strong>
+              </article>
+              <article class="achievement-summary-card">
+                <span>Geschenke</span>
+                <strong id="achievements-locked-count">0</strong>
+              </article>
+              <article class="achievement-summary-card">
+                <span>Im Profil</span>
+                <strong id="achievements-last-reward">-</strong>
+              </article>
+            </div>
+          </div>
+
+          <div id="achievement-new-section" class="section-block achievement-action-section achievement-action-new">
+            <div class="section-copy">
+              <h4>Neu freigeschaltet</h4>
+              <p class="muted">Klicke eine Auszeichnung an, damit sie mit Animation in dein Profil wandert.</p>
+            </div>
+            <div id="achievement-new-cards" class="achievement-cards-grid achievement-board"></div>
+          </div>
+
+          <div id="achievement-gifts-section" class="section-block achievement-action-section achievement-action-gifts">
+            <div class="section-copy">
+              <h4>Geschenke</h4>
+              <p class="muted">Öffne deine Belohnungen und sammle die Punkte ein.</p>
+            </div>
+            <div id="achievement-gift-cards" class="achievement-cards-grid achievement-board"></div>
+          </div>
+
+          <div id="achievement-completed-section" class="section-block achievement-action-section achievement-action-completed">
+            <div class="section-copy">
+              <h4>Geschaffte Errungenschaften</h4>
+              <p class="muted">Diese Auszeichnungen sind bereits in deinem Profil gespeichert.</p>
+            </div>
+            <div id="achievement-completed-cards" class="achievement-cards-grid achievement-board"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-copy">
+              <h4>Freeze / Urlaub</h4>
+              <p class="muted">Streak-Achievements werden während eines Freeze-Zeitraums pausiert statt verloren.</p>
+            </div>
+            <div id="achievement-freeze-list" class="achievement-freeze-list"></div>
+          </div>
+
+          <div class="section-block">
+            <div class="section-copy">
+              <h4>Achievement-Katalog</h4>
+              <p class="muted">Alle laufenden und noch gesperrten Ziele mit Fortschritt, Regeln und Belohnungen.</p>
+            </div>
+            <div id="achievement-cards" class="achievement-cards-grid achievement-board"></div>
           </div>
         </section>
 
@@ -1269,6 +1360,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260414db14"></script>
+    <script src="/static/app.js?v=20260423-achievements1"></script>
   </body>
 </html>

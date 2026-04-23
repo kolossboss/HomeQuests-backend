@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from tempfile import SpooledTemporaryFile
 from unittest.mock import patch
 
@@ -65,7 +65,7 @@ class BootstrapUploadRestoreFlowTests(unittest.TestCase):
             file_name="restore_seed_20260413_140000.dump",
             file_path="/tmp/homequests-backups/restore_seed_20260413_140000.dump",
             size_bytes=128,
-            modified_at_utc=datetime.now(UTC),
+            modified_at_utc=datetime.now(timezone.utc),
         )
 
         def fake_restore_backup(*, backup_file: str, timeout_seconds: int | None = None) -> DbRestoreResult:
@@ -87,7 +87,7 @@ class BootstrapUploadRestoreFlowTests(unittest.TestCase):
             return DbRestoreResult(
                 backup_file_path=backup_file,
                 duration_seconds=0.123,
-                restored_at_utc=datetime.now(UTC),
+                restored_at_utc=datetime.now(timezone.utc),
                 database_engine="postgresql",
             )
 
