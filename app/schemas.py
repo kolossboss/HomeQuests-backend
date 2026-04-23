@@ -1,9 +1,16 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from .models import (
+    AchievementDifficultyEnum,
+    AchievementFreezeScopeEnum,
+    AchievementProgressStatusEnum,
+    AchievementRewardKindEnum,
+    AchievementRuleKindEnum,
     ApprovalDecisionEnum,
     NotificationChannelEnum,
     RecurrenceTypeEnum,
@@ -942,3 +949,110 @@ class SystemPracticalTestOut(BaseModel):
     recipient_display_names: list[str]
     affected_entities: dict[str, object]
     delivery_expectation: str
+
+
+class AchievementRewardOut(BaseModel):
+    kind: AchievementRewardKindEnum
+    points: int = 0
+    config: dict[str, object] = Field(default_factory=dict)
+
+
+class AchievementUnlockPresentationOut(BaseModel):
+    style: str
+    title: str
+    subtitle: str
+    icon_key: str
+    accent_color: str
+    haptic: str
+    animation: str
+
+
+class AchievementUnlockEventOut(BaseModel):
+    id: int
+    achievement_id: int
+    user_id: int
+    difficulty: AchievementDifficultyEnum
+    reward_kind: AchievementRewardKindEnum
+    reward_points: int
+    presentation_payload: dict[str, object] = Field(default_factory=dict)
+    emitted_at: datetime
+    displayed_at: datetime | None = None
+
+
+class AchievementFreezeWindowCreate(BaseModel):
+    starts_at: datetime
+    ends_at: datetime
+    reason: str | None = Field(default=None, max_length=255)
+    scope: AchievementFreezeScopeEnum = AchievementFreezeScopeEnum.streaks
+
+    @model_validator(mode="after")
+    def validate_range(self):
+        if self.ends_at <= self.starts_at:
+            raise ValueError("Freeze-Ende muss nach dem Start liegen")
+        return self
+
+
+class AchievementFreezeWindowOut(BaseModel):
+    id: int
+    family_id: int
+    user_id: int
+    scope: AchievementFreezeScopeEnum
+    reason: str | None = None
+    starts_at: datetime
+    ends_at: datetime
+    created_by_id: int | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AchievementItemOut(BaseModel):
+    achievement_id: int
+    key: str
+    name: str
+    description: str
+    category: str
+    icon_key: str
+    difficulty: AchievementDifficultyEnum
+    teaser: str | None = None
+    status: AchievementProgressStatusEnum
+    current_value: int
+    target_value: int
+    progress_percent: int
+    current_streak: int
+    best_streak: int
+    frozen_periods_used: int
+    unlocked_at: datetime | None = None
+    profile_claimed_at: datetime | None = None
+    reward_granted_at: datetime | None = None
+    is_profile_claimable: bool = False
+    is_reward_claimable: bool = False
+    last_evaluated_at: datetime | None = None
+    reward_kind: AchievementRewardKindEnum
+    reward_points: int
+    reward_config: dict[str, object] = Field(default_factory=dict)
+    rule_kind: AchievementRuleKindEnum
+    rule_config: dict[str, object] = Field(default_factory=dict)
+    progress_payload: dict[str, object] = Field(default_factory=dict)
+
+
+class AchievementOverviewOut(BaseModel):
+    family_id: int
+    user_id: int
+    user_display_name: str
+    total_count: int
+    unlocked_count: int
+    locked_count: int
+    unclaimed_count: int = 0
+    reward_pending_count: int = 0
+    items: list[AchievementItemOut]
+    recent_unlocks: list[AchievementUnlockEventOut]
+    freeze_windows: list[AchievementFreezeWindowOut]
+
+
+class AchievementClaimOut(BaseModel):
+    overview: AchievementOverviewOut
+    achievement_id: int
+    profile_claimed: bool = False
+    reward_claimed: bool = False
+    points_delta: int = 0

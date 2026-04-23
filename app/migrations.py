@@ -378,6 +378,42 @@ def _add_task_series_id_and_indexes(engine: Engine) -> None:
         )
 
 
+def _add_achievement_points_source(engine: Engine) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'pointssourceenum') THEN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum e
+                            JOIN pg_type t ON t.oid = e.enumtypid
+                            WHERE t.typname = 'pointssourceenum' AND e.enumlabel = 'achievement_unlock'
+                        ) THEN
+                            ALTER TYPE pointssourceenum ADD VALUE 'achievement_unlock';
+                        END IF;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
+def _add_achievement_claim_columns(engine: Engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "ALTER TABLE achievement_progress "
+                "ADD COLUMN IF NOT EXISTS profile_claimed_at TIMESTAMP NULL"
+            )
+        )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
@@ -387,6 +423,8 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260307_home_assistant_delivery_logs", _create_home_assistant_delivery_logs_table),
     ("20260316_task_generation_blocks", _create_task_generation_blocks_table),
     ("20260316_task_series_id_and_indexes", _add_task_series_id_and_indexes),
+    ("20260422_achievement_points_source", _add_achievement_points_source),
+    ("20260423_achievement_claim_columns", _add_achievement_claim_columns),
 ]
 
 

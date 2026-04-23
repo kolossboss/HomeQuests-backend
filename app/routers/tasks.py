@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
@@ -8,9 +10,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
+from ..achievement_engine import evaluate_achievements_for_user, record_task_outcome
 from ..database import engine, get_db
 from ..deps import get_current_user
 from ..models import (
+    AchievementTaskOutcomeEnum,
     ApprovalDecisionEnum,
     FamilyMembership,
     PointsLedger,
@@ -263,6 +267,14 @@ def _special_task_usage_count(
         )
         .count()
     )
+
+
+def _special_task_limit_reached_reason(interval_type: SpecialTaskIntervalEnum) -> str:
+    if interval_type == SpecialTaskIntervalEnum.daily:
+        return "Tageslimit für diese Sonderaufgabe erreicht"
+    if interval_type == SpecialTaskIntervalEnum.monthly:
+        return "Monatslimit für diese Sonderaufgabe erreicht"
+    return "Wochenlimit für diese Sonderaufgabe erreicht"
 
 
 def _lock_special_task_claim_window(db: Session, template_id: int) -> None:
@@ -1293,6 +1305,15 @@ def update_task(
                 )
             )
 
+        record_task_outcome(
+            db,
+            task,
+            outcome=AchievementTaskOutcomeEnum.approved,
+            completed_at=_as_utc_naive(latest_submission.submitted_at),
+            reviewed_at=datetime.utcnow(),
+            points_awarded=task.points,
+            metadata={"source": "manual_update"},
+        )
         _create_next_recurring_task(db, task, current_user.id)
 
     if old_is_active and not task.is_active:
@@ -1312,6 +1333,15 @@ def update_task(
         event_type="task.updated",
         payload=_task_event_payload(task, reason="manual_edit"),
     )
+    if old_status != TaskStatusEnum.approved and task.status == TaskStatusEnum.approved:
+        evaluate_achievements_for_user(
+            db,
+            family_id=task.family_id,
+            user_id=task.assignee_id,
+            triggered_by_id=current_user.id,
+            reason="task_approved_manual",
+            emit_events=True,
+        )
     db.commit()
     db.refresh(task)
     return task
@@ -1448,11 +1478,14 @@ def list_available_special_tasks(
     result: list[SpecialTaskAvailabilityOut] = []
     now = datetime.utcnow()
     for template in templates:
-        available_now, unavailable_reason = _special_task_is_available_now(template, now)
-        if not available_now and not include_unavailable:
-            continue
         used = _special_task_usage_count(db, template.id, template.interval_type)
         remaining = max(template.max_claims_per_interval - used, 0)
+        available_now, unavailable_reason = _special_task_is_available_now(template, now)
+        if remaining <= 0:
+            available_now = False
+            unavailable_reason = _special_task_limit_reached_reason(template.interval_type)
+        if not available_now and not include_unavailable:
+            continue
         result.append(
             SpecialTaskAvailabilityOut(
                 id=template.id,
@@ -1500,11 +1533,10 @@ def claim_special_task(
 
     used = _special_task_usage_count(db, template.id, template.interval_type)
     if used >= template.max_claims_per_interval:
-        if template.interval_type == SpecialTaskIntervalEnum.daily:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tageslimit für diese Sonderaufgabe erreicht")
-        if template.interval_type == SpecialTaskIntervalEnum.monthly:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Monatslimit für diese Sonderaufgabe erreicht")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Wochenlimit für diese Sonderaufgabe erreicht")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=_special_task_limit_reached_reason(template.interval_type),
+        )
 
     due_at = None
     if template.interval_type == SpecialTaskIntervalEnum.daily:
@@ -1822,6 +1854,15 @@ def review_task(
                 )
             )
 
+        record_task_outcome(
+            db,
+            task,
+            outcome=AchievementTaskOutcomeEnum.approved,
+            completed_at=_as_utc_naive(latest_submission.submitted_at),
+            reviewed_at=datetime.utcnow(),
+            points_awarded=task.points,
+            metadata={"source": "review_task"},
+        )
         _create_next_recurring_task(db, task, current_user.id)
     else:
         task.status = TaskStatusEnum.rejected
@@ -1833,6 +1874,15 @@ def review_task(
         event_type="task.reviewed",
         payload={"task_id": task.id, "status": task.status.value, "assignee_id": task.assignee_id},
     )
+    if payload.decision == ApprovalDecisionEnum.approved:
+        evaluate_achievements_for_user(
+            db,
+            family_id=task.family_id,
+            user_id=task.assignee_id,
+            triggered_by_id=current_user.id,
+            reason="task_approved_review",
+            emit_events=True,
+        )
     db.commit()
     db.refresh(task)
     return task
@@ -1857,13 +1907,13 @@ def review_missed_task(
 
     due_at = _as_utc_naive(task.due_at)
     deduction = 0
+    latest_submission = (
+        db.query(TaskSubmission)
+        .filter(TaskSubmission.task_id == task.id)
+        .order_by(TaskSubmission.submitted_at.desc())
+        .first()
+    )
     if payload.action == "approve":
-        latest_submission = (
-            db.query(TaskSubmission)
-            .filter(TaskSubmission.task_id == task.id)
-            .order_by(TaskSubmission.submitted_at.desc())
-            .first()
-        )
         if not latest_submission:
             latest_submission = TaskSubmission(
                 task_id=task.id,
@@ -1896,6 +1946,15 @@ def review_missed_task(
                 )
             )
 
+        record_task_outcome(
+            db,
+            task,
+            outcome=AchievementTaskOutcomeEnum.approved,
+            completed_at=_as_utc_naive(latest_submission.submitted_at),
+            reviewed_at=datetime.utcnow(),
+            points_awarded=task.points,
+            metadata={"source": "missed_review_approved"},
+        )
         _create_next_recurring_task(db, task, current_user.id)
         db.flush()
         emit_live_event(
@@ -1903,6 +1962,14 @@ def review_missed_task(
             family_id=task.family_id,
             event_type="task.reviewed",
             payload={"task_id": task.id, "status": task.status.value, "assignee_id": task.assignee_id},
+        )
+        evaluate_achievements_for_user(
+            db,
+            family_id=task.family_id,
+            user_id=task.assignee_id,
+            triggered_by_id=current_user.id,
+            reason="task_approved_missed_review",
+            emit_events=True,
         )
         db.commit()
         db.refresh(task)
@@ -1931,6 +1998,16 @@ def review_missed_task(
                 payload={"user_id": task.assignee_id, "points_delta": -deduction, "task_id": task.id, "reason": "task_penalty_manual"},
             )
 
+    record_task_outcome(
+        db,
+        task,
+        outcome=AchievementTaskOutcomeEnum.missed,
+        completed_at=_as_utc_naive(latest_submission.submitted_at) if latest_submission else None,
+        reviewed_at=datetime.utcnow(),
+        points_awarded=0,
+        metadata={"source": "missed_review_penalty", "deduction": deduction},
+    )
+
     _create_next_recurring_task(db, task, current_user.id)
 
     task_id_value = task.id
@@ -1943,6 +2020,14 @@ def review_missed_task(
         family_id=family_id_value,
         event_type="task.deleted",
         payload={"task_id": task_id_value, "assignee_id": assignee_id_value},
+    )
+    evaluate_achievements_for_user(
+        db,
+        family_id=family_id_value,
+        user_id=assignee_id_value,
+        triggered_by_id=current_user.id,
+        reason="task_missed_review",
+        emit_events=True,
     )
     db.commit()
     return {"deleted": True, "penalty_applied": deduction}

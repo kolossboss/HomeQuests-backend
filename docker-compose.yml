@@ -26,8 +26,10 @@ services:
       ACCESS_TOKEN_EXPIRE_MINUTES: 525600
       APNS_ENABLED: "false"
       PUSH_WORKER_ENABLED: "false"
-      DB_BACKUP_ALLOWED_DIRS: ${DB_BACKUP_ALLOWED_DIRS:-/tmp/homequests-backups}
-      DB_BACKUP_DEFAULT_DIR: ${DB_BACKUP_DEFAULT_DIR:-/tmp/homequests-backups}
+      # Backup-Ziele (im Container). Standard zeigt auf den persistenten Backup-Mount.
+      # Optional weitere Pfade via Komma ergänzen, z. B. "/data/backups,/tmp/homequests-backups"
+      DB_BACKUP_ALLOWED_DIRS: ${DB_BACKUP_ALLOWED_DIRS:-/data/backups,/tmp/homequests-backups}
+      DB_BACKUP_DEFAULT_DIR: ${DB_BACKUP_DEFAULT_DIR:-/data/backups}
       DB_BACKUP_TIMEOUT_SECONDS: ${DB_BACKUP_TIMEOUT_SECONDS:-180}
       DB_BACKUP_UPLOAD_MAX_BYTES: ${DB_BACKUP_UPLOAD_MAX_BYTES:-536870912}
       DB_CLEANUP_MAX_PASSES: ${DB_CLEANUP_MAX_PASSES:-8}
@@ -46,7 +48,13 @@ services:
         condition: service_healthy
     ports:
       - "8010:8000"
+    volumes:
+      # Persistenter Backup-Mount:
+      # - Standard (ohne BACKUP_MOUNT_SOURCE): Docker-Volume "homequests_backup_data"
+      # - Optional Host-Pfad: BACKUP_MOUNT_SOURCE=/opt/homequests/backups
+      - ${BACKUP_MOUNT_SOURCE:-homequests_backup_data}:/data/backups
+      # Optional: APNs Key ins API-Container-Dateisystem mounten
+      # - /opt/homequests/secrets/AuthKey.p8:/run/secrets/AuthKey.p8:ro
 
-    # Optional: APNs Key ins API-Container-Dateisystem mounten
-    # volumes:
-    #   - /opt/homequests/secrets/AuthKey.p8:/run/secrets/AuthKey.p8:ro
+volumes:
+  homequests_backup_data:

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 import asyncio
 import logging
@@ -11,12 +13,13 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.exc import OperationalError
 from starlette.requests import Request
 
+from .achievement_engine import ensure_achievement_catalog
 from .config import settings
-from .database import Base, engine
+from .database import Base, SessionLocal, engine
 from .maintenance import penalty_worker, push_worker
 from .migrations import run_migrations
 from .notification_dispatcher import start_remote_dispatcher, stop_remote_dispatcher
-from .routers import auth, events, families, live, points, push, rewards, system, tasks
+from .routers import achievements, auth, events, families, live, points, push, rewards, system, tasks
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,9 @@ def initialize_database() -> None:
     try:
         Base.metadata.create_all(bind=engine)
         run_migrations(engine)
+        with SessionLocal() as db:
+            ensure_achievement_catalog(db)
+            db.commit()
     except OperationalError as exc:
         raise RuntimeError(
             "Datenbankverbindung fehlgeschlagen. "
@@ -87,6 +93,7 @@ templates = Jinja2Templates(directory=str(templates_dir))
 
 app.include_router(auth.router)
 app.include_router(families.router)
+app.include_router(achievements.router)
 app.include_router(tasks.router)
 app.include_router(events.router)
 app.include_router(rewards.router)
