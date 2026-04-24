@@ -85,6 +85,7 @@ class AchievementDifficultyEnum(str, Enum):
     silver = "silver"
     gold = "gold"
     platinum = "platinum"
+    diamond = "diamond"
 
 
 class AchievementRuleKindEnum(str, Enum):

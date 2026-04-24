@@ -65,6 +65,7 @@ class EvaluationContext:
     active_special_template_ids: list[int]
     freeze_windows: list[AchievementFreezeWindow]
     earned_points_total: int
+    current_points_balance: int
 
 
 def ensure_achievement_catalog(db: Session) -> None:
@@ -281,11 +282,11 @@ def claim_achievement_reward(
 ) -> tuple[AchievementProgress, int]:
     definition, progress = _load_unlocked_progress(db, family_id, user_id, achievement_id)
     if progress.profile_claimed_at is None:
-        raise ValueError("Errungenschaft muss zuerst ins Profil übernommen werden")
+        raise ValueError("Erfolg muss zuerst ins Profil übernommen werden")
 
     reward_points = _reward_points(definition)
     if reward_points <= 0 or definition.reward_kind != AchievementRewardKindEnum.points_grant:
-        raise ValueError("Diese Errungenschaft hat kein Punkte-Geschenk")
+        raise ValueError("Dieser Erfolg hat kein Punkte-Geschenk")
     if progress.reward_granted_at is not None:
         return progress, 0
 
@@ -299,7 +300,7 @@ def claim_achievement_reward(
             source_type=PointsSourceEnum.achievement_unlock,
             source_id=achievement_id,
             points_delta=reward_points,
-            description=f"Achievement-Geschenk: {definition.name}",
+            description=f"Erfolgs-Geschenk: {definition.name}",
             created_by_id=triggered_by_id,
         )
     )
@@ -479,10 +480,10 @@ def _load_unlocked_progress(
         .first()
     )
     if row is None:
-        raise ValueError("Errungenschaft nicht gefunden")
+        raise ValueError("Erfolg nicht gefunden")
     definition, progress = row
     if progress.unlocked_at is None:
-        raise ValueError("Errungenschaft ist noch nicht freigeschaltet")
+        raise ValueError("Erfolg ist noch nicht freigeschaltet")
     return definition, progress
 
 
@@ -521,6 +522,7 @@ def _load_context(db: Session, family_id: int, user_id: int) -> EvaluationContex
     ]
     freeze_windows = list_freeze_windows(db, family_id, user_id)
     earned_points_total = _earned_points_total(db, family_id, user_id)
+    current_points_balance = _current_points_balance(db, family_id, user_id)
     return EvaluationContext(
         family_id=family_id,
         user=user,
@@ -529,6 +531,7 @@ def _load_context(db: Session, family_id: int, user_id: int) -> EvaluationContex
         active_special_template_ids=active_special_template_ids,
         freeze_windows=freeze_windows,
         earned_points_total=earned_points_total,
+        current_points_balance=current_points_balance,
     )
 
 
@@ -540,6 +543,18 @@ def _earned_points_total(db: Session, family_id: int, user_id: int) -> int:
             PointsLedger.user_id == user_id,
             PointsLedger.source_type.in_(list(EARNED_POINTS_SOURCES)),
             PointsLedger.points_delta > 0,
+        )
+        .scalar()
+    )
+    return int(result or 0)
+
+
+def _current_points_balance(db: Session, family_id: int, user_id: int) -> int:
+    result = (
+        db.query(func.coalesce(func.sum(PointsLedger.points_delta), 0))
+        .filter(
+            PointsLedger.family_id == family_id,
+            PointsLedger.user_id == user_id,
         )
         .scalar()
     )
@@ -570,6 +585,8 @@ def _compute_aggregate_progress(definition: AchievementDefinition, context: Eval
 
     if metric == "earned_points_total":
         current = context.earned_points_total
+    elif metric == "current_points_balance":
+        current = context.current_points_balance
     elif metric == "approved_tasks_total":
         current = len(approved_records)
     elif metric == "approved_special_tasks_total":
@@ -839,11 +856,12 @@ def _build_unlock_presentation(definition: AchievementDefinition) -> dict:
         "silver": "#a9b7c9",
         "gold": "#e8b923",
         "platinum": "#73d0e6",
+        "diamond": "#b9f2ff",
     }
     difficulty = definition.difficulty.value
     return {
         "style": "celebration_banner",
-        "title": "Auszeichnung freigeschaltet",
+        "title": "Erfolg freigeschaltet",
         "subtitle": definition.name,
         "icon_key": definition.icon_key,
         "accent_color": accent_map.get(difficulty, "#0a84ff"),

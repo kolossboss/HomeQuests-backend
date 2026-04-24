@@ -858,7 +858,7 @@ function pointsSourceLabel(sourceType) {
     reward_contribution: "Belohnungsbeitrag",
     task_penalty: "Minuspunkte Aufgabe",
     manual_adjustment: "Manuelle Anpassung",
-    achievement_unlock: "Achievement-Belohnung",
+    achievement_unlock: "Erfolgs-Belohnung",
   };
   return map[sourceType] || sourceType;
 }
@@ -869,6 +869,7 @@ function achievementDifficultyLabel(difficulty) {
     silver: "Silber",
     gold: "Gold",
     platinum: "Platin",
+    diamond: "Diamant",
   };
   return map[difficulty] || difficulty || "-";
 }
@@ -879,6 +880,7 @@ function achievementDifficultyAccent(difficulty) {
     silver: "#a9b7c9",
     gold: "#e8b923",
     platinum: "#73d0e6",
+    diamond: "#b9f2ff",
   };
   return map[difficulty] || "#0a84ff";
 }
@@ -907,6 +909,10 @@ function achievementIcon(iconKey) {
     crown: "👑",
     "crown-check": "👑",
     "calendar-star": "🗓️",
+    diamond: "💎",
+    vault: "🧰",
+    bank: "🏦",
+    "piggy-bank": "🐷",
   };
   return map[iconKey] || "🏅";
 }
@@ -4637,21 +4643,21 @@ function renderAchievementCards() {
   if (newTarget) {
     newTarget.innerHTML = newItems.length
       ? newItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
-      : renderEmptyState("Nichts Neues", "Sobald du eine Errungenschaft freischaltest, erscheint sie hier.");
+      : renderEmptyState("Nichts Neues", "Sobald du einen Erfolg freischaltest, erscheint er hier.");
   }
   if (giftTarget) {
     giftTarget.innerHTML = giftItems.length
       ? giftItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
-      : renderEmptyState("Keine Geschenke", "Punkte-Geschenke erscheinen hier, nachdem du eine Errungenschaft ins Profil übernommen hast.");
+      : renderEmptyState("Keine Geschenke", "Punkte-Geschenke erscheinen hier, nachdem du einen Erfolg ins Profil übernommen hast.");
   }
   if (completedTarget) {
     completedTarget.innerHTML = completedItems.length
       ? completedItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
-      : renderEmptyState("Noch keine Profil-Auszeichnungen", "Übernimm eine freigeschaltete Errungenschaft, dann landet sie hier.");
+      : renderEmptyState("Noch keine Profil-Erfolge", "Übernimm einen freigeschalteten Erfolg, dann landet er hier.");
   }
   target.innerHTML = catalogItems.length
     ? catalogItems.map((item) => renderAchievementCard(item, canClaimOwnAchievements)).join("")
-    : renderEmptyState("Katalog leer", "Alle sichtbaren Errungenschaften sind schon in anderen Bereichen einsortiert.");
+    : renderEmptyState("Katalog leer", "Alle sichtbaren Erfolge sind schon in anderen Bereichen einsortiert.");
 }
 
 function renderAchievementCard(item, canClaimOwnAchievements) {
@@ -4737,9 +4743,9 @@ function renderChildAchievementFocus() {
   if (gifts > 0) {
     metaNode.textContent = `${gifts} Geschenk(e) warten auf dich`;
   } else if (unclaimed > 0) {
-    metaNode.textContent = `${unclaimed} neue Auszeichnung(en) fürs Profil`;
+    metaNode.textContent = `${unclaimed} neue Erfolg(e) fürs Profil`;
   } else {
-    metaNode.textContent = "Keine neuen Auszeichnungen";
+    metaNode.textContent = "Keine neuen Erfolge";
   }
 }
 
@@ -4764,7 +4770,7 @@ function renderAchievements() {
   toggleHidden("achievement-user-select-wrap", isChildRole());
 
   if (!overview) {
-    if (summaryPill) summaryPill.textContent = "Noch keine Achievements geladen.";
+    if (summaryPill) summaryPill.textContent = "Noch keine Erfolge geladen.";
     if (unlockedCount) unlockedCount.textContent = "0";
     if (lockedCount) lockedCount.textContent = "0";
     if (lastReward) lastReward.textContent = "-";
@@ -4819,10 +4825,10 @@ function showAchievementUnlockBanner(payload) {
   const presentation = payload?.presentation || {};
   const reward = payload?.reward || {};
   const accent = presentation.accent_color || achievementDifficultyAccent(payload?.difficulty);
-  const title = presentation.title || "Auszeichnung freigeschaltet";
+  const title = (presentation.title || "Erfolg freigeschaltet").replace("Auszeichnung freigeschaltet", "Erfolg freigeschaltet");
   const subtitle = reward.points > 0
-    ? `${payload?.name || presentation.subtitle || "Neue Errungenschaft"} • Geschenk wartet`
-    : (payload?.name || presentation.subtitle || "Neue Errungenschaft");
+    ? `${payload?.name || presentation.subtitle || "Neuer Erfolg"} • Geschenk wartet`
+    : (payload?.name || presentation.subtitle || "Neuer Erfolg");
 
   if (banner) {
     byId("achievement-unlock-banner-icon").textContent = achievementIcon(presentation.icon_key || payload?.icon_key);
@@ -4959,7 +4965,7 @@ async function showAchievementLootOverlay({ title, iconKey, pointsDelta, balance
   overlay.innerHTML = `<div class="achievement-loot-card">
     <p class="achievement-loot-kicker">Loot erhalten</p>
     <div class="achievement-loot-icon">${achievementIcon(iconKey)}</div>
-    <h3>${safeHtmlText(title || "Errungenschafts-Geschenk")}</h3>
+    <h3>${safeHtmlText(title || "Erfolgs-Geschenk")}</h3>
     <div class="achievement-loot-points">+<span id="achievement-loot-add">0</span></div>
     <div class="achievement-loot-balance">
       <span>Kontostand</span>
@@ -5000,7 +5006,7 @@ async function claimAchievementReward(achievementId, trigger) {
   if (pointsDelta > 0) {
     showAchievementPointRain(trigger, pointsDelta);
     await showAchievementLootOverlay({
-      title: item?.name || "Errungenschafts-Geschenk",
+      title: item?.name || "Erfolgs-Geschenk",
       iconKey: item?.icon_key || "trophy",
       pointsDelta,
       balanceBefore,

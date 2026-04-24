@@ -148,6 +148,84 @@ class AchievementEngineTests(unittest.TestCase):
         finally:
             db.close()
 
+    def test_repeating_500_point_milestones_unlock_independently(self) -> None:
+        db, family, user = self._create_family_and_user()
+        try:
+            ensure_achievement_catalog(db)
+            db.add(
+                PointsLedger(
+                    family_id=family.id,
+                    user_id=user.id,
+                    source_type=PointsSourceEnum.task_approval,
+                    source_id=1,
+                    points_delta=1500,
+                    description="Viele erledigte Aufgaben",
+                    created_by_id=user.id,
+                )
+            )
+            db.flush()
+
+            evaluate_achievements_for_user(db, family.id, user.id, triggered_by_id=user.id, emit_events=False)
+            db.commit()
+
+            unlocked_keys = {
+                definition.key
+                for definition in db.query(AchievementDefinition)
+                .join(AchievementProgress, AchievementProgress.achievement_id == AchievementDefinition.id)
+                .filter(
+                    AchievementProgress.family_id == family.id,
+                    AchievementProgress.user_id == user.id,
+                    AchievementProgress.unlocked_at.is_not(None),
+                )
+                .all()
+            }
+            self.assertIn("points_500", unlocked_keys)
+            self.assertIn("points_1000", unlocked_keys)
+            self.assertIn("points_1500_milestone", unlocked_keys)
+        finally:
+            db.close()
+
+    def test_current_balance_achievement_uses_unspent_points(self) -> None:
+        db, family, user = self._create_family_and_user()
+        try:
+            ensure_achievement_catalog(db)
+            db.add_all(
+                [
+                    PointsLedger(
+                        family_id=family.id,
+                        user_id=user.id,
+                        source_type=PointsSourceEnum.task_approval,
+                        source_id=1,
+                        points_delta=500,
+                        description="Verdient",
+                        created_by_id=user.id,
+                    ),
+                    PointsLedger(
+                        family_id=family.id,
+                        user_id=user.id,
+                        source_type=PointsSourceEnum.reward_redemption,
+                        source_id=2,
+                        points_delta=-300,
+                        description="Ausgegeben",
+                        created_by_id=user.id,
+                    ),
+                ]
+            )
+            db.flush()
+
+            evaluate_achievements_for_user(db, family.id, user.id, triggered_by_id=user.id, emit_events=False)
+            db.commit()
+
+            overview = build_achievement_overview(db, family.id, user.id)
+            balance_100 = next(item for item in overview["items"] if item["key"] == "balance_100")
+            balance_250 = next(item for item in overview["items"] if item["key"] == "balance_250")
+            self.assertEqual(balance_100["current_value"], 200)
+            self.assertTrue(balance_100["is_profile_claimable"])
+            self.assertEqual(balance_250["current_value"], 200)
+            self.assertFalse(balance_250["is_profile_claimable"])
+        finally:
+            db.close()
+
     def test_weekly_streak_survives_freeze_gap(self) -> None:
         db, family, user = self._create_family_and_user()
         try:

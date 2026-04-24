@@ -900,13 +900,13 @@ def _build_push_plan(db: Session, *, family_id: int, event_type: str, payload: d
             recipient_id = int(user_id)
         except (TypeError, ValueError):
             return None
-        achievement_name = str(payload.get("name") or "Neue Errungenschaft").strip()
+        achievement_name = str(payload.get("name") or "Neuer Erfolg").strip()
         difficulty = _achievement_difficulty_label(str(payload.get("difficulty") or "").strip())
         reward = payload.get("reward") if isinstance(payload.get("reward"), dict) else {}
         reward_points = int(reward.get("points") or 0)
         reward_suffix = f" Öffne dein Geschenk für {reward_points} Punkte." if reward_points > 0 else ""
         return PushPlan(
-            title="Errungenschaft freigeschaltet!",
+            title="Erfolg freigeschaltet!",
             body=f"{achievement_name} ({difficulty}) ist bereit für dein Profil.{reward_suffix}",
             recipient_user_ids=[recipient_id],
             preference_key=None,
@@ -921,8 +921,9 @@ def _achievement_difficulty_label(value: str) -> str:
         "silver": "Silber",
         "gold": "Gold",
         "platinum": "Platin",
+        "diamond": "Diamant",
     }
-    return labels.get(value.lower(), value.capitalize() or "Achievement")
+    return labels.get(value.lower(), value.capitalize() or "Erfolg")
 
 
 def _manager_user_ids(db: Session, family_id: int) -> list[int]:
