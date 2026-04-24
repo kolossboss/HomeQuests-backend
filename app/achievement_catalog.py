@@ -17,6 +17,7 @@ DEFAULT_REWARD_POINTS_BY_DIFFICULTY: dict[AchievementDifficultyEnum, int] = {
     AchievementDifficultyEnum.silver: 25,
     AchievementDifficultyEnum.gold: 50,
     AchievementDifficultyEnum.platinum: 150,
+    AchievementDifficultyEnum.diamond: 300,
 }
 
 
@@ -118,6 +119,74 @@ def _streak_seed(
         teaser=teaser,
         sort_order=sort_order,
     )
+
+
+def _milestone_difficulty(target: int) -> AchievementDifficultyEnum:
+    if target >= 6000:
+        return AchievementDifficultyEnum.diamond
+    if target >= 2500:
+        return AchievementDifficultyEnum.platinum
+    if target >= 500:
+        return AchievementDifficultyEnum.gold
+    if target >= 250:
+        return AchievementDifficultyEnum.silver
+    return AchievementDifficultyEnum.bronze
+
+
+def _points_milestone_seeds() -> list[AchievementSeed]:
+    seeds: list[AchievementSeed] = []
+    legacy_keys = {500: "points_500", 1000: "points_1000"}
+    for index, target in enumerate(range(500, 8500, 500), start=1):
+        if target not in legacy_keys:
+            difficulty = _milestone_difficulty(target)
+            seeds.append(
+                _aggregate_seed(
+                    key=f"points_{target}_milestone",
+                    name=f"Punkte-Meilenstein {index}",
+                    description=(
+                        f"Sammle insgesamt {target} verdiente Punkte. "
+                        "Dieser Erfolgsstrang gibt dir alle 500 Punkte ein neues Geschenk."
+                    ),
+                    category="punkte",
+                    icon_key="coin-stack" if target < 2500 else ("crown" if target < 6000 else "diamond"),
+                    difficulty=difficulty,
+                    metric="earned_points_total",
+                    target=target,
+                    teaser=f"{target} jemals verdiente Punkte",
+                    sort_order=2000 + target,
+                )
+            )
+    return seeds
+
+
+def _balance_saver_seeds() -> list[AchievementSeed]:
+    targets = [
+        (100, AchievementDifficultyEnum.bronze, "Sparfuchs Bronze", "piggy-bank"),
+        (250, AchievementDifficultyEnum.silver, "Sparfuchs Silber", "piggy-bank"),
+        (500, AchievementDifficultyEnum.gold, "Schatzkammer Gold", "vault"),
+        (1000, AchievementDifficultyEnum.gold, "Schatzkammer XL", "vault"),
+        (2000, AchievementDifficultyEnum.platinum, "Tresor Platin", "vault"),
+        (4000, AchievementDifficultyEnum.platinum, "Familienbank Platin", "bank"),
+        (6000, AchievementDifficultyEnum.diamond, "Diamant-Depot", "diamond"),
+    ]
+    return [
+        _aggregate_seed(
+            key=f"balance_{target}",
+            name=name,
+            description=(
+                f"Habe {target} Punkte gleichzeitig auf deinem Konto angespart. "
+                "Ausgegebene Punkte zählen hier nicht mit."
+            ),
+            category="sparen",
+            icon_key=icon_key,
+            difficulty=difficulty,
+            metric="current_points_balance",
+            target=target,
+            teaser=f"{target} Punkte auf dem Konto",
+            sort_order=3000 + target,
+        )
+        for target, difficulty, name, icon_key in targets
+    ]
 
 
 ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
@@ -274,14 +343,14 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
     ),
     _aggregate_seed(
         key="points_500",
-        name="500er Club",
-        description="Sammle insgesamt 500 verdiente Punkte.",
+        name="Punkte-Meilenstein 1",
+        description="Sammle insgesamt 500 verdiente Punkte. Danach wartet alle weiteren 500 Punkte ein neuer Erfolg.",
         category="punkte",
         icon_key="trophy",
         difficulty=AchievementDifficultyEnum.gold,
         metric="earned_points_total",
         target=500,
-        teaser="500 verdiente Punkte",
+        teaser="500 jemals verdiente Punkte",
         sort_order=210,
     ),
     _aggregate_seed(
@@ -351,14 +420,14 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
     ),
     _aggregate_seed(
         key="points_1000",
-        name="Punktelegende",
-        description="Sammle insgesamt 1000 verdiente Punkte.",
+        name="Punkte-Meilenstein 2",
+        description="Sammle insgesamt 1000 verdiente Punkte. Der 500er-Erfolgsstrang geht danach weiter.",
         category="punkte",
         icon_key="crown",
         difficulty=AchievementDifficultyEnum.platinum,
         metric="earned_points_total",
         target=1000,
-        teaser="1000 verdiente Punkte",
+        teaser="1000 jemals verdiente Punkte",
         sort_order=310,
     ),
     _aggregate_seed(
@@ -428,6 +497,48 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
         target=6,
         teaser="6 vollständige Monatszyklen",
         sort_order=360,
+    ),
+] + _points_milestone_seeds() + _balance_saver_seeds() + [
+    _aggregate_seed(
+        key="tasks_500",
+        name="Hausarbeits-Legende Diamant",
+        description="Lass 500 Aufgaben erfolgreich bestätigen. Das ist ein Jahresprojekt, kein Wochenend-Sprint.",
+        category="aufgaben",
+        icon_key="diamond",
+        difficulty=AchievementDifficultyEnum.diamond,
+        metric="approved_tasks_total",
+        target=500,
+        teaser="500 bestätigte Aufgaben",
+        sort_order=9100,
+    ),
+    _streak_seed(
+        key="streak_52",
+        name="Zuverlässig Diamant",
+        description="Erledige 52 Wochen in Folge alle fälligen Aufgaben. Urlaubs-Freeze kann Serien fair pausieren.",
+        category="streak",
+        icon_key="diamond",
+        difficulty=AchievementDifficultyEnum.diamond,
+        period="week",
+        metric="all_due_tasks_completed",
+        target=52,
+        teaser="52 vollständige Wochen in Folge",
+        sort_order=9110,
+    ),
+    _streak_seed(
+        key="speedworker_32",
+        name="Speedworker Diamant",
+        description="Erledige 32 Wochen in Folge alle Wochenaufgaben bis Dienstagabend.",
+        category="tempo",
+        icon_key="rocket",
+        difficulty=AchievementDifficultyEnum.diamond,
+        period="week",
+        metric="all_due_tasks_completed_early",
+        recurrence_types=["weekly"],
+        completion_weekday_cutoff=1,
+        completion_hour_cutoff=20,
+        target=32,
+        teaser="32 frühe Wochenserien",
+        sort_order=9120,
     ),
 ]
 

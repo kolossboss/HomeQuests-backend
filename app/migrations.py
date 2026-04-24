@@ -414,6 +414,32 @@ def _add_achievement_claim_columns(engine: Engine) -> None:
         )
 
 
+def _add_achievement_diamond_difficulty(engine: Engine) -> None:
+    if engine.dialect.name != "postgresql":
+        return
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'achievementdifficultyenum') THEN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum e
+                            JOIN pg_type t ON t.oid = e.enumtypid
+                            WHERE t.typname = 'achievementdifficultyenum' AND e.enumlabel = 'diamond'
+                        ) THEN
+                            ALTER TYPE achievementdifficultyenum ADD VALUE 'diamond';
+                        END IF;
+                    END IF;
+                END $$;
+                """
+            )
+        )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
@@ -425,6 +451,7 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260316_task_series_id_and_indexes", _add_task_series_id_and_indexes),
     ("20260422_achievement_points_source", _add_achievement_points_source),
     ("20260423_achievement_claim_columns", _add_achievement_claim_columns),
+    ("20260424_achievement_diamond_difficulty", _add_achievement_diamond_difficulty),
 ]
 
 

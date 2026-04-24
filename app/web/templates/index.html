@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260423-achievements1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260424-erfolge1" />
   </head>
   <body>
     <main class="container">
@@ -104,7 +104,7 @@
           <button id="tab-btn-special-tasks" data-tab="special-tasks" class="tab"><span>Sonderaufgaben</span></button>
           <button id="tab-btn-events" data-tab="events" class="tab"><span>Kalender</span></button>
           <button id="tab-btn-rewards" data-tab="rewards" class="tab"><span>Belohnungen</span></button>
-          <button id="tab-btn-achievements" data-tab="achievements" class="tab"><span>Errungenschaften</span></button>
+          <button id="tab-btn-achievements" data-tab="achievements" class="tab"><span>Erfolge</span></button>
           <button id="tab-btn-points" data-tab="points" class="tab"><span>Punkte</span></button>
           <button id="tab-btn-system" data-tab="system" class="tab"><span>System</span></button>
         </nav>
@@ -175,9 +175,9 @@
                 <p id="dashboard-child-missed-meta" class="child-focus-meta">Keine verpassten Aufgaben</p>
               </article>
               <article id="dashboard-child-achievements-focus" class="child-focus-card is-clickable focus-achievement">
-                <p class="child-focus-kicker">Errungenschaften</p>
+                <p class="child-focus-kicker">Erfolge</p>
                 <p id="dashboard-child-achievements-count" class="child-focus-count">0</p>
-                <p id="dashboard-child-achievements-meta" class="child-focus-meta">Keine neuen Auszeichnungen</p>
+                <p id="dashboard-child-achievements-meta" class="child-focus-meta">Keine neuen Erfolge</p>
               </article>
             </div>
           </div>
@@ -427,18 +427,18 @@
         <section id="tab-achievements" class="tab-panel">
           <div class="dashboard-hero achievements-hero">
             <div>
-              <p class="eyebrow">Auszeichnungen</p>
-              <h3>Achievement-Katalog</h3>
+              <p class="eyebrow">Erfolge</p>
+              <h3>Erfolge-Katalog</h3>
               <p class="muted">Freischaltungen, Fortschritt, Schwierigkeit und Belohnungen pro Kind.</p>
             </div>
-            <p id="achievements-summary-pill" class="hero-pill">Noch keine Achievements geladen.</p>
+            <p id="achievements-summary-pill" class="hero-pill">Noch keine Erfolge geladen.</p>
           </div>
 
           <div id="achievement-unlock-banner" class="achievement-unlock-banner hidden" aria-live="polite">
             <div class="achievement-unlock-banner-icon" id="achievement-unlock-banner-icon">🏆</div>
             <div class="achievement-unlock-banner-copy">
-              <strong id="achievement-unlock-banner-title">Auszeichnung freigeschaltet</strong>
-              <p id="achievement-unlock-banner-subtitle">Neue Errungenschaft</p>
+              <strong id="achievement-unlock-banner-title">Erfolg freigeschaltet</strong>
+              <p id="achievement-unlock-banner-subtitle">Neuer Erfolg</p>
             </div>
           </div>
 
@@ -446,7 +446,7 @@
             <div class="section-head-row">
               <div>
                 <h4>Übersicht</h4>
-                <p class="muted">Das Kind sieht gesperrte, laufende und bereits freigeschaltete Achievements in einer gemeinsamen Ansicht.</p>
+                <p class="muted">Das Kind sieht gesperrte, laufende und bereits freigeschaltete Erfolge in einer gemeinsamen Ansicht.</p>
               </div>
               <label id="achievement-user-select-wrap">Kind
                 <select id="achievement-user-select"></select>
@@ -471,7 +471,7 @@
           <div id="achievement-new-section" class="section-block achievement-action-section achievement-action-new">
             <div class="section-copy">
               <h4>Neu freigeschaltet</h4>
-              <p class="muted">Klicke eine Auszeichnung an, damit sie mit Animation in dein Profil wandert.</p>
+              <p class="muted">Klicke einen Erfolg an, damit er mit Animation in dein Profil wandert.</p>
             </div>
             <div id="achievement-new-cards" class="achievement-cards-grid achievement-board"></div>
           </div>
@@ -486,8 +486,8 @@
 
           <div id="achievement-completed-section" class="section-block achievement-action-section achievement-action-completed">
             <div class="section-copy">
-              <h4>Geschaffte Errungenschaften</h4>
-              <p class="muted">Diese Auszeichnungen sind bereits in deinem Profil gespeichert.</p>
+              <h4>Geschaffte Erfolge</h4>
+              <p class="muted">Diese Erfolge sind bereits in deinem Profil gespeichert.</p>
             </div>
             <div id="achievement-completed-cards" class="achievement-cards-grid achievement-board"></div>
           </div>
@@ -495,14 +495,14 @@
           <div class="section-block">
             <div class="section-copy">
               <h4>Freeze / Urlaub</h4>
-              <p class="muted">Streak-Achievements werden während eines Freeze-Zeitraums pausiert statt verloren.</p>
+              <p class="muted">Streak-Erfolge werden während eines Freeze-Zeitraums pausiert statt verloren.</p>
             </div>
             <div id="achievement-freeze-list" class="achievement-freeze-list"></div>
           </div>
 
           <div class="section-block">
             <div class="section-copy">
-              <h4>Achievement-Katalog</h4>
+              <h4>Erfolge-Katalog</h4>
               <p class="muted">Alle laufenden und noch gesperrten Ziele mit Fortschritt, Regeln und Belohnungen.</p>
             </div>
             <div id="achievement-cards" class="achievement-cards-grid achievement-board"></div>
@@ -1360,6 +1360,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260423-achievements1"></script>
+    <script src="/static/app.js?v=20260424-erfolge1"></script>
   </body>
 </html>
