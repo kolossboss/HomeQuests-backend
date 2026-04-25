@@ -108,7 +108,29 @@ Die Punkteanimation zählt den sichtbaren Kontostand von alt nach neu hoch. Die 
 
 ## Katalog-Strategie
 
-Der 500er-Punkte-Erfolg ist als erweiterbare Meilenstein-Serie modelliert: `points_500`, `points_1000` und danach generierte Keys wie `points_1500_milestone`. Dadurch bekommt ein Kind bei 500, 1000, 1500 usw. jeweils einen eigenen Erfolg mit eigenem Geschenk. Zusätzlich gibt es Spar-Erfolge über `current_points_balance`, die nicht “jemals gesammelt”, sondern den aktuell angesparten Kontostand würdigen.
+Punkte- und Spar-Erfolge sind feste, einmalige Katalogeinträge. Es werden keine neuen Meilenstein-Erfolge mehr dynamisch generiert.
+
+Punktesammler:
+
+- Bronze: 500 jemals verdiente Punkte, 20 Bonuspunkte.
+- Silber: 1500 jemals verdiente Punkte, 50 Bonuspunkte.
+- Silber Metallic: 2000 jemals verdiente Punkte, 50 Bonuspunkte.
+- Gold: 3000 jemals verdiente Punkte, 100 Bonuspunkte.
+- Gold Deluxe: 4000 jemals verdiente Punkte, 100 Bonuspunkte.
+- Platin: 5000 jemals verdiente Punkte, 150 Bonuspunkte.
+- Platin Ultra: 6500 jemals verdiente Punkte, 150 Bonuspunkte.
+- Diamant: 8000 jemals verdiente Punkte, 300 Bonuspunkte.
+- Perfekt Diamant: 10000 jemals verdiente Punkte, 300 Bonuspunkte.
+
+Schatzkammer über `current_points_balance`:
+
+- Bronze: 200 angesparte Punkte, 20 Bonuspunkte.
+- Silber: 800 angesparte Punkte, 50 Bonuspunkte.
+- Gold: 1500 angesparte Punkte, 100 Bonuspunkte.
+- Platin: 2000 angesparte Punkte, 150 Bonuspunkte.
+- Diamant: 5000 angesparte Punkte, 300 Bonuspunkte.
+
+Alte experimentelle Meilenstein-Keys wie `points_6500_milestone` oder alte `balance_*`-Serien werden beim Katalog-Sync deaktiviert.
 
 ## Erweiterung
 

@@ -57,7 +57,9 @@ def _aggregate_seed(
     target: int,
     teaser: str,
     sort_order: int,
+    reward_points: int | None = None,
 ) -> AchievementSeed:
+    rule_config = {"metric": metric, "target": target}
     return AchievementSeed(
         key=key,
         name=name,
@@ -66,9 +68,9 @@ def _aggregate_seed(
         icon_key=icon_key,
         difficulty=difficulty,
         rule_kind=AchievementRuleKindEnum.aggregate_count,
-        rule_config={"metric": metric, "target": target},
+        rule_config=rule_config,
         reward_kind=AchievementRewardKindEnum.points_grant,
-        reward_config=_reward_config(difficulty),
+        reward_config=_reward_config_for_points(reward_points) if reward_points is not None else _reward_config(difficulty),
         teaser=teaser,
         sort_order=sort_order,
     )
@@ -121,87 +123,70 @@ def _streak_seed(
     )
 
 
-def _milestone_difficulty(target: int) -> AchievementDifficultyEnum:
-    if target >= 6000:
-        return AchievementDifficultyEnum.diamond
-    if target >= 2500:
-        return AchievementDifficultyEnum.platinum
-    if target >= 500:
-        return AchievementDifficultyEnum.gold
-    if target >= 250:
-        return AchievementDifficultyEnum.silver
-    return AchievementDifficultyEnum.bronze
+def _reward_config_for_points(points: int) -> dict:
+    return {
+        "points": int(points),
+        "label": f"{int(points)} Bonuspunkte",
+    }
 
 
-def _points_milestone_seeds() -> list[AchievementSeed]:
-    seeds: list[AchievementSeed] = []
-    legacy_keys = {500: "points_500", 1000: "points_1000"}
-    for index, target in enumerate(range(500, 8500, 500), start=1):
-        if target not in legacy_keys:
-            difficulty = _milestone_difficulty(target)
-            seeds.append(
-                _aggregate_seed(
-                    key=f"points_{target}_milestone",
-                    name=f"Punkte-Meilenstein {index}",
-                    description=(
-                        f"Sammle insgesamt {target} verdiente Punkte. "
-                        "Dieser Erfolgsstrang gibt dir alle 500 Punkte ein neues Geschenk."
-                    ),
-                    category="punkte",
-                    icon_key="coin-stack" if target < 2500 else ("crown" if target < 6000 else "diamond"),
-                    difficulty=difficulty,
-                    metric="earned_points_total",
-                    target=target,
-                    teaser=f"{target} jemals verdiente Punkte",
-                    sort_order=2000 + target,
-                )
-            )
-    return seeds
-
-
-def _balance_saver_seeds() -> list[AchievementSeed]:
-    targets = [
-        (100, AchievementDifficultyEnum.bronze, "Sparfuchs Bronze", "piggy-bank"),
-        (250, AchievementDifficultyEnum.silver, "Sparfuchs Silber", "piggy-bank"),
-        (500, AchievementDifficultyEnum.gold, "Schatzkammer Gold", "vault"),
-        (1000, AchievementDifficultyEnum.gold, "Schatzkammer XL", "vault"),
-        (2000, AchievementDifficultyEnum.platinum, "Tresor Platin", "vault"),
-        (4000, AchievementDifficultyEnum.platinum, "Familienbank Platin", "bank"),
-        (6000, AchievementDifficultyEnum.diamond, "Diamant-Depot", "diamond"),
+def _point_collector_seeds() -> list[AchievementSeed]:
+    tiers = [
+        ("point_collector_bronze", "Punktesammler Bronze", AchievementDifficultyEnum.bronze, 500, 20, "coin-stack", 2010),
+        ("point_collector_silver", "Punktesammler Silber", AchievementDifficultyEnum.silver, 1500, 50, "coin-stack", 2020),
+        ("point_collector_silver_metallic", "Punktesammler Silber Metallic", AchievementDifficultyEnum.silver, 2000, 50, "coin-stack", 2030),
+        ("point_collector_gold", "Punktesammler Gold", AchievementDifficultyEnum.gold, 3000, 100, "trophy", 2040),
+        ("point_collector_gold_deluxe", "Punktesammler Gold Deluxe", AchievementDifficultyEnum.gold, 4000, 100, "trophy", 2050),
+        ("point_collector_platinum", "Punktesammler Platin", AchievementDifficultyEnum.platinum, 5000, 150, "crown", 2060),
+        ("point_collector_platinum_ultra", "Punktesammler Platin Ultra", AchievementDifficultyEnum.platinum, 6500, 150, "crown-check", 2070),
+        ("point_collector_diamond", "Punktesammler Diamant", AchievementDifficultyEnum.diamond, 8000, 300, "diamond", 2080),
+        ("point_collector_perfect_diamond", "Punktesammler Perfekt Diamant", AchievementDifficultyEnum.diamond, 10000, 300, "diamond", 2090),
     ]
     return [
         _aggregate_seed(
-            key=f"balance_{target}",
+            key=key,
             name=name,
-            description=(
-                f"Habe {target} Punkte gleichzeitig auf deinem Konto angespart. "
-                "Ausgegebene Punkte zählen hier nicht mit."
-            ),
+            description=f"Sammle insgesamt {target} jemals verdiente Punkte.",
+            category="punkte",
+            icon_key=icon_key,
+            difficulty=difficulty,
+            metric="earned_points_total",
+            target=target,
+            teaser=f"{target} jemals verdiente Punkte",
+            sort_order=sort_order,
+            reward_points=reward_points,
+        )
+        for key, name, difficulty, target, reward_points, icon_key, sort_order in tiers
+    ]
+
+
+def _treasure_chamber_seeds() -> list[AchievementSeed]:
+    tiers = [
+        ("treasure_chamber_bronze", "Schatzkammer Bronze", AchievementDifficultyEnum.bronze, 200, 20, "piggy-bank", 3010),
+        ("treasure_chamber_silver", "Schatzkammer Silber", AchievementDifficultyEnum.silver, 800, 50, "vault", 3020),
+        ("treasure_chamber_gold", "Schatzkammer Gold", AchievementDifficultyEnum.gold, 1500, 100, "vault", 3030),
+        ("treasure_chamber_platinum", "Schatzkammer Platin", AchievementDifficultyEnum.platinum, 2000, 150, "bank", 3040),
+        ("treasure_chamber_diamond", "Schatzkammer Diamant", AchievementDifficultyEnum.diamond, 5000, 300, "diamond", 3050),
+    ]
+    return [
+        _aggregate_seed(
+            key=key,
+            name=name,
+            description=f"Habe {target} Punkte gleichzeitig auf deinem Konto angespart.",
             category="sparen",
             icon_key=icon_key,
             difficulty=difficulty,
             metric="current_points_balance",
             target=target,
             teaser=f"{target} Punkte auf dem Konto",
-            sort_order=3000 + target,
+            sort_order=sort_order,
+            reward_points=reward_points,
         )
-        for target, difficulty, name, icon_key in targets
+        for key, name, difficulty, target, reward_points, icon_key, sort_order in tiers
     ]
 
 
 ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
-    _aggregate_seed(
-        key="points_100",
-        name="Punktestarter",
-        description="Sammle insgesamt 100 verdiente Punkte.",
-        category="punkte",
-        icon_key="spark",
-        difficulty=AchievementDifficultyEnum.bronze,
-        metric="earned_points_total",
-        target=100,
-        teaser="100 verdiente Punkte",
-        sort_order=10,
-    ),
     _aggregate_seed(
         key="tasks_10",
         name="Anpacker",
@@ -268,18 +253,6 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
         sort_order=60,
     ),
     _aggregate_seed(
-        key="points_250",
-        name="Punktesammler",
-        description="Sammle insgesamt 250 verdiente Punkte.",
-        category="punkte",
-        icon_key="coin-stack",
-        difficulty=AchievementDifficultyEnum.silver,
-        metric="earned_points_total",
-        target=250,
-        teaser="250 verdiente Punkte",
-        sort_order=110,
-    ),
-    _aggregate_seed(
         key="tasks_30",
         name="Dranbleiber",
         description="Lass 30 Aufgaben erfolgreich bestätigen.",
@@ -340,18 +313,6 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
         target=1,
         teaser="Alle aktiven Sonderaufgaben in einem Monat",
         sort_order=160,
-    ),
-    _aggregate_seed(
-        key="points_500",
-        name="Punkte-Meilenstein 1",
-        description="Sammle insgesamt 500 verdiente Punkte. Danach wartet alle weiteren 500 Punkte ein neuer Erfolg.",
-        category="punkte",
-        icon_key="trophy",
-        difficulty=AchievementDifficultyEnum.gold,
-        metric="earned_points_total",
-        target=500,
-        teaser="500 jemals verdiente Punkte",
-        sort_order=210,
     ),
     _aggregate_seed(
         key="tasks_75",
@@ -417,18 +378,6 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
         target=8,
         teaser="8 frühe Wochenserien",
         sort_order=260,
-    ),
-    _aggregate_seed(
-        key="points_1000",
-        name="Punkte-Meilenstein 2",
-        description="Sammle insgesamt 1000 verdiente Punkte. Der 500er-Erfolgsstrang geht danach weiter.",
-        category="punkte",
-        icon_key="crown",
-        difficulty=AchievementDifficultyEnum.platinum,
-        metric="earned_points_total",
-        target=1000,
-        teaser="1000 jemals verdiente Punkte",
-        sort_order=310,
     ),
     _aggregate_seed(
         key="tasks_200",
@@ -498,7 +447,7 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
         teaser="6 vollständige Monatszyklen",
         sort_order=360,
     ),
-] + _points_milestone_seeds() + _balance_saver_seeds() + [
+] + _point_collector_seeds() + _treasure_chamber_seeds() + [
     _aggregate_seed(
         key="tasks_500",
         name="Hausarbeits-Legende Diamant",
@@ -548,6 +497,7 @@ def sync_achievement_catalog(db: Session) -> None:
         row.key: row
         for row in db.query(AchievementDefinition).all()
     }
+    active_catalog_keys = {seed.key for seed in ACHIEVEMENT_CATALOG}
 
     for seed in ACHIEVEMENT_CATALOG:
         row = existing.get(seed.key)
@@ -568,4 +518,24 @@ def sync_achievement_catalog(db: Session) -> None:
         row.teaser = seed.teaser
         row.is_active = True
 
+    for key, row in existing.items():
+        if _is_obsolete_managed_milestone_key(key, active_catalog_keys):
+            row.is_active = False
+
     db.flush()
+
+
+def _is_obsolete_managed_milestone_key(key: str, active_catalog_keys: set[str]) -> bool:
+    if key in active_catalog_keys:
+        return False
+    if key in {"points_100", "points_250", "points_500", "points_1000"}:
+        return True
+    if key.startswith("point_collector_"):
+        return True
+    if key.startswith("points_") and key.endswith("_milestone"):
+        return True
+    if key.startswith("balance_") and key.removeprefix("balance_").isdigit():
+        return True
+    if key.startswith("treasure_chamber_"):
+        return True
+    return False
