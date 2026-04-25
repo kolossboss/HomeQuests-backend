@@ -98,8 +98,8 @@ class AchievementEngineTests(unittest.TestCase):
                 )
                 .all()
             }
-            self.assertIn("points_500", unlocked_keys)
-            self.assertTrue(any(event.reward_points == 50 for event in events))
+            self.assertIn("point_collector_bronze", unlocked_keys)
+            self.assertTrue(any(event.reward_points == 20 for event in events))
 
             reward_rows_before = (
                 db.query(PointsLedger)
@@ -112,25 +112,25 @@ class AchievementEngineTests(unittest.TestCase):
             )
             self.assertEqual(reward_rows_before, [])
 
-            points_500 = db.query(AchievementDefinition).filter(AchievementDefinition.key == "points_500").one()
+            points_500 = db.query(AchievementDefinition).filter(AchievementDefinition.key == "point_collector_bronze").one()
             overview_unclaimed = build_achievement_overview(db, family.id, user.id)
-            points_item = next(item for item in overview_unclaimed["items"] if item["key"] == "points_500")
+            points_item = next(item for item in overview_unclaimed["items"] if item["key"] == "point_collector_bronze")
             self.assertGreaterEqual(overview_unclaimed["unclaimed_count"], 1)
             self.assertTrue(points_item["is_profile_claimable"])
             self.assertFalse(points_item["is_reward_claimable"])
 
             claim_achievement_profile(db, family.id, user.id, points_500.id, triggered_by_id=user.id)
             overview_profile_claimed = build_achievement_overview(db, family.id, user.id)
-            points_item = next(item for item in overview_profile_claimed["items"] if item["key"] == "points_500")
+            points_item = next(item for item in overview_profile_claimed["items"] if item["key"] == "point_collector_bronze")
             self.assertGreaterEqual(overview_profile_claimed["reward_pending_count"], 1)
             self.assertFalse(points_item["is_profile_claimable"])
             self.assertTrue(points_item["is_reward_claimable"])
 
             _, points_delta = claim_achievement_reward(db, family.id, user.id, points_500.id, triggered_by_id=user.id)
             db.commit()
-            self.assertEqual(points_delta, 50)
+            self.assertEqual(points_delta, 20)
             overview_reward_claimed = build_achievement_overview(db, family.id, user.id)
-            points_item = next(item for item in overview_reward_claimed["items"] if item["key"] == "points_500")
+            points_item = next(item for item in overview_reward_claimed["items"] if item["key"] == "point_collector_bronze")
             self.assertEqual(overview_reward_claimed["reward_pending_count"], 0)
             self.assertFalse(points_item["is_profile_claimable"])
             self.assertFalse(points_item["is_reward_claimable"])
@@ -144,11 +144,11 @@ class AchievementEngineTests(unittest.TestCase):
                 )
                 .all()
             )
-            self.assertTrue(any(entry.points_delta == 50 for entry in reward_rows))
+            self.assertTrue(any(entry.points_delta == 20 for entry in reward_rows))
         finally:
             db.close()
 
-    def test_repeating_500_point_milestones_unlock_independently(self) -> None:
+    def test_point_collector_achievements_are_fixed_tiers(self) -> None:
         db, family, user = self._create_family_and_user()
         try:
             ensure_achievement_catalog(db)
@@ -179,9 +179,15 @@ class AchievementEngineTests(unittest.TestCase):
                 )
                 .all()
             }
-            self.assertIn("points_500", unlocked_keys)
-            self.assertIn("points_1000", unlocked_keys)
-            self.assertIn("points_1500_milestone", unlocked_keys)
+            self.assertIn("point_collector_bronze", unlocked_keys)
+            self.assertIn("point_collector_silver", unlocked_keys)
+            self.assertNotIn("point_collector_silver_metallic", unlocked_keys)
+            self.assertNotIn("points_1500_milestone", unlocked_keys)
+
+            overview = build_achievement_overview(db, family.id, user.id)
+            visible_keys = {item["key"] for item in overview["items"]}
+            self.assertIn("point_collector_perfect_diamond", visible_keys)
+            self.assertNotIn("points_6500_milestone", visible_keys)
         finally:
             db.close()
 
@@ -217,12 +223,13 @@ class AchievementEngineTests(unittest.TestCase):
             db.commit()
 
             overview = build_achievement_overview(db, family.id, user.id)
-            balance_100 = next(item for item in overview["items"] if item["key"] == "balance_100")
-            balance_250 = next(item for item in overview["items"] if item["key"] == "balance_250")
-            self.assertEqual(balance_100["current_value"], 200)
-            self.assertTrue(balance_100["is_profile_claimable"])
-            self.assertEqual(balance_250["current_value"], 200)
-            self.assertFalse(balance_250["is_profile_claimable"])
+            treasure_bronze = next(item for item in overview["items"] if item["key"] == "treasure_chamber_bronze")
+            treasure_silver = next(item for item in overview["items"] if item["key"] == "treasure_chamber_silver")
+            self.assertEqual(treasure_bronze["current_value"], 200)
+            self.assertTrue(treasure_bronze["is_profile_claimable"])
+            self.assertEqual(treasure_bronze["reward_points"], 20)
+            self.assertEqual(treasure_silver["current_value"], 200)
+            self.assertFalse(treasure_silver["is_profile_claimable"])
         finally:
             db.close()
 

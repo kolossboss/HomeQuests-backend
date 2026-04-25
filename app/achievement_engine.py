@@ -373,6 +373,8 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
         .all()
     )
     freezes = list_freeze_windows(db, family_id, user_id)
+    context = _load_context(db, family_id, user_id)
+    now = datetime.utcnow()
 
     items: list[dict] = []
     unlocked_count = 0
@@ -380,9 +382,19 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
         progress = progress_rows.get(definition.id)
         reward_points = _reward_points(definition)
         status = progress.status if progress else AchievementProgressStatusEnum.locked
+        display_computation: AchievementComputation | None = None
+        if progress is None:
+            display_computation = _compute_progress(definition, context, now)
+            if display_computation.status == AchievementProgressStatusEnum.unlocked:
+                status = AchievementProgressStatusEnum.in_progress
         if status == AchievementProgressStatusEnum.unlocked:
             unlocked_count += 1
         payload = progress.progress_payload if progress else {}
+        current_value = progress.current_value if progress else (display_computation.current_value if display_computation else 0)
+        target_value = progress.target_value if progress else (
+            display_computation.target_value if display_computation else int(definition.rule_config.get("target", 0) or 0)
+        )
+        progress_percent = progress.progress_percent if progress else (display_computation.progress_percent if display_computation else 0)
         items.append(
             {
                 "achievement_id": definition.id,
@@ -394,9 +406,9 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
                 "difficulty": definition.difficulty,
                 "teaser": definition.teaser,
                 "status": status,
-                "current_value": progress.current_value if progress else 0,
-                "target_value": progress.target_value if progress else int(definition.rule_config.get("target", 0) or 0),
-                "progress_percent": progress.progress_percent if progress else 0,
+                "current_value": current_value,
+                "target_value": target_value,
+                "progress_percent": progress_percent,
                 "current_streak": progress.current_streak if progress else 0,
                 "best_streak": progress.best_streak if progress else 0,
                 "frozen_periods_used": progress.frozen_periods_used if progress else 0,
@@ -421,23 +433,28 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
             }
         )
 
+    visible_achievement_ids = {int(item["achievement_id"]) for item in items}
+
     return {
         "family_id": family_id,
         "user_id": user_id,
         "user_display_name": user.display_name if user else f"Nutzer {user_id}",
-        "total_count": len(definitions),
+        "total_count": len(items),
         "unlocked_count": unlocked_count,
-        "locked_count": max(len(definitions) - unlocked_count, 0),
+        "locked_count": max(len(items) - unlocked_count, 0),
         "unclaimed_count": sum(
             1
-            for progress in progress_rows.values()
-            if progress.unlocked_at is not None and progress.profile_claimed_at is None
+            for achievement_id, progress in progress_rows.items()
+            if achievement_id in visible_achievement_ids
+            and progress.unlocked_at is not None
+            and progress.profile_claimed_at is None
         ),
         "reward_pending_count": sum(
             1
             for definition in definitions
             if (
-                (progress := progress_rows.get(definition.id)) is not None
+                definition.id in visible_achievement_ids
+                and (progress := progress_rows.get(definition.id)) is not None
                 and progress.unlocked_at is not None
                 and progress.profile_claimed_at is not None
                 and progress.reward_granted_at is None
@@ -453,14 +470,22 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
                 "difficulty": event.difficulty,
                 "reward_kind": event.reward_kind,
                 "reward_points": event.reward_points,
-                "presentation_payload": event.presentation_payload or {},
+                "presentation_payload": _normalized_presentation_payload(event.presentation_payload or {}),
                 "emitted_at": event.emitted_at,
                 "displayed_at": event.displayed_at,
             }
             for event in recent_unlocks
+            if event.achievement_id in visible_achievement_ids
         ],
         "freeze_windows": freezes,
     }
+
+
+def _normalized_presentation_payload(payload: dict) -> dict:
+    normalized = dict(payload or {})
+    if normalized.get("title") == "Auszeichnung freigeschaltet":
+        normalized["title"] = "Erfolg freigeschaltet"
+    return normalized
 
 
 def _load_unlocked_progress(

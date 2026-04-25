@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.04.25-01 (2026-04-25)
+
+- Achievements: Punktesammler und Schatzkammer auf feste Katalogstufen umgestellt.
+- Achievements: die Uebersicht zeigt unkommittierte Fortschritte jetzt sauberer an.
+- Doku/Test: `docs/achievements.md` und die Achievement-Tests an die neuen Stufen angepasst.
+
 ## v2026.04.23-01 (2026-04-23)
 
 - Achievements: neues System fuer Katalog, Fortschritt, Freischaltungen, Rewards und Freeze-Windows hinzugefuegt.
