@@ -14,6 +14,8 @@ Bausteine:
   Historie für Freischaltungen inkl. `presentation_payload` als Hook für animierte Mobile-Overlays.
 - `achievement_freeze_windows`
   Freeze-/Urlaubsfenster für streak-basierte Erfolge.
+- `achievement_family_calibrations`
+  Automatische Familien-Kalibrierung für punktbasierte Erfolge. Dadurch passen sich Punkteschwellen und Punkte-Geschenke an die tatsächliche Punkte-Ökonomie der Familie an.
 - `achievement_task_records`
   Dauerhafte, erfolgsrelevante Aufgabenfakten. Diese Tabelle ist bewusst getrennt von `tasks`, damit spätere Löschungen oder Serienwechsel historische Streaks nicht zerstören.
 
@@ -35,9 +37,40 @@ Aktuell genutzte Metriken:
 - `approved_tasks_total`
 - `approved_weekly_tasks_total`
 - `approved_special_tasks_total`
+- `approved_reward_redemptions_total`
+  Von Eltern/Admins bestätigte Belohnungs-Einlösungen. Offene oder abgelehnte Einlösungen zählen bewusst nicht.
 - `all_due_tasks_completed`
 - `all_due_tasks_completed_early`
 - `all_active_special_tasks_completed`
+
+## Automatische Punkte-Kalibrierung
+
+HomeQuests ist bewusst offen bei der Punktevergabe. Manche Familien vergeben 10-20 Punkte pro Aufgabe, andere 200 Punkte. Damit Punkte-Erfolge nicht zu schnell oder zu langsam erreicht werden, kalibriert das Backend punktbasierte Erfolge pro Familie.
+
+Die Kalibrierung läuft automatisch im Hintergrund, sobald Erfolge geladen oder berechnet werden. Eine Familie gilt erst als bereit, wenn diese Mindestwerte erfüllt sind:
+
+- mindestens 14 Tage Laufzeit
+- mindestens 10 aktive Aufgaben
+- mindestens 5 aktive Belohnungen
+- eine berechenbare Wochenrate aus Punktehistorie oder aktiver Aufgaben-/Sonderaufgaben-Konfiguration
+
+Solange die Kalibrierung läuft, bleiben Punkte-Erfolge sichtbar, aber sie werden nicht freigeschaltet. `AchievementOverviewOut.calibration` und `item.progress_payload.calibration` erklären, was noch fehlt und wie lange es ungefähr dauert.
+
+Berechnung:
+
+- Historische Wochenrate: bestätigte Aufgabenpunkte im Sample-Fenster, auf eine Woche normalisiert.
+- Konfigurierte Wochenrate: aktive tägliche/wöchentliche/monatliche Aufgaben und Sonderaufgaben, auf eine Woche normalisiert.
+- Effektive Wochenrate: Historie zählt stärker als Konfiguration; wenn nur eine Quelle vorhanden ist, wird diese genutzt.
+- Skalierungsfaktor: `effective_weekly_points / 250`, begrenzt auf sinnvolle Grenzen.
+
+Punktbasierte Erfolge über `earned_points_total` und `current_points_balance` nutzen diesen Faktor für Zielwerte und Punkte-Geschenke. Aufgaben-, Streak-, Sonderaufgaben- und Belohnungsanzahl-Erfolge bleiben unverändert.
+
+Eltern/Admins können zusätzlich eine manuelle Neuberechnung anstoßen:
+
+- `GET /families/{family_id}/achievements/calibration/preview`
+  Zeigt vorher/nachher für betroffene Punkte-Erfolge.
+- `POST /families/{family_id}/achievements/calibration/recalculate`
+  Übernimmt die neue Kalibrierung. Bereits freigeschaltete Erfolge bleiben erhalten.
 
 ## Belohnungen
 
@@ -62,6 +95,8 @@ Wichtige Endpunkte:
 - `GET /families/{family_id}/achievements/me`
 - `GET /families/{family_id}/achievements/users/{user_id}`
 - `POST /families/{family_id}/achievements/users/{user_id}/evaluate`
+- `GET /families/{family_id}/achievements/calibration/preview`
+- `POST /families/{family_id}/achievements/calibration/recalculate`
 - `POST /families/{family_id}/achievements/{achievement_id}/claim-profile`
 - `POST /families/{family_id}/achievements/{achievement_id}/claim-reward`
 - `GET /families/{family_id}/achievements/users/{user_id}/freeze-windows`
@@ -102,6 +137,12 @@ Das Kinder-Dashboard zeigt eine eigene Erfolgs-Kachel, sobald neue Erfolge oder 
 
 Die Punkteanimation zählt den sichtbaren Kontostand von alt nach neu hoch. Die Backend-API bleibt dabei maßgeblich: Punkte werden erst durch `claim-reward` gebucht, nicht durch die reine Animation.
 
+## Freeze-Modus
+
+Der Freeze-Modus ist eine Eltern-/Admin-Einstellung pro Kind. Kinder sehen diese Verwaltung nicht. Eltern wählen ein Kind aus und hinterlegen Start, Ende und optional einen Grund wie Urlaub, Klassenfahrt oder Abwesenheit.
+
+Freeze-Fenster gelten aktuell für `scope=streaks`. Dadurch werden nur Serien-Erfolge wie “6 Wochen in Folge” oder “2 Monate in Folge” pausiert. Punkte-, Aufgaben- und Schatzkammer-Erfolge laufen normal weiter. Während eines Freeze-Zeitraums wird eine betroffene Woche oder ein betroffener Monat nicht als Fehlschlag gezählt, damit Streaks nicht durch Urlaub abbrechen.
+
 ## Benachrichtigungen
 
 `achievement.unlocked` wird zusätzlich durch den Push-/Home-Assistant-Dispatcher ausgewertet. Wenn ein Kind einen Erfolg freischaltet, kann es dadurch browserseitig per Live-Event und extern über konfigurierte Kanäle benachrichtigt werden.
@@ -130,6 +171,13 @@ Schatzkammer über `current_points_balance`:
 - Platin: 2000 angesparte Punkte, 150 Bonuspunkte.
 - Diamant: 5000 angesparte Punkte, 300 Bonuspunkte.
 
+Wunsch-Einlöser über `approved_reward_redemptions_total`:
+
+- Bronze: 20 bestätigte Belohnungen eingelöst, 10 Bonuspunkte.
+- Silber: 50 bestätigte Belohnungen eingelöst, 20 Bonuspunkte.
+- Gold: 100 bestätigte Belohnungen eingelöst, 50 Bonuspunkte.
+- Diamant: 200 bestätigte Belohnungen eingelöst, 100 Bonuspunkte.
+
 Alte experimentelle Meilenstein-Keys wie `points_6500_milestone` oder alte `balance_*`-Serien werden beim Katalog-Sync deaktiviert.
 
 ## Erweiterung
@@ -139,6 +187,10 @@ Neue Erfolge:
 1. Seed in `backend/app/achievement_catalog.py` ergänzen.
 2. Falls nötig neue Metrik in `backend/app/achievement_engine.py` implementieren.
 3. Optional neues `icon_key` im WebUI-Icon-Mapping ergänzen.
+
+Wenn ein neuer Erfolg nur vorhandene Response-Felder nutzt (`name`, `description`, `difficulty`, `icon_key`, `reward_points`, `progress_percent`, Claim-Flags), müssen generische Clients wie iOS nicht angepasst werden. App-Änderungen sind nur nötig, wenn ein Client feste Achievement-Keys hardcodiert oder unbekannte Icons nicht fallbacken kann.
+
+Für punktbasierte Erfolge sollen Clients keine eigenen Schwellen berechnen. Maßgeblich sind ausschließlich `target_value`, `reward_points`, `rule_config.target` und `calibration` aus der Backend-Antwort.
 
 ## TODOs
 

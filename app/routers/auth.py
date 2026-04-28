@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+from contextlib import contextmanager
+from threading import Lock
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -34,6 +38,9 @@ from ..security import create_access_token, hash_password, verify_password
 router = APIRouter(prefix="/auth", tags=["auth"])
 COOKIE_NAME = "fp_token"
 COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
+BOOTSTRAP_LOCK_KEY = 930_000_001
+_bootstrap_fallback_lock = Lock()
+logger = logging.getLogger(__name__)
 
 
 def _request_uses_https(request: Request) -> bool:
@@ -53,6 +60,32 @@ def _set_auth_cookie(response: Response, token: str, request: Request) -> None:
         secure=cookie_secure,
         path="/",
     )
+
+
+def _mask_identifier(identifier: str) -> str:
+    raw = (identifier or "").strip()
+    if not raw:
+        return "<leer>"
+    if "@" in raw:
+        local, _, domain = raw.partition("@")
+        local_masked = (local[:2] + "***") if local else "***"
+        return f"{local_masked}@{domain}"
+    return (raw[:2] + "***") if len(raw) > 2 else "***"
+
+
+@contextmanager
+def _bootstrap_guard(db: Session):
+    # Verhindert parallele Bootstrap-Initialisierungen (mehrere Worker/Requests).
+    if db.bind is not None and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": BOOTSTRAP_LOCK_KEY})
+        yield
+        return
+
+    _bootstrap_fallback_lock.acquire()
+    try:
+        yield
+    finally:
+        _bootstrap_fallback_lock.release()
 
 
 @router.get("/bootstrap-status", response_model=BootstrapStatusOut)
@@ -172,28 +205,31 @@ def bootstrap_restore(payload: BootstrapRestoreRequest, db: Session = Depends(ge
 
 @router.post("/bootstrap", response_model=TokenResponse)
 def bootstrap(payload: BootstrapRequest, request: Request, response: Response, db: Session = Depends(get_db)):
-    existing = db.query(User).count()
-    if existing > 0:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
+    with _bootstrap_guard(db):
+        existing = db.query(User.id).first() is not None
+        if existing:
+            logger.info("Bootstrap abgelehnt: bereits initialisiert")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
 
-    email = payload.email.lower() if payload.email else None
+        email = payload.email.lower() if payload.email else None
 
-    family = Family(name="Haushalt")
-    user = User(
-        email=email,
-        display_name=payload.display_name,
-        password_hash=hash_password(payload.password),
-    )
-    db.add(family)
-    db.add(user)
-    db.flush()
+        family = Family(name="Haushalt")
+        user = User(
+            email=email,
+            display_name=payload.display_name,
+            password_hash=hash_password(payload.password),
+        )
+        db.add(family)
+        db.add(user)
+        db.flush()
 
-    membership = FamilyMembership(family_id=family.id, user_id=user.id, role=RoleEnum.admin)
-    db.add(membership)
-    db.commit()
+        membership = FamilyMembership(family_id=family.id, user_id=user.id, role=RoleEnum.admin)
+        db.add(membership)
+        db.commit()
 
     token = create_access_token(str(user.id))
     _set_auth_cookie(response, token, request)
+    logger.info("Bootstrap erfolgreich abgeschlossen für Nutzer-ID %s", user.id)
     return TokenResponse(access_token=token)
 
 
@@ -219,10 +255,16 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
         user = users_by_name[0] if users_by_name else None
 
     if not user or not verify_password(payload.password, user.password_hash):
+        logger.warning(
+            "Login fehlgeschlagen (identifier=%s, ip=%s)",
+            _mask_identifier(identifier),
+            request.client.host if request.client else "unknown",
+        )
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falsche Zugangsdaten")
 
     token = create_access_token(str(user.id))
     _set_auth_cookie(response, token, request)
+    logger.info("Login erfolgreich für Nutzer-ID %s", user.id)
     return TokenResponse(access_token=token)
 
 

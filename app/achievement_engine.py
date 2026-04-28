@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .achievement_calibration import (
+    calibration_overview_payload,
+    ensure_family_achievement_calibration,
+    is_calibration_ready,
+    is_point_scaled_metric,
+    scaled_achievement_reward,
+    scaled_achievement_target,
+)
 from .achievement_catalog import sync_achievement_catalog
 from .models import (
     AchievementDefinition,
+    AchievementFamilyCalibration,
     AchievementFreezeScopeEnum,
     AchievementFreezeWindow,
     AchievementProgress,
@@ -20,6 +29,8 @@ from .models import (
     AchievementUnlockEvent,
     PointsLedger,
     PointsSourceEnum,
+    RedemptionStatusEnum,
+    RewardRedemption,
     SpecialTaskTemplate,
     Task,
     TaskStatusEnum,
@@ -66,6 +77,8 @@ class EvaluationContext:
     freeze_windows: list[AchievementFreezeWindow]
     earned_points_total: int
     current_points_balance: int
+    approved_reward_redemptions_total: int
+    calibration: AchievementFamilyCalibration | None
 
 
 def ensure_achievement_catalog(db: Session) -> None:
@@ -141,9 +154,10 @@ def evaluate_achievements_for_user(
 
     unlock_events: list[AchievementUnlockEvent] = []
     now = datetime.utcnow()
+    calibration = ensure_family_achievement_calibration(db, family_id, now=now)
 
     for _ in range(4):
-        context = _load_context(db, family_id, user_id)
+        context = _load_context(db, family_id, user_id, calibration=calibration)
         progress_rows = {
             row.achievement_id: row
             for row in (
@@ -188,6 +202,7 @@ def evaluate_achievements_for_user(
             progress.status = AchievementProgressStatusEnum.unlocked
             progress.unlocked_at = now
 
+            reward_points = _reward_points(definition, context)
             presentation = _build_unlock_presentation(definition)
             unlock_event = AchievementUnlockEvent(
                 family_id=family_id,
@@ -196,14 +211,12 @@ def evaluate_achievements_for_user(
                 user_id=user_id,
                 difficulty=definition.difficulty,
                 reward_kind=definition.reward_kind,
-                reward_points=_reward_points(definition),
+                reward_points=reward_points,
                 presentation_payload=presentation,
                 emitted_at=now,
             )
             db.add(unlock_event)
             db.flush()
-
-            reward_points = _reward_points(definition)
 
             if emit_events:
                 emit_live_event(
@@ -251,6 +264,8 @@ def claim_achievement_profile(
     triggered_by_id: int | None = None,
 ) -> AchievementProgress:
     definition, progress = _load_unlocked_progress(db, family_id, user_id, achievement_id)
+    calibration = ensure_family_achievement_calibration(db, family_id)
+    context = _load_context(db, family_id, user_id, calibration=calibration)
     if progress.profile_claimed_at is None:
         progress.profile_claimed_at = datetime.utcnow()
         db.flush()
@@ -265,7 +280,7 @@ def claim_achievement_profile(
                 "name": definition.name,
                 "icon_key": definition.icon_key,
                 "difficulty": definition.difficulty.value,
-                "reward_points": _reward_points(definition),
+                "reward_points": _reward_points(definition, context, progress=progress),
                 "triggered_by_id": triggered_by_id,
             },
         )
@@ -281,10 +296,12 @@ def claim_achievement_reward(
     triggered_by_id: int | None = None,
 ) -> tuple[AchievementProgress, int]:
     definition, progress = _load_unlocked_progress(db, family_id, user_id, achievement_id)
+    calibration = ensure_family_achievement_calibration(db, family_id)
+    context = _load_context(db, family_id, user_id, calibration=calibration)
     if progress.profile_claimed_at is None:
         raise ValueError("Erfolg muss zuerst ins Profil übernommen werden")
 
-    reward_points = _reward_points(definition)
+    reward_points = _reward_points(definition, context, progress=progress)
     if reward_points <= 0 or definition.reward_kind != AchievementRewardKindEnum.points_grant:
         raise ValueError("Dieser Erfolg hat kein Punkte-Geschenk")
     if progress.reward_granted_at is not None:
@@ -335,6 +352,7 @@ def claim_achievement_reward(
 
 def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dict:
     ensure_achievement_catalog(db)
+    calibration = ensure_family_achievement_calibration(db, family_id)
     evaluate_achievements_for_user(
         db,
         family_id=family_id,
@@ -373,14 +391,14 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
         .all()
     )
     freezes = list_freeze_windows(db, family_id, user_id)
-    context = _load_context(db, family_id, user_id)
+    context = _load_context(db, family_id, user_id, calibration=calibration)
     now = datetime.utcnow()
 
     items: list[dict] = []
     unlocked_count = 0
     for definition in definitions:
         progress = progress_rows.get(definition.id)
-        reward_points = _reward_points(definition)
+        reward_points = _reward_points(definition, context, progress=progress)
         status = progress.status if progress else AchievementProgressStatusEnum.locked
         display_computation: AchievementComputation | None = None
         if progress is None:
@@ -426,9 +444,9 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
                 "last_evaluated_at": progress.last_evaluated_at if progress else None,
                 "reward_kind": definition.reward_kind,
                 "reward_points": reward_points,
-                "reward_config": definition.reward_config or {},
+                "reward_config": _effective_reward_config(definition, reward_points),
                 "rule_kind": definition.rule_kind,
-                "rule_config": definition.rule_config or {},
+                "rule_config": _effective_rule_config(definition, target_value),
                 "progress_payload": payload,
             }
         )
@@ -458,9 +476,10 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
                 and progress.unlocked_at is not None
                 and progress.profile_claimed_at is not None
                 and progress.reward_granted_at is None
-                and _reward_points(definition) > 0
+                and _reward_points(definition, context, progress=progress) > 0
             )
         ),
+        "calibration": calibration_overview_payload(context.calibration),
         "items": items,
         "recent_unlocks": [
             {
@@ -512,7 +531,13 @@ def _load_unlocked_progress(
     return definition, progress
 
 
-def _load_context(db: Session, family_id: int, user_id: int) -> EvaluationContext:
+def _load_context(
+    db: Session,
+    family_id: int,
+    user_id: int,
+    *,
+    calibration: AchievementFamilyCalibration | None = None,
+) -> EvaluationContext:
     user = db.query(User).filter(User.id == user_id).first()
     if user is None:
         raise ValueError("Nutzer nicht gefunden")
@@ -548,6 +573,7 @@ def _load_context(db: Session, family_id: int, user_id: int) -> EvaluationContex
     freeze_windows = list_freeze_windows(db, family_id, user_id)
     earned_points_total = _earned_points_total(db, family_id, user_id)
     current_points_balance = _current_points_balance(db, family_id, user_id)
+    approved_reward_redemptions_total = _approved_reward_redemptions_total(db, user_id)
     return EvaluationContext(
         family_id=family_id,
         user=user,
@@ -557,6 +583,8 @@ def _load_context(db: Session, family_id: int, user_id: int) -> EvaluationContex
         freeze_windows=freeze_windows,
         earned_points_total=earned_points_total,
         current_points_balance=current_points_balance,
+        approved_reward_redemptions_total=approved_reward_redemptions_total,
+        calibration=calibration,
     )
 
 
@@ -586,6 +614,18 @@ def _current_points_balance(db: Session, family_id: int, user_id: int) -> int:
     return int(result or 0)
 
 
+def _approved_reward_redemptions_total(db: Session, user_id: int) -> int:
+    result = (
+        db.query(func.count(RewardRedemption.id))
+        .filter(
+            RewardRedemption.requested_by_id == user_id,
+            RewardRedemption.status == RedemptionStatusEnum.approved,
+        )
+        .scalar()
+    )
+    return int(result or 0)
+
+
 def _compute_progress(definition: AchievementDefinition, context: EvaluationContext, now: datetime) -> AchievementComputation:
     if definition.rule_kind == AchievementRuleKindEnum.aggregate_count:
         return _compute_aggregate_progress(definition, context)
@@ -605,13 +645,16 @@ def _compute_progress(definition: AchievementDefinition, context: EvaluationCont
 
 def _compute_aggregate_progress(definition: AchievementDefinition, context: EvaluationContext) -> AchievementComputation:
     metric = str((definition.rule_config or {}).get("metric") or "").strip()
-    target = max(int((definition.rule_config or {}).get("target") or 0), 1)
+    base_target = max(int((definition.rule_config or {}).get("target") or 0), 1)
+    target = max(scaled_achievement_target(base_target, context.calibration, metric), 1)
     approved_records = [record for record in context.task_records if record.outcome == AchievementTaskOutcomeEnum.approved]
 
     if metric == "earned_points_total":
         current = context.earned_points_total
     elif metric == "current_points_balance":
         current = context.current_points_balance
+    elif metric == "approved_reward_redemptions_total":
+        current = context.approved_reward_redemptions_total
     elif metric == "approved_tasks_total":
         current = len(approved_records)
     elif metric == "approved_special_tasks_total":
@@ -621,10 +664,38 @@ def _compute_aggregate_progress(definition: AchievementDefinition, context: Eval
     else:
         current = 0
 
+    calibration_payload = None
+    if is_point_scaled_metric(metric):
+        calibration_payload = _progress_calibration_payload(context.calibration)
+        if not is_calibration_ready(context.calibration):
+            return AchievementComputation(
+                status=AchievementProgressStatusEnum.locked,
+                current_value=current,
+                target_value=target,
+                progress_percent=0,
+                current_streak=0,
+                best_streak=0,
+                frozen_periods_used=0,
+                progress_payload={
+                    "metric": metric,
+                    "summary": calibration_payload.get("message") or "Kalibrierung läuft",
+                    "calibration": calibration_payload,
+                    "base_target": base_target,
+                },
+            )
+
     percent = _percent(current, target)
     status = AchievementProgressStatusEnum.unlocked if current >= target else (
         AchievementProgressStatusEnum.in_progress if current > 0 else AchievementProgressStatusEnum.locked
     )
+    payload = {
+        "metric": metric,
+        "summary": f"{current} / {target}",
+    }
+    if calibration_payload:
+        payload["calibration"] = calibration_payload
+        payload["base_target"] = base_target
+        payload["scaled_target"] = target
     return AchievementComputation(
         status=status,
         current_value=current,
@@ -633,10 +704,7 @@ def _compute_aggregate_progress(definition: AchievementDefinition, context: Eval
         current_streak=0,
         best_streak=0,
         frozen_periods_used=0,
-        progress_payload={
-            "metric": metric,
-            "summary": f"{current} / {target}",
-        },
+        progress_payload=payload,
     )
 
 
@@ -851,9 +919,17 @@ def _period_is_frozen(start: datetime, end: datetime, freeze_windows: list[Achie
     for window in freeze_windows:
         if window.scope != STREAK_FREEZE_SCOPE:
             continue
-        if window.starts_at < end and window.ends_at >= start:
+        starts_at = _to_utc_naive(window.starts_at)
+        ends_at = _to_utc_naive(window.ends_at)
+        if starts_at < end and ends_at >= start:
             return True
     return False
+
+
+def _to_utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def _completion_cutoff(period_start: datetime, config: dict) -> datetime | None:
@@ -870,9 +946,43 @@ def _percent(current: int, target: int) -> int:
     return max(0, min(int((current / target) * 100), 100))
 
 
-def _reward_points(definition: AchievementDefinition) -> int:
+def _reward_points(
+    definition: AchievementDefinition,
+    context: EvaluationContext | None = None,
+    *,
+    progress: AchievementProgress | None = None,
+) -> int:
     reward_config = definition.reward_config or {}
-    return max(int(reward_config.get("points") or 0), 0)
+    base_points = max(int(reward_config.get("points") or 0), 0)
+    metric = str((definition.rule_config or {}).get("metric") or "")
+    calibration = context.calibration if context else None
+    return scaled_achievement_reward(base_points, calibration, metric)
+
+
+def _effective_reward_config(definition: AchievementDefinition, reward_points: int) -> dict:
+    config = dict(definition.reward_config or {})
+    config["points"] = reward_points
+    config["label"] = f"{reward_points} Bonuspunkte" if reward_points > 0 else config.get("label", "Keine Punkte")
+    return config
+
+
+def _effective_rule_config(definition: AchievementDefinition, target_value: int) -> dict:
+    config = dict(definition.rule_config or {})
+    metric = str(config.get("metric") or "")
+    if is_point_scaled_metric(metric):
+        config["base_target"] = int((definition.rule_config or {}).get("target") or 0)
+        config["target"] = target_value
+        config["scaled_by_family_calibration"] = True
+    return config
+
+
+def _progress_calibration_payload(calibration: AchievementFamilyCalibration | None) -> dict:
+    payload = calibration_overview_payload(calibration)
+    return {
+        key: value
+        for key, value in payload.items()
+        if not isinstance(value, datetime)
+    }
 
 
 def _build_unlock_presentation(definition: AchievementDefinition) -> dict:

@@ -440,6 +440,62 @@ def _add_achievement_diamond_difficulty(engine: Engine) -> None:
         )
 
 
+def _create_achievement_family_calibrations_table(engine: Engine) -> None:
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS achievement_family_calibrations ("
+                    "id SERIAL PRIMARY KEY, "
+                    "family_id INTEGER NOT NULL UNIQUE REFERENCES families(id) ON DELETE CASCADE, "
+                    "status VARCHAR(32) NOT NULL DEFAULT 'pending', "
+                    "started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "calibrated_at TIMESTAMP NULL, "
+                    "baseline_weekly_points INTEGER NOT NULL DEFAULT 250, "
+                    "observed_weekly_points INTEGER NOT NULL DEFAULT 0, "
+                    "configured_weekly_points INTEGER NOT NULL DEFAULT 0, "
+                    "effective_weekly_points INTEGER NOT NULL DEFAULT 0, "
+                    "point_scale INTEGER NOT NULL DEFAULT 100, "
+                    "sample_days INTEGER NOT NULL DEFAULT 0, "
+                    "tasks_configured_count INTEGER NOT NULL DEFAULT 0, "
+                    "rewards_configured_count INTEGER NOT NULL DEFAULT 0, "
+                    "approved_tasks_sample_count INTEGER NOT NULL DEFAULT 0, "
+                    "approved_points_sample INTEGER NOT NULL DEFAULT 0, "
+                    "min_days_required INTEGER NOT NULL DEFAULT 14, "
+                    "min_tasks_required INTEGER NOT NULL DEFAULT 10, "
+                    "min_rewards_required INTEGER NOT NULL DEFAULT 5, "
+                    "preview_payload JSON NOT NULL DEFAULT '{}', "
+                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+        else:
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS achievement_family_calibrations ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "family_id INTEGER NOT NULL UNIQUE, "
+                    "status VARCHAR(32) NOT NULL DEFAULT 'pending', "
+                    "started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "calibrated_at TIMESTAMP NULL, "
+                    "baseline_weekly_points INTEGER NOT NULL DEFAULT 250, "
+                    "observed_weekly_points INTEGER NOT NULL DEFAULT 0, "
+                    "configured_weekly_points INTEGER NOT NULL DEFAULT 0, "
+                    "effective_weekly_points INTEGER NOT NULL DEFAULT 0, "
+                    "point_scale INTEGER NOT NULL DEFAULT 100, "
+                    "sample_days INTEGER NOT NULL DEFAULT 0, "
+                    "tasks_configured_count INTEGER NOT NULL DEFAULT 0, "
+                    "rewards_configured_count INTEGER NOT NULL DEFAULT 0, "
+                    "approved_tasks_sample_count INTEGER NOT NULL DEFAULT 0, "
+                    "approved_points_sample INTEGER NOT NULL DEFAULT 0, "
+                    "min_days_required INTEGER NOT NULL DEFAULT 14, "
+                    "min_tasks_required INTEGER NOT NULL DEFAULT 10, "
+                    "min_rewards_required INTEGER NOT NULL DEFAULT 5, "
+                    "preview_payload JSON NOT NULL DEFAULT '{}', "
+                    "updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
@@ -452,6 +508,7 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260422_achievement_points_source", _add_achievement_points_source),
     ("20260423_achievement_claim_columns", _add_achievement_claim_columns),
     ("20260424_achievement_diamond_difficulty", _add_achievement_diamond_difficulty),
+    ("20260428_achievement_family_calibrations", _create_achievement_family_calibrations_table),
 ]
 
 

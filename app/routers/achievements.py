@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from ..achievement_calibration import apply_family_achievement_recalibration, preview_family_achievement_calibration
 from ..achievement_engine import (
     build_achievement_overview,
     claim_achievement_profile,
@@ -36,6 +39,12 @@ def _ensure_target_user_in_family(db: Session, family_id: int, user_id: int) -> 
 def _assert_can_view_target(context, current_user: User, target_user_id: int) -> None:
     if context.role == RoleEnum.child and current_user.id != target_user_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Keine Berechtigung")
+
+
+def _to_utc_naive(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 @router.get("/families/{family_id}/achievements/me", response_model=AchievementOverviewOut)
@@ -84,6 +93,43 @@ def evaluate_user_achievements(
         emit_events=True,
     )
     payload = build_achievement_overview(db, family_id, user_id)
+    db.commit()
+    return payload
+
+
+@router.get("/families/{family_id}/achievements/calibration/preview")
+def preview_achievement_calibration(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(context, {RoleEnum.admin, RoleEnum.parent})
+    payload = preview_family_achievement_calibration(db, family_id)
+    db.commit()
+    return payload
+
+
+@router.post("/families/{family_id}/achievements/calibration/recalculate", response_model=AchievementOverviewOut)
+def recalculate_achievement_calibration(
+    family_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(context, {RoleEnum.admin, RoleEnum.parent})
+    apply_family_achievement_recalibration(db, family_id)
+    target_membership = (
+        db.query(FamilyMembership)
+        .filter(
+            FamilyMembership.family_id == family_id,
+            FamilyMembership.role == RoleEnum.child,
+        )
+        .order_by(FamilyMembership.id.asc())
+        .first()
+    )
+    target_user_id = target_membership.user_id if target_membership else current_user.id
+    payload = build_achievement_overview(db, family_id, target_user_id)
     db.commit()
     return payload
 
@@ -178,8 +224,8 @@ def create_achievement_freeze(
         user_id=user_id,
         scope=payload.scope,
         reason=payload.reason,
-        starts_at=payload.starts_at,
-        ends_at=payload.ends_at,
+        starts_at=_to_utc_naive(payload.starts_at),
+        ends_at=_to_utc_naive(payload.ends_at),
         created_by_id=current_user.id,
     )
     db.add(freeze)

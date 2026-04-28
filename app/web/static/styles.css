@@ -710,9 +710,151 @@ p {
 .achievement-loot-coins span:nth-child(5) { --coin-x: -70px; --coin-y: -150px; animation-delay: 300ms; }
 .achievement-loot-coins span:nth-child(6) { --coin-x: 60px; --coin-y: -155px; animation-delay: 380ms; }
 
+.achievement-calibration-section {
+  border-color: rgba(255, 214, 10, 0.18);
+  background:
+    radial-gradient(circle at top right, rgba(255, 214, 10, 0.14), transparent 34%),
+    rgba(255, 255, 255, 0.035);
+}
+
+.achievement-calibration-card,
+.achievement-calibration-preview {
+  margin-top: 14px;
+}
+
+.calibration-panel {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  padding: 18px;
+  background: rgba(9, 14, 28, 0.66);
+}
+
+.calibration-panel.is-ready {
+  border-color: rgba(66, 211, 146, 0.36);
+  box-shadow: 0 20px 48px rgba(66, 211, 146, 0.08);
+}
+
+.calibration-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+}
+
+.calibration-eyebrow {
+  margin: 0 0 4px;
+  color: #ffd60a;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.calibration-panel h5,
+.calibration-preview-card h5 {
+  margin: 0 0 6px;
+  font-family: "Sora", "Manrope", sans-serif;
+}
+
+.calibration-scale {
+  min-width: 118px;
+  border-radius: 20px;
+  padding: 12px 14px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(255, 214, 10, 0.18), rgba(255, 255, 255, 0.06));
+}
+
+.calibration-scale strong {
+  display: block;
+  font-family: "Sora", "Manrope", sans-serif;
+  font-size: 1.7rem;
+}
+
+.calibration-scale span,
+.calibration-facts {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calibration-meter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.calibration-meter {
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.calibration-meter-label,
+.calibration-facts {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.calibration-meter-track {
+  height: 9px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.calibration-meter-track div {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #ffd60a, #42d392);
+}
+
+.calibration-facts {
+  margin-top: 14px;
+}
+
+.achievement-calibration-manager {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.calibration-preview-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.calibration-preview-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.calibration-preview-list article {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
 .achievement-freeze-list {
   display: grid;
   gap: 10px;
+}
+
+.achievement-freeze-manager {
+  margin: 14px 0 16px;
+  padding: 16px;
+  border: 1px solid rgba(115, 208, 230, 0.24);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(115, 208, 230, 0.12), rgba(255, 255, 255, 0.04));
 }
 
 .achievement-freeze-item {
@@ -722,9 +864,18 @@ p {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.achievement-freeze-item.is-active {
+  border-color: rgba(115, 208, 230, 0.72);
+  box-shadow: 0 0 0 1px rgba(115, 208, 230, 0.18), 0 18px 44px rgba(115, 208, 230, 0.12);
+}
+
 .achievement-freeze-item strong {
   display: block;
   margin-bottom: 4px;
+}
+
+.achievement-freeze-item small {
+  color: var(--muted);
 }
 
 .achievement-unlock-banner {
@@ -6340,6 +6491,20 @@ input[type="file"] {
   .row-wrap > button,
   .channel-row .row-wrap button {
     min-width: 0;
+  }
+
+  .calibration-panel-head,
+  .calibration-meter-grid,
+  .calibration-preview-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .calibration-panel-head {
+    flex-direction: column;
+  }
+
+  .calibration-scale {
+    width: 100%;
   }
 }
 

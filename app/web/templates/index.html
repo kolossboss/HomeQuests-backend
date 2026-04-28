@@ -468,6 +468,22 @@
             </div>
           </div>
 
+          <div id="achievement-calibration-section" class="section-block achievement-calibration-section">
+            <div class="section-copy">
+              <h4>Punkte-Kalibrierung</h4>
+              <p class="muted">HomeQuests passt Punkte-Erfolge automatisch an eure Familien-Punktevergabe an. Dafür werden mindestens zwei Wochen Daten gesammelt.</p>
+            </div>
+            <div id="achievement-calibration-card" class="achievement-calibration-card"></div>
+            <div id="achievement-calibration-manager" class="achievement-calibration-manager">
+              <div class="row-wrap">
+                <button id="achievement-calibration-preview-btn" type="button" class="btn-secondary">Neue Berechnung ansehen</button>
+                <button id="achievement-calibration-apply-btn" type="button">Berechnung übernehmen</button>
+              </div>
+              <p id="achievement-calibration-status" class="muted"></p>
+              <div id="achievement-calibration-preview" class="achievement-calibration-preview"></div>
+            </div>
+          </div>
+
           <div id="achievement-new-section" class="section-block achievement-action-section achievement-action-new">
             <div class="section-copy">
               <h4>Neu freigeschaltet</h4>
@@ -492,10 +508,27 @@
             <div id="achievement-completed-cards" class="achievement-cards-grid achievement-board"></div>
           </div>
 
-          <div class="section-block">
+          <div id="achievement-freeze-section" class="section-block">
             <div class="section-copy">
-              <h4>Freeze / Urlaub</h4>
-              <p class="muted">Streak-Erfolge werden während eines Freeze-Zeitraums pausiert statt verloren.</p>
+              <h4>Freeze-Modus / Urlaub</h4>
+              <p class="muted">Nur Eltern verwalten diese Einstellung. Sie pausiert Serien-Erfolge wie „6 Wochen in Folge“, damit Urlaub oder Abwesenheit keine Streaks zerstören.</p>
+            </div>
+            <div id="achievement-freeze-manager" class="achievement-freeze-manager">
+              <div class="form-grid compact">
+                <label>Start
+                  <input id="achievement-freeze-start" type="datetime-local" />
+                </label>
+                <label>Ende
+                  <input id="achievement-freeze-end" type="datetime-local" />
+                </label>
+                <label>Grund
+                  <input id="achievement-freeze-reason" type="text" maxlength="255" placeholder="z. B. Urlaub, Klassenfahrt, Wochenende bei Oma" />
+                </label>
+              </div>
+              <div class="row-wrap">
+                <button id="achievement-freeze-create-btn" type="button">Freeze für dieses Kind speichern</button>
+              </div>
+              <p id="achievement-freeze-status" class="muted"></p>
             </div>
             <div id="achievement-freeze-list" class="achievement-freeze-list"></div>
           </div>
