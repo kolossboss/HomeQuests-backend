@@ -1036,6 +1036,31 @@ class AchievementItemOut(BaseModel):
     progress_payload: dict[str, object] = Field(default_factory=dict)
 
 
+class AchievementCalibrationOut(BaseModel):
+    status: str = "pending"
+    message: str | None = None
+    started_at: datetime | None = None
+    calibrated_at: datetime | None = None
+    sample_days: int = 0
+    min_days_required: int = 14
+    missing_days: int = 0
+    tasks_configured_count: int = 0
+    min_tasks_required: int = 10
+    missing_tasks: int = 0
+    rewards_configured_count: int = 0
+    min_rewards_required: int = 5
+    missing_rewards: int = 0
+    observed_weekly_points: int = 0
+    configured_weekly_points: int = 0
+    effective_weekly_points: int = 0
+    baseline_weekly_points: int = 250
+    point_scale: int = 100
+    point_scale_factor: float = 1.0
+    approved_tasks_sample_count: int = 0
+    approved_points_sample: int = 0
+    updated_at: datetime | None = None
+
+
 class AchievementOverviewOut(BaseModel):
     family_id: int
     user_id: int
@@ -1045,6 +1070,7 @@ class AchievementOverviewOut(BaseModel):
     locked_count: int
     unclaimed_count: int = 0
     reward_pending_count: int = 0
+    calibration: AchievementCalibrationOut | None = None
     items: list[AchievementItemOut]
     recent_unlocks: list[AchievementUnlockEventOut]
     freeze_windows: list[AchievementFreezeWindowOut]

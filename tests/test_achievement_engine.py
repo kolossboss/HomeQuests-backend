@@ -19,6 +19,7 @@ from app.achievement_engine import (
 from app.database import Base
 from app.models import (
     AchievementDefinition,
+    AchievementFamilyCalibration,
     AchievementFreezeScopeEnum,
     AchievementFreezeWindow,
     AchievementProgress,
@@ -26,6 +27,9 @@ from app.models import (
     Family,
     PointsLedger,
     PointsSourceEnum,
+    RedemptionStatusEnum,
+    Reward,
+    RewardRedemption,
     RoleEnum,
     SpecialTaskIntervalEnum,
     SpecialTaskTemplate,
@@ -67,10 +71,36 @@ class AchievementEngineTests(unittest.TestCase):
         db.refresh(user)
         return db, family, user
 
+    def _set_ready_calibration(self, db, family) -> None:
+        db.add(
+            AchievementFamilyCalibration(
+                family_id=family.id,
+                status="ready",
+                started_at=datetime.utcnow() - timedelta(days=14),
+                calibrated_at=datetime.utcnow(),
+                baseline_weekly_points=250,
+                observed_weekly_points=250,
+                configured_weekly_points=250,
+                effective_weekly_points=250,
+                point_scale=100,
+                sample_days=14,
+                tasks_configured_count=10,
+                rewards_configured_count=5,
+                approved_tasks_sample_count=10,
+                approved_points_sample=500,
+                min_days_required=14,
+                min_tasks_required=10,
+                min_rewards_required=5,
+                preview_payload={"status": "ready", "message": "Test-Kalibrierung aktiv."},
+            )
+        )
+        db.flush()
+
     def test_points_achievement_unlock_requires_gift_claim_for_reward(self) -> None:
         db, family, user = self._create_family_and_user()
         try:
             ensure_achievement_catalog(db)
+            self._set_ready_calibration(db, family)
             db.add(
                 PointsLedger(
                     family_id=family.id,
@@ -152,6 +182,7 @@ class AchievementEngineTests(unittest.TestCase):
         db, family, user = self._create_family_and_user()
         try:
             ensure_achievement_catalog(db)
+            self._set_ready_calibration(db, family)
             db.add(
                 PointsLedger(
                     family_id=family.id,
@@ -195,6 +226,7 @@ class AchievementEngineTests(unittest.TestCase):
         db, family, user = self._create_family_and_user()
         try:
             ensure_achievement_catalog(db)
+            self._set_ready_calibration(db, family)
             db.add_all(
                 [
                     PointsLedger(
@@ -230,6 +262,140 @@ class AchievementEngineTests(unittest.TestCase):
             self.assertEqual(treasure_bronze["reward_points"], 20)
             self.assertEqual(treasure_silver["current_value"], 200)
             self.assertFalse(treasure_silver["is_profile_claimable"])
+        finally:
+            db.close()
+
+    def test_point_achievements_wait_for_family_calibration(self) -> None:
+        db, family, user = self._create_family_and_user()
+        try:
+            ensure_achievement_catalog(db)
+            db.add(
+                PointsLedger(
+                    family_id=family.id,
+                    user_id=user.id,
+                    source_type=PointsSourceEnum.task_approval,
+                    source_id=1,
+                    points_delta=1000,
+                    description="Viele Punkte vor Kalibrierung",
+                    created_by_id=user.id,
+                )
+            )
+            db.flush()
+
+            evaluate_achievements_for_user(db, family.id, user.id, triggered_by_id=user.id, emit_events=False)
+            db.commit()
+
+            overview = build_achievement_overview(db, family.id, user.id)
+            points_bronze = next(item for item in overview["items"] if item["key"] == "point_collector_bronze")
+            self.assertEqual(overview["calibration"]["status"], "pending")
+            self.assertFalse(points_bronze["is_profile_claimable"])
+            self.assertEqual(points_bronze["progress_payload"]["calibration"]["status"], "pending")
+        finally:
+            db.close()
+
+    def test_ready_calibration_scales_point_targets_and_rewards(self) -> None:
+        db, family, user = self._create_family_and_user()
+        try:
+            ensure_achievement_catalog(db)
+            db.add(
+                AchievementFamilyCalibration(
+                    family_id=family.id,
+                    status="ready",
+                    started_at=datetime.utcnow() - timedelta(days=14),
+                    calibrated_at=datetime.utcnow(),
+                    baseline_weekly_points=250,
+                    observed_weekly_points=500,
+                    configured_weekly_points=500,
+                    effective_weekly_points=500,
+                    point_scale=200,
+                    sample_days=14,
+                    tasks_configured_count=10,
+                    rewards_configured_count=5,
+                    approved_tasks_sample_count=10,
+                    approved_points_sample=1000,
+                    min_days_required=14,
+                    min_tasks_required=10,
+                    min_rewards_required=5,
+                    preview_payload={"status": "ready", "message": "Skalierte Test-Kalibrierung aktiv."},
+                )
+            )
+            db.add(
+                PointsLedger(
+                    family_id=family.id,
+                    user_id=user.id,
+                    source_type=PointsSourceEnum.task_approval,
+                    source_id=1,
+                    points_delta=1000,
+                    description="Skalierte Punkte",
+                    created_by_id=user.id,
+                )
+            )
+            db.flush()
+
+            overview = build_achievement_overview(db, family.id, user.id)
+            bronze = next(item for item in overview["items"] if item["key"] == "point_collector_bronze")
+            silver = next(item for item in overview["items"] if item["key"] == "point_collector_silver")
+
+            self.assertEqual(bronze["target_value"], 1000)
+            self.assertEqual(bronze["reward_points"], 40)
+            self.assertTrue(bronze["is_profile_claimable"])
+            self.assertEqual(silver["target_value"], 3000)
+            self.assertFalse(silver["is_profile_claimable"])
+        finally:
+            db.close()
+
+    def test_reward_redemption_achievements_count_only_approved_redemptions(self) -> None:
+        db, family, user = self._create_family_and_user()
+        try:
+            ensure_achievement_catalog(db)
+            reward = Reward(
+                family_id=family.id,
+                title="Kinobesuch",
+                description=None,
+                cost_points=100,
+                is_shareable=False,
+                is_active=True,
+                created_by_id=user.id,
+            )
+            db.add(reward)
+            db.flush()
+
+            redemptions = [
+                RewardRedemption(
+                    reward_id=reward.id,
+                    requested_by_id=user.id,
+                    status=RedemptionStatusEnum.approved,
+                    reviewed_by_id=user.id,
+                    reviewed_at=datetime.utcnow(),
+                )
+                for _ in range(20)
+            ]
+            redemptions.append(
+                RewardRedemption(
+                    reward_id=reward.id,
+                    requested_by_id=user.id,
+                    status=RedemptionStatusEnum.pending,
+                )
+            )
+            db.add_all(redemptions)
+            db.flush()
+
+            events = evaluate_achievements_for_user(db, family.id, user.id, triggered_by_id=user.id, emit_events=False)
+            db.commit()
+
+            overview = build_achievement_overview(db, family.id, user.id)
+            bronze = next(item for item in overview["items"] if item["key"] == "reward_redeemer_bronze")
+            silver = next(item for item in overview["items"] if item["key"] == "reward_redeemer_silver")
+
+            self.assertEqual(bronze["current_value"], 20)
+            self.assertEqual(bronze["target_value"], 20)
+            self.assertTrue(bronze["is_profile_claimable"])
+            self.assertEqual(bronze["reward_points"], 10)
+            self.assertTrue(any(event.reward_points == 10 for event in events))
+
+            self.assertEqual(silver["current_value"], 20)
+            self.assertEqual(silver["target_value"], 50)
+            self.assertFalse(silver["is_profile_claimable"])
         finally:
             db.close()
 

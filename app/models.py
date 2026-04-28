@@ -447,6 +447,31 @@ class AchievementUnlockEvent(Base):
     displayed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
+class AchievementFamilyCalibration(Base):
+    __tablename__ = "achievement_family_calibrations"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), unique=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    calibrated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    baseline_weekly_points: Mapped[int] = mapped_column(Integer, default=250, nullable=False)
+    observed_weekly_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    configured_weekly_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    effective_weekly_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    point_scale: Mapped[int] = mapped_column(Integer, default=100, nullable=False)
+    sample_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tasks_configured_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    rewards_configured_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    approved_tasks_sample_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    approved_points_sample: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    min_days_required: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
+    min_tasks_required: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    min_rewards_required: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    preview_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
 class AchievementFreezeWindow(Base):
     __tablename__ = "achievement_freeze_windows"
 

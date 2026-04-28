@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.04.28-01 (2026-04-28)
+
+- Achievements: neue Kalibrierung fuer Punkteskalierung und Familien-Baseline hinzugefuegt.
+- Achievements: Katalog, Engine und Testlogik an die neue Kalibrierungslogik angepasst.
+- Hygiene: `.DS_Store` wird jetzt dauerhaft per `.gitignore` ausgeschlossen.
+
 ## v2026.04.25-01 (2026-04-25)
 
 - Achievements: Punktesammler und Schatzkammer auf feste Katalogstufen umgestellt.

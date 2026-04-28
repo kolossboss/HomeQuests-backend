@@ -12,6 +12,7 @@ const state = {
   redemptions: [],
   achievementsOverview: null,
   achievementTargetUserId: null,
+  achievementCalibrationPreview: null,
   achievementCelebration: null,
   achievementActionInFlight: null,
   rewardContributionProgressById: {},
@@ -913,6 +914,9 @@ function achievementIcon(iconKey) {
     vault: "🧰",
     bank: "🏦",
     "piggy-bank": "🐷",
+    "gift-open": "🎁",
+    "gift-spark": "🎁",
+    "diamond-gift": "💎",
   };
   return map[iconKey] || "🏅";
 }
@@ -4612,18 +4616,186 @@ function achievementRuleSummary(item) {
   return "Noch keine Fortschrittsdaten";
 }
 
+function renderAchievementCalibration() {
+  const card = byId("achievement-calibration-card");
+  const manager = byId("achievement-calibration-manager");
+  const preview = byId("achievement-calibration-preview");
+  const status = byId("achievement-calibration-status");
+  if (!card) return;
+  const calibration = state.achievementsOverview?.calibration || {};
+  const ready = calibration.status === "ready";
+  const sampleDays = Number(calibration.sample_days || 0);
+  const minDays = Number(calibration.min_days_required || 14);
+  const tasks = Number(calibration.tasks_configured_count || 0);
+  const minTasks = Number(calibration.min_tasks_required || 10);
+  const rewards = Number(calibration.rewards_configured_count || 0);
+  const minRewards = Number(calibration.min_rewards_required || 5);
+  const dayPercent = Math.min(Math.round((sampleDays / Math.max(minDays, 1)) * 100), 100);
+  const taskPercent = Math.min(Math.round((tasks / Math.max(minTasks, 1)) * 100), 100);
+  const rewardPercent = Math.min(Math.round((rewards / Math.max(minRewards, 1)) * 100), 100);
+  const message = calibration.message || (ready ? "Kalibrierung aktiv." : "Kalibrierung läuft im Hintergrund.");
+  const weekly = Number(calibration.effective_weekly_points || 0);
+  const scale = Number(calibration.point_scale_factor || 1);
+
+  card.innerHTML = `<article class="calibration-panel ${ready ? "is-ready" : "is-pending"}">
+    <div class="calibration-panel-head">
+      <div>
+        <p class="calibration-eyebrow">${ready ? "Aktiv" : "Automatische Startphase"}</p>
+        <h5>${ready ? "Punkte-Erfolge sind kalibriert" : "Kalibrierung läuft"}</h5>
+        <p class="muted">${safeHtmlText(message)}</p>
+      </div>
+      <div class="calibration-scale">
+        <strong>${weekly || "-"}</strong>
+        <span>Punkte/Woche</span>
+      </div>
+    </div>
+    <div class="calibration-meter-grid">
+      ${renderCalibrationMeter("Zeit", sampleDays, minDays, dayPercent)}
+      ${renderCalibrationMeter("Aufgaben", tasks, minTasks, taskPercent)}
+      ${renderCalibrationMeter("Belohnungen", rewards, minRewards, rewardPercent)}
+    </div>
+    <div class="calibration-facts">
+      <span>Faktor: ${scale.toFixed(2)}x</span>
+      <span>Verdiente Punkte im Sample: ${Number(calibration.approved_points_sample || 0)}</span>
+      <span>Bestätigte Aufgaben im Sample: ${Number(calibration.approved_tasks_sample_count || 0)}</span>
+    </div>
+  </article>`;
+
+  toggleHidden("achievement-calibration-manager", !isManagerRole());
+  if (manager && !isManagerRole()) {
+    state.achievementCalibrationPreview = null;
+  }
+  if (status && !status.textContent) {
+    status.textContent = ready
+      ? "Eltern können hier später eine neue Berechnung prüfen, bevor sie übernommen wird."
+      : "Manuelle Übernahme ist möglich, aber empfohlen ist: erst die automatische Kalibrierung abwarten.";
+  }
+  if (preview) renderAchievementCalibrationPreview();
+}
+
+function renderCalibrationMeter(label, current, target, percent) {
+  return `<div class="calibration-meter">
+    <div class="calibration-meter-label"><span>${safeHtmlText(label)}</span><strong>${current}/${target}</strong></div>
+    <div class="calibration-meter-track"><div style="width:${Math.max(0, Math.min(percent, 100))}%;"></div></div>
+  </div>`;
+}
+
+function renderAchievementCalibrationPreview() {
+  const target = byId("achievement-calibration-preview");
+  if (!target) return;
+  const data = state.achievementCalibrationPreview;
+  if (!data) {
+    target.innerHTML = "";
+    return;
+  }
+  const changes = Array.isArray(data.changes) ? data.changes : [];
+  target.innerHTML = `<div class="calibration-preview-card">
+    <h5>Vorher / Nachher</h5>
+    <p class="muted">Vorschau: ${safeHtmlText(data.preview?.message || "Neue Berechnung bereit.")}</p>
+    <div class="calibration-preview-list">
+      ${changes.length ? changes.map((entry) => `<article>
+        <strong>${safeHtmlText(entry.name)}</strong>
+        <span>Ziel: ${entry.current_target} -> ${entry.preview_target}</span>
+        <span>Geschenk: ${entry.current_reward_points} -> ${entry.preview_reward_points} Punkte</span>
+      </article>`).join("") : renderEmptyState("Keine Änderungen", "Die aktuelle Kalibrierung passt bereits gut.")}
+    </div>
+  </div>`;
+}
+
+async function loadAchievementCalibrationPreview() {
+  if (!isManagerRole()) return;
+  const familyId = getSelectedFamilyId();
+  if (!familyId) return;
+  const status = byId("achievement-calibration-status");
+  if (status) status.textContent = "Neue Berechnung wird geprüft...";
+  state.achievementCalibrationPreview = await api(`/families/${familyId}/achievements/calibration/preview`);
+  if (status) status.textContent = "Vorschau geladen. Prüfe die Änderungen, bevor du sie übernimmst.";
+  renderAchievementCalibrationPreview();
+}
+
+async function applyAchievementCalibration() {
+  if (!isManagerRole()) return;
+  const familyId = getSelectedFamilyId();
+  if (!familyId) return;
+  const status = byId("achievement-calibration-status");
+  if (status) status.textContent = "Neue Kalibrierung wird übernommen...";
+  await api(`/families/${familyId}/achievements/calibration/recalculate`, { method: "POST" });
+  state.achievementCalibrationPreview = null;
+  if (status) status.textContent = "Kalibrierung übernommen. Erfolge werden neu geladen.";
+  await loadAchievements();
+}
+
+function freezeDateTimeInputToIso(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function renderAchievementFreezeList() {
   const target = byId("achievement-freeze-list");
+  const status = byId("achievement-freeze-status");
   if (!target) return;
+  toggleHidden("achievement-freeze-section", isChildRole());
+  toggleHidden("achievement-freeze-manager", !isManagerRole());
+  if (isChildRole()) {
+    target.innerHTML = "";
+    if (status) status.textContent = "";
+    return;
+  }
   const freezes = state.achievementsOverview?.freeze_windows || [];
+  const nowMs = Date.now();
   target.innerHTML = freezes.length
     ? freezes
-      .map((entry) => `<article class="achievement-freeze-item">
+      .map((entry) => {
+        const startsMs = new Date(entry.starts_at).getTime();
+        const endsMs = new Date(entry.ends_at).getTime();
+        const active = startsMs <= nowMs && endsMs >= nowMs;
+        return `<article class="achievement-freeze-item ${active ? "is-active" : ""}">
         <strong>${safeHtmlText(entry.reason || "Freeze aktiv")}</strong>
         <p class="muted">${fmtDate(entry.starts_at)} bis ${fmtDate(entry.ends_at)}</p>
-      </article>`)
+        <small>${active ? "Aktiv: Streak-Erfolge sind pausiert." : "Geplant oder abgelaufen."}</small>
+      </article>`;
+      })
       .join("")
-    : renderEmptyState("Kein Freeze aktiv", "Aktuell pausiert kein Urlaub- oder Freeze-Zeitraum eine Streak.");
+    : renderEmptyState("Kein Freeze geplant", "Für dieses Kind ist aktuell kein Freeze-Zeitraum hinterlegt.");
+  if (status && !status.textContent) {
+    status.textContent = state.achievementTargetUserId
+      ? `Ausgewähltes Kind: ${memberName(state.achievementTargetUserId)}`
+      : "Bitte zuerst ein Kind auswählen.";
+  }
+}
+
+async function createAchievementFreezeWindow() {
+  if (!isManagerRole()) return;
+  const familyId = getSelectedFamilyId();
+  const userId = Number(state.achievementTargetUserId || 0);
+  const status = byId("achievement-freeze-status");
+  const startsAt = freezeDateTimeInputToIso(byId("achievement-freeze-start")?.value || "");
+  const endsAt = freezeDateTimeInputToIso(byId("achievement-freeze-end")?.value || "");
+  const reason = (byId("achievement-freeze-reason")?.value || "").trim();
+
+  if (!familyId || !userId) {
+    if (status) status.textContent = "Bitte zuerst ein Kind auswählen.";
+    return;
+  }
+  if (!startsAt || !endsAt || new Date(endsAt) <= new Date(startsAt)) {
+    if (status) status.textContent = "Bitte Start und Ende korrekt ausfüllen. Das Ende muss nach dem Start liegen.";
+    return;
+  }
+
+  if (status) status.textContent = "Freeze wird gespeichert...";
+  await api(`/families/${familyId}/achievements/users/${userId}/freeze-windows`, {
+    method: "POST",
+    body: {
+      starts_at: startsAt,
+      ends_at: endsAt,
+      reason: reason || "Freeze / Urlaub",
+      scope: "streaks",
+    },
+  });
+  if (byId("achievement-freeze-reason")) byId("achievement-freeze-reason").value = "";
+  if (status) status.textContent = "Freeze gespeichert. Streak-Erfolge werden in diesem Zeitraum pausiert.";
+  await loadAchievements();
 }
 
 function renderAchievementCards() {
@@ -4774,6 +4946,7 @@ function renderAchievements() {
     if (unlockedCount) unlockedCount.textContent = "0";
     if (lockedCount) lockedCount.textContent = "0";
     if (lastReward) lastReward.textContent = "-";
+    renderAchievementCalibration();
     renderAchievementFreezeList();
     renderAchievementCards();
     renderChildAchievementFocus();
@@ -4788,6 +4961,7 @@ function renderAchievements() {
   if (unlockedCount) unlockedCount.textContent = String(overview.unclaimed_count || 0);
   if (lockedCount) lockedCount.textContent = String(overview.reward_pending_count || 0);
   if (lastReward) lastReward.textContent = String(profileCount);
+  renderAchievementCalibration();
   renderAchievementFreezeList();
   renderAchievementCards();
   renderChildAchievementFocus();
@@ -6219,6 +6393,8 @@ async function refreshSession() {
 }
 
 async function login() {
+  if (state.uiLoading) return;
+  setUiLoading(true);
   clearInvalid(["login-email", "login-password"]);
   clearAuthStatus();
   const loginInput = byId("login-email");
@@ -6240,16 +6416,23 @@ async function login() {
     showUiStatus("error", "Bitte Login und Passwort eingeben.");
     showAuthStatus("Bitte Username/E-Mail und Passwort eingeben.");
     log("Login: Bitte Pflichtfelder korrekt ausfuellen");
+    setUiLoading(false);
     return;
   }
 
-  await api("/auth/login", { method: "POST", body: { login: loginValue, password } });
-  clearAuthStatus();
-  await refreshSession();
-  showUiStatus("success", "Erfolgreich angemeldet.");
+  try {
+    await api("/auth/login", { method: "POST", body: { login: loginValue, password } });
+    clearAuthStatus();
+    await refreshSession();
+    showUiStatus("success", "Erfolgreich angemeldet.");
+  } finally {
+    setUiLoading(false);
+  }
 }
 
 async function bootstrap() {
+  if (state.uiLoading) return;
+  setUiLoading(true);
   clearInvalid(["boot-name", "boot-email", "boot-password", "boot-password-confirm"]);
   clearAuthStatus();
   const nameInput = byId("boot-name");
@@ -6288,17 +6471,22 @@ async function bootstrap() {
     showUiStatus("error", "Bitte die Initialisierungseingaben prüfen.");
     showAuthStatus(validationMessages.join(" • "));
     log("Initialisierung: Bitte Eingaben prüfen", { details: validationMessages });
+    setUiLoading(false);
     return;
   }
 
-  await api("/auth/bootstrap", {
-    method: "POST",
-    body: { display_name, email: email || null, password, password_confirm },
-  });
+  try {
+    await api("/auth/bootstrap", {
+      method: "POST",
+      body: { display_name, email: email || null, password, password_confirm },
+    });
 
-  clearAuthStatus();
-  await refreshSession();
-  showUiStatus("success", "Initialisierung abgeschlossen.");
+    clearAuthStatus();
+    await refreshSession();
+    showUiStatus("success", "Initialisierung abgeschlossen.");
+  } finally {
+    setUiLoading(false);
+  }
 }
 
 async function logout() {
@@ -7452,6 +7640,59 @@ if (achievementUserSelect) {
   achievementUserSelect.addEventListener("change", async (event) => {
     state.achievementTargetUserId = Number(event.target.value || 0) || null;
     await loadAchievements();
+  });
+}
+const achievementFreezeCreateBtn = byId("achievement-freeze-create-btn");
+if (achievementFreezeCreateBtn) {
+  achievementFreezeCreateBtn.addEventListener("click", async () => {
+    achievementFreezeCreateBtn.disabled = true;
+    achievementFreezeCreateBtn.setAttribute("aria-busy", "true");
+    try {
+      await createAchievementFreezeWindow();
+    } catch (error) {
+      const status = byId("achievement-freeze-status");
+      if (status) status.textContent = error.message || "Freeze konnte nicht gespeichert werden.";
+      log("Achievement Freeze speichern Fehler", { error: error.message });
+    } finally {
+      achievementFreezeCreateBtn.disabled = false;
+      achievementFreezeCreateBtn.removeAttribute("aria-busy");
+    }
+  });
+}
+const achievementCalibrationPreviewBtn = byId("achievement-calibration-preview-btn");
+if (achievementCalibrationPreviewBtn) {
+  achievementCalibrationPreviewBtn.addEventListener("click", async () => {
+    achievementCalibrationPreviewBtn.disabled = true;
+    achievementCalibrationPreviewBtn.setAttribute("aria-busy", "true");
+    try {
+      await loadAchievementCalibrationPreview();
+    } catch (error) {
+      const status = byId("achievement-calibration-status");
+      if (status) status.textContent = error.message || "Vorschau konnte nicht geladen werden.";
+      log("Achievement Kalibrierung Vorschau Fehler", { error: error.message });
+    } finally {
+      achievementCalibrationPreviewBtn.disabled = false;
+      achievementCalibrationPreviewBtn.removeAttribute("aria-busy");
+    }
+  });
+}
+const achievementCalibrationApplyBtn = byId("achievement-calibration-apply-btn");
+if (achievementCalibrationApplyBtn) {
+  achievementCalibrationApplyBtn.addEventListener("click", async () => {
+    const confirmed = window.confirm("Neue Punkte-Kalibrierung übernehmen?\n\nBereits freigeschaltete Erfolge bleiben erhalten. Laufende Punkte-Erfolge bekommen neue Zielwerte.");
+    if (!confirmed) return;
+    achievementCalibrationApplyBtn.disabled = true;
+    achievementCalibrationApplyBtn.setAttribute("aria-busy", "true");
+    try {
+      await applyAchievementCalibration();
+    } catch (error) {
+      const status = byId("achievement-calibration-status");
+      if (status) status.textContent = error.message || "Kalibrierung konnte nicht übernommen werden.";
+      log("Achievement Kalibrierung übernehmen Fehler", { error: error.message });
+    } finally {
+      achievementCalibrationApplyBtn.disabled = false;
+      achievementCalibrationApplyBtn.removeAttribute("aria-busy");
+    }
   });
 }
 document.querySelectorAll(".achievement-board").forEach((board) => {

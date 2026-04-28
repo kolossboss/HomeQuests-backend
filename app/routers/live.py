@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,7 @@ from ..rbac import get_membership_or_403
 from ..services import parse_live_payload
 
 router = APIRouter(tags=["live"])
+logger = logging.getLogger(__name__)
 
 
 def _parse_last_event_id(last_event_id: str | None) -> int:
@@ -86,6 +88,13 @@ async def stream_family_updates(
     last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
 ):
     token, token_source, token_conflict = _extract_bearer_token(authorization, access_token, fp_token)
+    if token_conflict:
+        # Ambige Auth-Zustände (Header/Cookie/Query mit unterschiedlichen Tokens) strikt ablehnen.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Widersprüchliche Auth-Tokens übermittelt",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     with SessionLocal() as auth_db:
         current_user: User = get_current_user_from_token_value(token, auth_db)
         get_membership_or_403(auth_db, family_id, current_user.id)
@@ -110,18 +119,31 @@ async def stream_family_updates(
                 break
 
             with SessionLocal() as stream_db:
-                events = (
-                    stream_db.query(LiveUpdateEvent)
-                    .filter(LiveUpdateEvent.family_id == family_id, LiveUpdateEvent.id > cursor)
-                    .order_by(LiveUpdateEvent.id.asc())
-                    .limit(200)
-                    .all()
-                )
+                try:
+                    events = (
+                        stream_db.query(LiveUpdateEvent)
+                        .filter(LiveUpdateEvent.family_id == family_id, LiveUpdateEvent.id > cursor)
+                        .order_by(LiveUpdateEvent.id.asc())
+                        .limit(200)
+                        .all()
+                    )
+                except Exception:
+                    logger.exception("Live-Stream DB-Abfrage fehlgeschlagen (family_id=%s)", family_id)
+                    await asyncio.sleep(1.0)
+                    continue
 
             if events:
                 for event in events:
                     cursor = event.id
-                    parsed_payload = parse_live_payload(event.payload_json)
+                    try:
+                        parsed_payload = parse_live_payload(event.payload_json)
+                    except Exception:
+                        logger.exception(
+                            "Live-Stream Payload parsing fehlgeschlagen (family_id=%s, event_id=%s)",
+                            family_id,
+                            event.id,
+                        )
+                        parsed_payload = {}
                     if event.event_type == "notification.test":
                         recipient_user_ids = parsed_payload.get("recipient_user_ids")
                         if isinstance(recipient_user_ids, list):

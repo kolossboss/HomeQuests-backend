@@ -186,6 +186,31 @@ def _treasure_chamber_seeds() -> list[AchievementSeed]:
     ]
 
 
+def _reward_redemption_seeds() -> list[AchievementSeed]:
+    tiers = [
+        ("reward_redeemer_bronze", "Wunsch-Einlöser Bronze", AchievementDifficultyEnum.bronze, 20, 10, "gift-open", 4010),
+        ("reward_redeemer_silver", "Wunsch-Einlöser Silber", AchievementDifficultyEnum.silver, 50, 20, "gift-open", 4020),
+        ("reward_redeemer_gold", "Wunsch-Einlöser Gold", AchievementDifficultyEnum.gold, 100, 50, "gift-spark", 4030),
+        ("reward_redeemer_diamond", "Wunsch-Einlöser Diamant", AchievementDifficultyEnum.diamond, 200, 100, "diamond-gift", 4040),
+    ]
+    return [
+        _aggregate_seed(
+            key=key,
+            name=name,
+            description=f"Löse {target} von Eltern bestätigte Belohnungen ein.",
+            category="belohnungen",
+            icon_key=icon_key,
+            difficulty=difficulty,
+            metric="approved_reward_redemptions_total",
+            target=target,
+            teaser=f"{target} eingelöste Belohnungen",
+            sort_order=sort_order,
+            reward_points=reward_points,
+        )
+        for key, name, difficulty, target, reward_points, icon_key, sort_order in tiers
+    ]
+
+
 ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
     _aggregate_seed(
         key="tasks_10",
@@ -447,7 +472,7 @@ ACHIEVEMENT_CATALOG: list[AchievementSeed] = [
         teaser="6 vollständige Monatszyklen",
         sort_order=360,
     ),
-] + _point_collector_seeds() + _treasure_chamber_seeds() + [
+] + _point_collector_seeds() + _treasure_chamber_seeds() + _reward_redemption_seeds() + [
     _aggregate_seed(
         key="tasks_500",
         name="Hausarbeits-Legende Diamant",

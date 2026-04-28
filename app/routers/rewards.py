@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from ..achievement_engine import evaluate_achievements_for_user
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import (
@@ -605,6 +606,15 @@ def review_redemption(
             family_id=reward.family_id,
             event_type="reward.contribution.updated",
             payload={"reward_id": reward.id, "redemption_id": redemption.id, "status": redemption.status.value},
+        )
+    if redemption.status == RedemptionStatusEnum.approved:
+        evaluate_achievements_for_user(
+            db,
+            family_id=reward.family_id,
+            user_id=redemption.requested_by_id,
+            triggered_by_id=current_user.id,
+            reason="reward_redemption_approved",
+            emit_events=True,
         )
     db.commit()
     db.refresh(redemption)
