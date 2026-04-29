@@ -4623,7 +4623,8 @@ function renderAchievementCalibration() {
   const status = byId("achievement-calibration-status");
   if (!card) return;
   const calibration = state.achievementsOverview?.calibration || {};
-  const ready = calibration.status === "ready";
+  const applied = calibration.status === "applied";
+  const ready = calibration.status === "ready" || applied;
   const sampleDays = Number(calibration.sample_days || 0);
   const minDays = Number(calibration.min_days_required || 14);
   const tasks = Number(calibration.tasks_configured_count || 0);
@@ -4637,11 +4638,11 @@ function renderAchievementCalibration() {
   const weekly = Number(calibration.effective_weekly_points || 0);
   const scale = Number(calibration.point_scale_factor || 1);
 
-  card.innerHTML = `<article class="calibration-panel ${ready ? "is-ready" : "is-pending"}">
+  card.innerHTML = `<article class="calibration-panel ${ready ? "is-ready" : "is-pending"} ${applied ? "is-applied" : ""}">
     <div class="calibration-panel-head">
       <div>
-        <p class="calibration-eyebrow">${ready ? "Aktiv" : "Automatische Startphase"}</p>
-        <h5>${ready ? "Punkte-Erfolge sind kalibriert" : "Kalibrierung läuft"}</h5>
+        <p class="calibration-eyebrow">${applied ? "Aktiv angewendet" : ready ? "Bereit" : "Automatische Startphase"}</p>
+        <h5>${applied ? "Punkte-Erfolge nutzen Familienwerte" : ready ? "Berechnung bereit" : "Kalibrierung läuft"}</h5>
         <p class="muted">${safeHtmlText(message)}</p>
       </div>
       <div class="calibration-scale">
@@ -4666,8 +4667,10 @@ function renderAchievementCalibration() {
     state.achievementCalibrationPreview = null;
   }
   if (status && !status.textContent) {
-    status.textContent = ready
-      ? "Eltern können hier später eine neue Berechnung prüfen, bevor sie übernommen wird."
+    status.textContent = applied
+      ? "Die Familien-Skalierung ist aktiv. Du kannst eine neue Berechnung prüfen, bevor du sie erneut übernimmst."
+      : ready
+        ? "Die Berechnung ist bereit. Originalwerte bleiben aktiv, bis Eltern die Skalierung bewusst übernehmen."
       : "Manuelle Übernahme ist möglich, aber empfohlen ist: erst die automatische Kalibrierung abwarten.";
   }
   if (preview) renderAchievementCalibrationPreview();

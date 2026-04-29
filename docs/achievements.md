@@ -54,7 +54,7 @@ Die Kalibrierung läuft automatisch im Hintergrund, sobald Erfolge geladen oder 
 - mindestens 5 aktive Belohnungen
 - eine berechenbare Wochenrate aus Punktehistorie oder aktiver Aufgaben-/Sonderaufgaben-Konfiguration
 
-Solange die Kalibrierung läuft, bleiben Punkte-Erfolge sichtbar, aber sie werden nicht freigeschaltet. `AchievementOverviewOut.calibration` und `item.progress_payload.calibration` erklären, was noch fehlt und wie lange es ungefähr dauert.
+Solange die Kalibrierung läuft, bleiben Punkte-Erfolge sichtbar, aber sie werden nicht freigeschaltet. Sobald die automatische Berechnung bereit ist, bleiben trotzdem die ursprünglichen Katalogwerte aktiv. Eine Skalierung wird erst angewendet, wenn Eltern/Admins sie bewusst über die manuelle Übernahme aktivieren. `AchievementOverviewOut.calibration` und `item.progress_payload.calibration` erklären, was noch fehlt bzw. ob die Berechnung nur bereit oder wirklich angewendet ist.
 
 Berechnung:
 
@@ -63,7 +63,7 @@ Berechnung:
 - Effektive Wochenrate: Historie zählt stärker als Konfiguration; wenn nur eine Quelle vorhanden ist, wird diese genutzt.
 - Skalierungsfaktor: `effective_weekly_points / 250`, begrenzt auf sinnvolle Grenzen.
 
-Punktbasierte Erfolge über `earned_points_total` und `current_points_balance` nutzen diesen Faktor für Zielwerte und Punkte-Geschenke. Aufgaben-, Streak-, Sonderaufgaben- und Belohnungsanzahl-Erfolge bleiben unverändert.
+Punktbasierte Erfolge über `earned_points_total` und `current_points_balance` können diesen Faktor für Zielwerte und Punkte-Geschenke nutzen, aber nur wenn die Kalibrierung den Status `applied` hat. Im automatischen Status `ready` werden weiterhin die ursprünglichen Werte verwendet. Aufgaben-, Streak-, Sonderaufgaben- und Belohnungsanzahl-Erfolge bleiben unverändert.
 
 Eltern/Admins können zusätzlich eine manuelle Neuberechnung anstoßen:
 

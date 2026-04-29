@@ -293,7 +293,7 @@ class AchievementEngineTests(unittest.TestCase):
         finally:
             db.close()
 
-    def test_ready_calibration_scales_point_targets_and_rewards(self) -> None:
+    def test_ready_calibration_keeps_original_targets_until_applied(self) -> None:
         db, family, user = self._create_family_and_user()
         try:
             ensure_achievement_catalog(db)
@@ -317,6 +317,57 @@ class AchievementEngineTests(unittest.TestCase):
                     min_tasks_required=10,
                     min_rewards_required=5,
                     preview_payload={"status": "ready", "message": "Skalierte Test-Kalibrierung aktiv."},
+                )
+            )
+            db.add(
+                PointsLedger(
+                    family_id=family.id,
+                    user_id=user.id,
+                    source_type=PointsSourceEnum.task_approval,
+                    source_id=1,
+                    points_delta=1000,
+                    description="Skalierte Punkte",
+                    created_by_id=user.id,
+                )
+            )
+            db.flush()
+
+            overview = build_achievement_overview(db, family.id, user.id)
+            bronze = next(item for item in overview["items"] if item["key"] == "point_collector_bronze")
+            silver = next(item for item in overview["items"] if item["key"] == "point_collector_silver")
+
+            self.assertEqual(bronze["target_value"], 500)
+            self.assertEqual(bronze["reward_points"], 20)
+            self.assertTrue(bronze["is_profile_claimable"])
+            self.assertEqual(silver["target_value"], 1500)
+            self.assertFalse(silver["is_profile_claimable"])
+        finally:
+            db.close()
+
+    def test_applied_calibration_scales_point_targets_and_rewards(self) -> None:
+        db, family, user = self._create_family_and_user()
+        try:
+            ensure_achievement_catalog(db)
+            db.add(
+                AchievementFamilyCalibration(
+                    family_id=family.id,
+                    status="applied",
+                    started_at=datetime.utcnow() - timedelta(days=14),
+                    calibrated_at=datetime.utcnow(),
+                    baseline_weekly_points=250,
+                    observed_weekly_points=500,
+                    configured_weekly_points=500,
+                    effective_weekly_points=500,
+                    point_scale=200,
+                    sample_days=14,
+                    tasks_configured_count=10,
+                    rewards_configured_count=5,
+                    approved_tasks_sample_count=10,
+                    approved_points_sample=1000,
+                    min_days_required=14,
+                    min_tasks_required=10,
+                    min_rewards_required=5,
+                    preview_payload={"status": "applied", "message": "Skalierte Test-Kalibrierung angewendet."},
                 )
             )
             db.add(
