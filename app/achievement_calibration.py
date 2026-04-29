@@ -53,7 +53,7 @@ def ensure_family_achievement_calibration(
 ) -> AchievementFamilyCalibration:
     now = now or datetime.utcnow()
     calibration = _get_or_create_calibration(db, family_id, now)
-    if calibration.status == "ready":
+    if calibration.status in {"ready", "applied"}:
         return calibration
 
     computation = compute_family_achievement_calibration(db, family_id, calibration.started_at, now=now)
@@ -94,9 +94,15 @@ def apply_family_achievement_recalibration(
     now = now or datetime.utcnow()
     calibration = _get_or_create_calibration(db, family_id, now)
     computation = compute_family_achievement_calibration(db, family_id, calibration.started_at, now=now, force_ready=True)
-    calibration.status = "ready"
+    calibration.status = "applied"
     calibration.calibrated_at = now
     _copy_computation_to_row(calibration, computation)
+    calibration.preview_payload = dict(calibration.preview_payload or {})
+    calibration.preview_payload["status"] = "applied"
+    calibration.preview_payload["message"] = (
+        f"Kalibrierung angewendet: ca. {calibration.effective_weekly_points} Punkte pro Woche, "
+        f"Faktor {calibration.point_scale / 100:.2f}x."
+    )
     db.flush()
     return calibration
 
@@ -164,17 +170,21 @@ def is_point_scaled_metric(metric: str) -> bool:
 
 
 def is_calibration_ready(calibration: AchievementFamilyCalibration | None) -> bool:
-    return bool(calibration and calibration.status == "ready")
+    return bool(calibration and calibration.status in {"ready", "applied"})
+
+
+def is_calibration_applied(calibration: AchievementFamilyCalibration | None) -> bool:
+    return bool(calibration and calibration.status == "applied")
 
 
 def scaled_achievement_target(base_target: int, calibration: AchievementFamilyCalibration | None, metric: str) -> int:
-    if not is_point_scaled_metric(metric) or not is_calibration_ready(calibration):
+    if not is_point_scaled_metric(metric) or not is_calibration_applied(calibration):
         return int(base_target)
     return max(_round_nice(int(base_target) * calibration.point_scale / 100), 1)
 
 
 def scaled_achievement_reward(base_reward_points: int, calibration: AchievementFamilyCalibration | None, metric: str) -> int:
-    if not is_point_scaled_metric(metric) or not is_calibration_ready(calibration):
+    if not is_point_scaled_metric(metric) or not is_calibration_applied(calibration):
         return int(base_reward_points)
     return max(_round_reward(int(base_reward_points) * calibration.point_scale / 100), 0)
 
@@ -343,7 +353,9 @@ def _build_progress_payload(
     missing_tasks = max(CALIBRATION_MIN_TASKS - tasks_configured_count, 0)
     missing_rewards = max(CALIBRATION_MIN_REWARDS - rewards_configured_count, 0)
     if status == "ready":
-        message = f"Kalibrierung aktiv: ca. {effective_weekly_points} Punkte pro Woche, Faktor {point_scale / 100:.2f}x."
+        message = f"Kalibrierung bereit: ca. {effective_weekly_points} Punkte pro Woche, Faktor {point_scale / 100:.2f}x. Originalwerte bleiben aktiv, bis Eltern die Skalierung übernehmen."
+    elif status == "applied":
+        message = f"Kalibrierung angewendet: ca. {effective_weekly_points} Punkte pro Woche, Faktor {point_scale / 100:.2f}x."
     else:
         parts = []
         if missing_days:
@@ -375,6 +387,16 @@ def _build_progress_payload(
 
 def _calibration_payload(calibration: AchievementFamilyCalibration) -> dict:
     payload = dict(calibration.preview_payload or {})
+    if calibration.status == "ready":
+        payload["message"] = (
+            f"Kalibrierung bereit: ca. {calibration.effective_weekly_points} Punkte pro Woche, "
+            f"Faktor {calibration.point_scale / 100:.2f}x. Originalwerte bleiben aktiv."
+        )
+    elif calibration.status == "applied":
+        payload["message"] = (
+            f"Kalibrierung angewendet: ca. {calibration.effective_weekly_points} Punkte pro Woche, "
+            f"Faktor {calibration.point_scale / 100:.2f}x."
+        )
     payload.update(
         {
             "family_id": calibration.family_id,

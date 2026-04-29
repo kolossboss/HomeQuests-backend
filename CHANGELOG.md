@@ -1,5 +1,11 @@
 # Changelog
 
+## v2026.04.29-01 (2026-04-29)
+
+- Achievements: Kalibrierung kann jetzt erst als bereit berechnet und dann bewusst angewendet werden.
+- Achievements: Punkte-Skalierung greift nur noch im Status `applied`, waehrend `ready` die Originalwerte laesst.
+- UI/Test/Doku: Kalibrierungs-Panel, Erklaerungstexte und Tests an den neuen Status angepasst.
+
 ## v2026.04.28-01 (2026-04-28)
 
 - Achievements: neue Kalibrierung fuer Punkteskalierung und Familien-Baseline hinzugefuegt.
