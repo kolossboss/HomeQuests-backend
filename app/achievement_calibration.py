@@ -16,6 +16,7 @@ from .models import (
     Reward,
     SpecialTaskTemplate,
     Task,
+    TaskStatusEnum,
 )
 
 CALIBRATION_MIN_DAYS = 14
@@ -26,6 +27,10 @@ MIN_POINT_SCALE = 35
 MAX_POINT_SCALE = 800
 HISTORICAL_SAMPLE_DAYS = 56
 SCALABLE_POINT_METRICS = {"earned_points_total", "current_points_balance"}
+CONFIGURED_TASK_STATUSES = {
+    TaskStatusEnum.open.value,
+    TaskStatusEnum.submitted.value,
+}
 
 
 @dataclass(frozen=True)
@@ -53,7 +58,7 @@ def ensure_family_achievement_calibration(
 ) -> AchievementFamilyCalibration:
     now = now or datetime.utcnow()
     calibration = _get_or_create_calibration(db, family_id, now)
-    if calibration.status in {"ready", "applied"}:
+    if calibration.status == "applied":
         return calibration
 
     computation = compute_family_achievement_calibration(db, family_id, calibration.started_at, now=now)
@@ -79,7 +84,7 @@ def preview_family_achievement_calibration(db: Session, family_id: int, *, now: 
         "preview": _computation_payload(computation),
         "changes": _build_scaled_achievement_preview(
             db,
-            current_scale=calibration.point_scale,
+            current_scale=calibration.point_scale if is_calibration_applied(calibration) else 100,
             preview_scale=computation.point_scale,
         ),
     }
@@ -241,12 +246,7 @@ def _copy_computation_to_row(row: AchievementFamilyCalibration, computation: Cal
 
 
 def _active_task_count(db: Session, family_id: int) -> int:
-    return int(
-        db.query(func.count(Task.id))
-        .filter(Task.family_id == family_id, Task.is_active == True)  # noqa: E712
-        .scalar()
-        or 0
-    )
+    return len(_configured_task_candidates(db, family_id))
 
 
 def _active_reward_count(db: Session, family_id: int) -> int:
@@ -288,16 +288,7 @@ def _approved_tasks_sample_count(db: Session, family_id: int, sample_start: date
 
 def _configured_weekly_points(db: Session, family_id: int) -> int:
     total = 0.0
-    tasks = (
-        db.query(Task)
-        .filter(
-            Task.family_id == family_id,
-            Task.is_active == True,  # noqa: E712
-            Task.special_template_id.is_(None),
-        )
-        .all()
-    )
-    for task in tasks:
+    for task in _configured_task_candidates(db, family_id):
         total += _weekly_points_for_recurrence(
             int(task.points or 0),
             str(task.recurrence_type or RecurrenceTypeEnum.none.value),
@@ -321,6 +312,36 @@ def _configured_weekly_points(db: Session, family_id: int) -> int:
     return int(round(total))
 
 
+def _configured_task_candidates(db: Session, family_id: int) -> list[Task]:
+    tasks = (
+        db.query(Task)
+        .filter(
+            Task.family_id == family_id,
+            Task.is_active == True,  # noqa: E712
+            Task.special_template_id.is_(None),
+        )
+        .all()
+    )
+    latest_by_key: dict[str, Task] = {}
+    for task in tasks:
+        status = _task_status_value(task.status)
+        if status not in CONFIGURED_TASK_STATUSES:
+            continue
+        recurrence = str(task.recurrence_type or RecurrenceTypeEnum.none.value)
+        if recurrence == RecurrenceTypeEnum.none.value:
+            key = f"task:{task.id}"
+        else:
+            key = f"series:{task.series_id or task.id}"
+        current = latest_by_key.get(key)
+        if current is None or _task_sort_time(task) > _task_sort_time(current):
+            latest_by_key[key] = task
+    return list(latest_by_key.values())
+
+
+def _task_sort_time(task: Task) -> datetime:
+    return task.due_at or task.updated_at or task.created_at
+
+
 def _weekly_points_for_recurrence(points: int, recurrence: str, active_weekdays: list[int]) -> float:
     if points <= 0:
         return 0.0
@@ -332,6 +353,12 @@ def _weekly_points_for_recurrence(points: int, recurrence: str, active_weekdays:
     if recurrence == "monthly":
         return float(points) / 4.345
     return 0.0
+
+
+def _task_status_value(value) -> str:
+    if hasattr(value, "value"):
+        return str(value.value)
+    return str(value or "")
 
 
 def _effective_weekly_points(observed_weekly_points: int, configured_weekly_points: int) -> int:

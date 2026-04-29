@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.achievement_calibration import preview_family_achievement_calibration
 from app.achievement_engine import (
     build_achievement_overview,
     claim_achievement_profile,
@@ -341,6 +342,77 @@ class AchievementEngineTests(unittest.TestCase):
             self.assertTrue(bronze["is_profile_claimable"])
             self.assertEqual(silver["target_value"], 1500)
             self.assertFalse(silver["is_profile_claimable"])
+        finally:
+            db.close()
+
+    def test_ready_calibration_preview_compares_original_to_scaled_values(self) -> None:
+        db, family, user = self._create_family_and_user()
+        try:
+            ensure_achievement_catalog(db)
+            db.add(
+                AchievementFamilyCalibration(
+                    family_id=family.id,
+                    status="ready",
+                    started_at=datetime.utcnow() - timedelta(days=14),
+                    calibrated_at=datetime.utcnow(),
+                    baseline_weekly_points=250,
+                    observed_weekly_points=500,
+                    configured_weekly_points=500,
+                    effective_weekly_points=500,
+                    point_scale=200,
+                    sample_days=14,
+                    tasks_configured_count=10,
+                    rewards_configured_count=5,
+                    approved_tasks_sample_count=10,
+                    approved_points_sample=1000,
+                    min_days_required=14,
+                    min_tasks_required=10,
+                    min_rewards_required=5,
+                    preview_payload={"status": "ready", "message": "Bereit, aber nicht angewendet."},
+                )
+            )
+            for index in range(10):
+                db.add(
+                    Task(
+                        family_id=family.id,
+                        title=f"Wöchentliche Aufgabe {index}",
+                        description=None,
+                        assignee_id=user.id,
+                        due_at=datetime.utcnow(),
+                        points=50,
+                        reminder_offsets_minutes=[],
+                        active_weekdays=[],
+                        recurrence_type="weekly",
+                        series_id=f"series-{index}",
+                        always_submittable=False,
+                        penalty_enabled=False,
+                        penalty_points=0,
+                        special_template_id=None,
+                        is_active=True,
+                        status="open",
+                        created_by_id=user.id,
+                    )
+                )
+            for index in range(5):
+                db.add(
+                    Reward(
+                        family_id=family.id,
+                        title=f"Belohnung {index}",
+                        description=None,
+                        cost_points=100,
+                        is_shareable=False,
+                        is_active=True,
+                        created_by_id=user.id,
+                    )
+                )
+            db.flush()
+
+            preview = preview_family_achievement_calibration(db, family.id)
+            bronze = next(entry for entry in preview["changes"] if entry["achievement_key"] == "point_collector_bronze")
+            self.assertEqual(bronze["current_target"], 500)
+            self.assertEqual(bronze["current_reward_points"], 20)
+            self.assertEqual(bronze["preview_target"], 1000)
+            self.assertEqual(bronze["preview_reward_points"], 40)
         finally:
             db.close()
 
