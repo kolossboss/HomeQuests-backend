@@ -6,7 +6,7 @@ from datetime import datetime
 from pydantic import ValidationError
 
 from app.models import RecurrenceTypeEnum, Task
-from app.routers.tasks import _next_cycle_boundary, _next_due
+from app.routers.tasks import _next_cycle_boundary, _next_due, _task_is_overdue
 from app.schemas import TaskCreate
 
 
@@ -52,6 +52,11 @@ class TaskLogicTests(unittest.TestCase):
         )
         boundary = _next_cycle_boundary(task)
         self.assertEqual(boundary, datetime(2026, 3, 23, 0, 0, 0))
+
+    def test_overdue_check_uses_task_wall_clock(self) -> None:
+        task = Task(due_at=datetime(2026, 5, 19, 18, 0, 0))
+        self.assertTrue(_task_is_overdue(task, now=datetime(2026, 5, 19, 18, 30, 0)))
+        self.assertFalse(_task_is_overdue(task, now=datetime(2026, 5, 19, 17, 30, 0)))
 
 
 if __name__ == "__main__":

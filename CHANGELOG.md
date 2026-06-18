@@ -1,5 +1,12 @@
 # Changelog
 
+## v2026.06.18-01 (2026-06-18)
+
+- Aufgaben/Dashboard: Eltern/Admins koennen jetzt alle verpassten Aufgaben gesammelt bestaetigen oder loeschen.
+- API: neuer Bulk-Endpunkt `POST /families/{family_id}/tasks/missed-review/bulk` fuer `approve` und `delete`.
+- Ereignislog: Sammelaktionen erzeugen `task.missed_review_bulk` mit Aktion, Anzahl und betroffenen Task-IDs.
+- Uebergabe: `UNIFIED_CHANGE_NOTES.md` auf die letzten 10 Change-Bloecke begrenzt und iOS-Hinweis ergaenzt.
+
 ## v2026.04.29-01 (2026-04-29)
 
 - Achievements: Kalibrierung kann jetzt erst als bereit berechnet und dann bewusst angewendet werden.

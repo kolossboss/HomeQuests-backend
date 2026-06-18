@@ -420,6 +420,20 @@ class MissedTaskReviewRequest(BaseModel):
     comment: str | None = None
 
 
+class MissedTaskBulkReviewRequest(BaseModel):
+    action: Literal["delete", "approve"]
+    comment: str | None = None
+
+
+class MissedTaskBulkReviewOut(BaseModel):
+    action: Literal["delete", "approve"]
+    processed_count: int
+    approved_count: int = 0
+    deleted_count: int = 0
+    penalty_applied_total: int = 0
+    task_ids: list[int] = Field(default_factory=list)
+
+
 class TaskReminderOut(BaseModel):
     task_id: int
     title: str

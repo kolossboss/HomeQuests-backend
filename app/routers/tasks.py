@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from ..achievement_engine import evaluate_achievements_for_user, record_task_outcome
+from ..config import settings
 from ..database import engine, get_db
 from ..deps import get_current_user
 from ..models import (
@@ -32,6 +35,8 @@ from ..models import (
 )
 from ..rbac import get_membership_or_403, require_roles
 from ..schemas import (
+    MissedTaskBulkReviewOut,
+    MissedTaskBulkReviewRequest,
     MissedTaskReviewRequest,
     SpecialTaskAvailabilityOut,
     SpecialTaskTemplateCreate,
@@ -52,6 +57,8 @@ FULL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
 TASK_MAINTENANCE_LOCK_BASE = 870100000
 _fallback_maintenance_lock_guard = Lock()
 _fallback_maintenance_locks: dict[int, Lock] = {}
+_task_timezone_cache: ZoneInfo | None = None
+logger = logging.getLogger(__name__)
 
 
 def _as_utc_naive(value: datetime | None) -> datetime | None:
@@ -60,6 +67,40 @@ def _as_utc_naive(value: datetime | None) -> datetime | None:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _task_timezone() -> ZoneInfo:
+    global _task_timezone_cache
+    if _task_timezone_cache is not None:
+        return _task_timezone_cache
+    try:
+        _task_timezone_cache = ZoneInfo(settings.app_timezone)
+    except ZoneInfoNotFoundError:
+        _task_timezone_cache = ZoneInfo("UTC")
+    return _task_timezone_cache
+
+
+def _task_now() -> datetime:
+    # Task due_at values are stored as local wall-clock datetimes from the UI.
+    return datetime.now(_task_timezone()).replace(tzinfo=None)
+
+
+def _stored_utc_timestamp_as_task_local(value: datetime | None) -> datetime | None:
+    normalized = _as_utc_naive(value)
+    if normalized is None:
+        return None
+    return normalized.replace(tzinfo=timezone.utc).astimezone(_task_timezone()).replace(tzinfo=None)
+
+
+def _task_local_as_utc_naive(value: datetime) -> datetime:
+    return value.replace(tzinfo=_task_timezone()).astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _task_is_overdue(task: Task, now: datetime | None = None) -> bool:
+    due = _as_utc_naive(task.due_at)
+    if due is None:
+        return False
+    return due < (now or _task_now())
 
 
 def _new_series_id() -> str:
@@ -108,6 +149,34 @@ def _task_event_payload(task: Task, **extra) -> dict:
     return payload
 
 
+def _emit_task_action_rejected(
+    db: Session,
+    task: Task,
+    *,
+    action: str,
+    actor_user_id: int,
+    reason: str,
+) -> None:
+    try:
+        emit_live_event(
+            db,
+            family_id=task.family_id,
+            event_type="task.action_rejected",
+            payload=_task_event_payload(
+                task,
+                action=action,
+                actor_user_id=actor_user_id,
+                reason=reason,
+                source="server_validation",
+            ),
+            dispatch_notifications=False,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Task-Ablehnungsereignis konnte nicht gespeichert werden")
+
+
 def _add_months(value: datetime, months: int) -> datetime:
     # Simple month-shift with day clamping for shorter months.
     month_index = (value.month - 1) + months
@@ -128,7 +197,7 @@ def _add_months(value: datetime, months: int) -> datetime:
 
 def _next_due(due_at: datetime | None, recurrence_type: str, active_weekdays: list[int] | None = None) -> datetime | None:
     normalized_due = _as_utc_naive(due_at)
-    base = normalized_due or datetime.utcnow()
+    base = normalized_due or _task_now()
     if recurrence_type == RecurrenceTypeEnum.daily.value:
         allowed = sorted(set(active_weekdays or [0, 1, 2, 3, 4, 5, 6]))
         candidate = base + timedelta(days=1)
@@ -148,7 +217,7 @@ def _next_due(due_at: datetime | None, recurrence_type: str, active_weekdays: li
 
 
 def _start_of_week(value: datetime) -> datetime:
-    normalized = _as_utc_naive(value) or datetime.utcnow()
+    normalized = _as_utc_naive(value) or _task_now()
     return normalized.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=normalized.weekday())
 
 
@@ -165,7 +234,7 @@ def _align_due_for_active_task(
     if not due_at or recurrence_type == RecurrenceTypeEnum.none.value:
         return due_at
 
-    now = datetime.utcnow()
+    now = _task_now()
     candidate = due_at
     for _ in range(370):
         if candidate > now:
@@ -188,7 +257,7 @@ def _ensure_assignee_in_family(db: Session, family_id: int, assignee_id: int) ->
 
 
 def _interval_start(interval_type: SpecialTaskIntervalEnum) -> datetime:
-    now = datetime.utcnow()
+    now = _task_now()
     if interval_type == SpecialTaskIntervalEnum.daily:
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     if interval_type == SpecialTaskIntervalEnum.monthly:
@@ -226,7 +295,7 @@ def _parse_due_time_hhmm(value: str | None) -> tuple[int, int] | None:
 
 
 def _special_task_due_at_today(template: SpecialTaskTemplate, now: datetime | None = None) -> datetime | None:
-    now_value = now or datetime.utcnow()
+    now_value = now or _task_now()
     parsed = _parse_due_time_hhmm(template.due_time_hhmm)
     if not parsed:
         return None
@@ -238,7 +307,7 @@ def _special_task_is_available_now(
     template: SpecialTaskTemplate,
     now: datetime | None = None,
 ) -> tuple[bool, str | None]:
-    now_value = now or datetime.utcnow()
+    now_value = now or _task_now()
     if template.interval_type != SpecialTaskIntervalEnum.daily:
         return True, None
 
@@ -297,7 +366,7 @@ def _apply_penalty_for_task(db: Session, task: Task) -> bool:
     if not task.due_at:
         return False
 
-    now = datetime.utcnow()
+    now = _task_now()
     current_due = _as_utc_naive(task.due_at)
     if not current_due:
         return False
@@ -431,7 +500,7 @@ def _block_weekly_flexible_generation_for_current_cycle(
     if key_hash is None:
         return
 
-    now = datetime.utcnow()
+    now = _task_now()
     block_until = _start_of_week(now) + timedelta(days=7)
     _upsert_generation_block(
         db,
@@ -501,7 +570,7 @@ def _deactivate_current_cycle_weekly_flexible_tasks_by_key_hash(
     key_hash: str,
     exclude_task_id: int | None = None,
 ) -> bool:
-    now = datetime.utcnow()
+    now = _task_now()
     week_start = _start_of_week(now)
     week_end = week_start + timedelta(days=7)
     query = (
@@ -512,8 +581,8 @@ def _deactivate_current_cycle_weekly_flexible_tasks_by_key_hash(
             Task.recurrence_type == RecurrenceTypeEnum.weekly.value,
             Task.due_at.is_(None),
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
-            Task.created_at >= week_start,
-            Task.created_at < week_end,
+            Task.created_at >= _task_local_as_utc_naive(week_start),
+            Task.created_at < _task_local_as_utc_naive(week_end),
         )
         .order_by(Task.created_at.desc(), Task.id.desc())
     )
@@ -556,7 +625,7 @@ def _next_daily_due_from_now(reference_due: datetime, active_weekdays: list[int]
 
 
 def _realign_daily_tasks_for_family(db: Session, family_id: int) -> bool:
-    now = datetime.utcnow()
+    now = _task_now()
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today = now.date()
     tomorrow = (now + timedelta(days=1)).date()
@@ -576,7 +645,7 @@ def _realign_daily_tasks_for_family(db: Session, family_id: int) -> bool:
         due = _as_utc_naive(task.due_at)
         if due is None:
             continue
-        created_at = _as_utc_naive(task.created_at)
+        created_at = _stored_utc_timestamp_as_task_local(task.created_at)
         # Keine frisch erzeugten Tages-Folgetasks auf heute zurückziehen.
         if created_at and created_at >= today_start:
             continue
@@ -794,7 +863,7 @@ def _next_cycle_boundary(task: Task) -> datetime | None:
 
 
 def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
-    now = datetime.utcnow()
+    now = _task_now()
     candidates = (
         db.query(Task)
         .filter(
@@ -824,7 +893,7 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
         if due is None:
             if task.recurrence_type != RecurrenceTypeEnum.none.value:
                 continue
-            created = _as_utc_naive(task.created_at)
+            created = _stored_utc_timestamp_as_task_local(task.created_at)
             if created is None:
                 continue
             boundary = created.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -923,7 +992,7 @@ def _create_next_recurring_task(db: Session, source_task: Task, created_by_id: i
 
 
 def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bool:
-    now = datetime.utcnow()
+    now = _task_now()
     now_week_start = _start_of_week(now)
     blocked_hashes = _active_generation_block_hashes(db, family_id, now)
     raw_tasks = (
@@ -951,14 +1020,16 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
         cycle_has_approved: dict[datetime, bool] = {}
         for entry in tasks:
             if entry.is_active and entry.status == TaskStatusEnum.approved:
-                cycle_has_approved[_start_of_week(entry.created_at)] = True
+                entry_created = _stored_utc_timestamp_as_task_local(entry.created_at) or now
+                cycle_has_approved[_start_of_week(entry_created)] = True
 
         for entry in tasks:
             if not entry.is_active:
                 continue
             if entry.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
                 continue
-            if not cycle_has_approved.get(_start_of_week(entry.created_at), False):
+            entry_created = _stored_utc_timestamp_as_task_local(entry.created_at) or now
+            if not cycle_has_approved.get(_start_of_week(entry_created), False):
                 continue
             entry.is_active = False
             db.flush()
@@ -978,7 +1049,7 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
             entry for entry in active_tasks if entry.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}
         ]
         if len(active_open_rejected) >= 2:
-            keeper = max(active_open_rejected, key=lambda entry: (_as_utc_naive(entry.updated_at), entry.id))
+            keeper = max(active_open_rejected, key=lambda entry: (_stored_utc_timestamp_as_task_local(entry.updated_at), entry.id))
             for duplicate in active_open_rejected:
                 if duplicate.id == keeper.id:
                     continue
@@ -998,9 +1069,10 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
         if len(active_tasks) >= 2:
             latest = active_tasks[-1]
             previous = active_tasks[-2]
-            same_cycle = _start_of_week(latest.created_at) == _start_of_week(previous.created_at)
-            previous_updated = _as_utc_naive(previous.updated_at) or _as_utc_naive(previous.created_at) or now
-            latest_created = _as_utc_naive(latest.created_at) or now
+            latest_created = _stored_utc_timestamp_as_task_local(latest.created_at) or now
+            previous_created = _stored_utc_timestamp_as_task_local(previous.created_at) or now
+            same_cycle = _start_of_week(latest_created) == _start_of_week(previous_created)
+            previous_updated = _stored_utc_timestamp_as_task_local(previous.updated_at) or previous_created
             approval_gap = latest_created - previous_updated
             if (
                 same_cycle
@@ -1027,7 +1099,8 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
         key_hash = _recurring_identity_hash(_weekly_flexible_semantic_key(task))
         if key_hash and key_hash in blocked_hashes:
             continue
-        cycle_start = _start_of_week(task.created_at)
+        task_created = _stored_utc_timestamp_as_task_local(task.created_at) or now
+        cycle_start = _start_of_week(task_created)
         if cycle_start >= now_week_start:
             continue
 
@@ -1108,7 +1181,7 @@ def list_upcoming_task_reminders(
     if target_assignee_id is not None:
         query = query.filter(Task.assignee_id == target_assignee_id)
 
-    now = datetime.utcnow()
+    now = _task_now()
     window_end = now + timedelta(minutes=window_minutes)
     reminders: list[TaskReminderOut] = []
     reminder_tasks = _dedupe_recurring_tasks_for_reminders(query.all())
@@ -1247,7 +1320,7 @@ def update_task(
             db,
             family_id=task.family_id,
             key_hash=old_weekly_flexible_hash,
-            block_until=datetime.utcnow() + timedelta(days=3650),
+            block_until=_task_now() + timedelta(days=3650),
             reason="series_replaced",
             created_by_id=current_user.id,
         )
@@ -1476,7 +1549,7 @@ def list_available_special_tasks(
     )
 
     result: list[SpecialTaskAvailabilityOut] = []
-    now = datetime.utcnow()
+    now = _task_now()
     for template in templates:
         used = _special_task_usage_count(db, template.id, template.interval_type)
         remaining = max(template.max_claims_per_interval - used, 0)
@@ -1713,7 +1786,7 @@ def submit_task(
     if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.missed_submitted}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe kann aktuell nicht eingereicht werden")
 
-    now_utc = datetime.utcnow()
+    now_utc = _task_now()
     due_at_utc = _as_utc_naive(task.due_at)
 
     if task.recurrence_type == RecurrenceTypeEnum.daily.value and not task.always_submittable and not was_missed_submission:
@@ -1755,7 +1828,12 @@ def submit_task(
         db,
         family_id=task.family_id,
         event_type="task.submitted",
-        payload={"task_id": task.id, "assignee_id": task.assignee_id},
+        payload={
+            "task_id": task.id,
+            "assignee_id": task.assignee_id,
+            "submitted_by_id": current_user.id,
+            "source": "client_action",
+        },
     )
     db.commit()
     db.refresh(task)
@@ -1775,10 +1853,31 @@ def report_task_missed(
     get_membership_or_403(db, task.family_id, current_user.id)
 
     if task.assignee_id != current_user.id:
+        _emit_task_action_rejected(
+            db,
+            task,
+            action="report_missed",
+            actor_user_id=current_user.id,
+            reason="assignee_mismatch",
+        )
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Nur zugewiesenes Familienmitglied darf melden")
     if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+        _emit_task_action_rejected(
+            db,
+            task,
+            action="report_missed",
+            actor_user_id=current_user.id,
+            reason="invalid_status",
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe kann aktuell nicht als nicht erledigt gemeldet werden")
-    if not task.due_at or task.due_at >= datetime.utcnow():
+    if not _task_is_overdue(task):
+        _emit_task_action_rejected(
+            db,
+            task,
+            action="report_missed",
+            actor_user_id=current_user.id,
+            reason="not_overdue",
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nur überfällige Aufgaben können als nicht erledigt gemeldet werden")
 
     db.add(
@@ -1795,7 +1894,12 @@ def report_task_missed(
         db,
         family_id=task.family_id,
         event_type="task.missed_reported",
-        payload={"task_id": task.id, "assignee_id": task.assignee_id},
+        payload={
+            "task_id": task.id,
+            "assignee_id": task.assignee_id,
+            "reported_by_id": current_user.id,
+            "source": "client_action",
+        },
     )
     db.commit()
     db.refresh(task)
@@ -1888,20 +1992,15 @@ def review_task(
     return task
 
 
-@router.post("/tasks/{task_id}/missed-review")
-def review_missed_task(
-    task_id: int,
-    payload: MissedTaskReviewRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    task = db.query(Task).filter(Task.id == task_id).first()
-    if not task:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
-
-    membership_context = get_membership_or_403(db, task.family_id, current_user.id)
-    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
-
+def _review_missed_task_in_session(
+    db: Session,
+    task: Task,
+    *,
+    action: str,
+    comment: str | None,
+    reviewer_id: int,
+    evaluate_now: bool = True,
+) -> dict:
     if task.status != TaskStatusEnum.missed_submitted:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe wartet nicht auf Nicht-erledigt-Prüfung")
 
@@ -1913,7 +2012,7 @@ def review_missed_task(
         .order_by(TaskSubmission.submitted_at.desc())
         .first()
     )
-    if payload.action == "approve":
+    if action == "approve":
         if not latest_submission:
             latest_submission = TaskSubmission(
                 task_id=task.id,
@@ -1925,9 +2024,9 @@ def review_missed_task(
 
         approval = TaskApproval(
             submission_id=latest_submission.id,
-            reviewed_by_id=current_user.id,
+            reviewed_by_id=reviewer_id,
             decision=ApprovalDecisionEnum.approved,
-            comment=payload.comment or "Nachträglich bestätigt",
+            comment=comment or "Nachträglich bestätigt",
         )
         db.add(approval)
         db.flush()
@@ -1942,7 +2041,7 @@ def review_missed_task(
                     source_id=approval.id,
                     points_delta=task.points,
                     description=f"Punkte für Aufgabe: {task.title}",
-                    created_by_id=current_user.id,
+                    created_by_id=reviewer_id,
                 )
             )
 
@@ -1955,7 +2054,7 @@ def review_missed_task(
             points_awarded=task.points,
             metadata={"source": "missed_review_approved"},
         )
-        _create_next_recurring_task(db, task, current_user.id)
+        _create_next_recurring_task(db, task, reviewer_id)
         db.flush()
         emit_live_event(
             db,
@@ -1963,19 +2062,18 @@ def review_missed_task(
             event_type="task.reviewed",
             payload={"task_id": task.id, "status": task.status.value, "assignee_id": task.assignee_id},
         )
-        evaluate_achievements_for_user(
-            db,
-            family_id=task.family_id,
-            user_id=task.assignee_id,
-            triggered_by_id=current_user.id,
-            reason="task_approved_missed_review",
-            emit_events=True,
-        )
-        db.commit()
-        db.refresh(task)
+        if evaluate_now:
+            evaluate_achievements_for_user(
+                db,
+                family_id=task.family_id,
+                user_id=task.assignee_id,
+                triggered_by_id=reviewer_id,
+                reason="task_approved_missed_review",
+                emit_events=True,
+            )
         return {"deleted": False, "penalty_applied": 0, "approved": True, "task_id": task.id}
 
-    if payload.action == "penalty":
+    if action == "penalty":
         deduction = task.penalty_points if task.penalty_points > 0 else max(task.points, 0)
         if due_at and task.penalty_last_applied_at and _as_utc_naive(task.penalty_last_applied_at) and _as_utc_naive(task.penalty_last_applied_at) >= due_at:
             deduction = 0
@@ -1988,7 +2086,7 @@ def review_missed_task(
                     source_id=task.id,
                     points_delta=-deduction,
                     description=f"Nicht erledigt: {task.title}",
-                    created_by_id=current_user.id,
+                    created_by_id=reviewer_id,
                 )
             )
             emit_live_event(
@@ -2005,10 +2103,10 @@ def review_missed_task(
         completed_at=_as_utc_naive(latest_submission.submitted_at) if latest_submission else None,
         reviewed_at=datetime.utcnow(),
         points_awarded=0,
-        metadata={"source": "missed_review_penalty", "deduction": deduction},
+        metadata={"source": f"missed_review_{action}", "deduction": deduction},
     )
 
-    _create_next_recurring_task(db, task, current_user.id)
+    _create_next_recurring_task(db, task, reviewer_id)
 
     task_id_value = task.id
     family_id_value = task.family_id
@@ -2021,16 +2119,116 @@ def review_missed_task(
         event_type="task.deleted",
         payload={"task_id": task_id_value, "assignee_id": assignee_id_value},
     )
-    evaluate_achievements_for_user(
+    if evaluate_now:
+        evaluate_achievements_for_user(
+            db,
+            family_id=family_id_value,
+            user_id=assignee_id_value,
+            triggered_by_id=reviewer_id,
+            reason="task_missed_review",
+            emit_events=True,
+        )
+    return {"deleted": True, "penalty_applied": deduction, "task_id": task_id_value, "assignee_id": assignee_id_value}
+
+
+@router.post("/tasks/{task_id}/missed-review")
+def review_missed_task(
+    task_id: int,
+    payload: MissedTaskReviewRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
+
+    membership_context = get_membership_or_403(db, task.family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    result = _review_missed_task_in_session(
         db,
-        family_id=family_id_value,
-        user_id=assignee_id_value,
-        triggered_by_id=current_user.id,
-        reason="task_missed_review",
-        emit_events=True,
+        task,
+        action=payload.action,
+        comment=payload.comment,
+        reviewer_id=current_user.id,
     )
     db.commit()
-    return {"deleted": True, "penalty_applied": deduction}
+    return result
+
+
+@router.post("/families/{family_id}/tasks/missed-review/bulk", response_model=MissedTaskBulkReviewOut)
+def review_all_missed_tasks(
+    family_id: int,
+    payload: MissedTaskBulkReviewRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    membership_context = get_membership_or_403(db, family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    missed_tasks = (
+        db.query(Task)
+        .filter(Task.family_id == family_id, Task.status == TaskStatusEnum.missed_submitted)
+        .order_by(Task.created_at.asc(), Task.id.asc())
+        .all()
+    )
+
+    task_ids: list[int] = []
+    affected_user_ids: set[int] = set()
+    approved_count = 0
+    deleted_count = 0
+    penalty_total = 0
+
+    for task in missed_tasks:
+        affected_user_ids.add(int(task.assignee_id))
+        result = _review_missed_task_in_session(
+            db,
+            task,
+            action=payload.action,
+            comment=payload.comment,
+            reviewer_id=current_user.id,
+            evaluate_now=False,
+        )
+        task_ids.append(int(result.get("task_id") or task.id))
+        if result.get("approved"):
+            approved_count += 1
+        if result.get("deleted"):
+            deleted_count += 1
+        penalty_total += int(result.get("penalty_applied") or 0)
+
+    for user_id in sorted(affected_user_ids):
+        evaluate_achievements_for_user(
+            db,
+            family_id=family_id,
+            user_id=user_id,
+            triggered_by_id=current_user.id,
+            reason=f"task_missed_review_bulk_{payload.action}",
+            emit_events=True,
+        )
+
+    emit_live_event(
+        db,
+        family_id=family_id,
+        event_type="task.missed_review_bulk",
+        payload={
+            "action": payload.action,
+            "processed_count": len(task_ids),
+            "approved_count": approved_count,
+            "deleted_count": deleted_count,
+            "penalty_applied_total": penalty_total,
+            "task_ids": task_ids,
+            "reviewed_by_id": current_user.id,
+        },
+    )
+    db.commit()
+    return MissedTaskBulkReviewOut(
+        action=payload.action,
+        processed_count=len(task_ids),
+        approved_count=approved_count,
+        deleted_count=deleted_count,
+        penalty_applied_total=penalty_total,
+        task_ids=task_ids,
+    )
 
 
 @router.post("/tasks/{task_id}/active", response_model=TaskOut)
