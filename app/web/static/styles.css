@@ -2298,6 +2298,14 @@ tr:last-child td {
   gap: 12px;
 }
 
+.dashboard-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: 0 0 12px;
+}
+
 .request-metrics-grid {
   align-items: stretch;
 }

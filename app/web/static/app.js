@@ -2743,9 +2743,15 @@ function openManagerTaskModal(mode) {
     return;
   }
   if (mode === "missed") {
+    const bulkActions = missedTasks.length
+      ? `<div class="dashboard-bulk-actions">
+          <button type="button" data-dashboard-missed-bulk-action="approve">Alle bestätigen</button>
+          <button type="button" class="btn-danger" data-dashboard-missed-bulk-action="delete">Alle löschen</button>
+        </div>`
+      : "";
     openDashboardDetailModal(
       "Verpasste Aufgaben",
-      `<div class="dashboard-modal-grid">${renderDashboardTaskCards(missedTasks, "Keine verpassten Aufgaben.", { reviewMode: "missed", overdue: true })}</div>`,
+      `${bulkActions}<div class="dashboard-modal-grid">${renderDashboardTaskCards(missedTasks, "Keine verpassten Aufgaben.", { reviewMode: "missed", overdue: true })}</div>`,
       "Entscheidung direkt im Dashboard treffen",
       { type: "manager", view: "missed" }
     );
@@ -4668,9 +4674,9 @@ function renderAchievementCalibration() {
   }
   if (status && !status.textContent) {
     status.textContent = applied
-      ? "Die Familien-Skalierung ist aktiv. Du kannst eine neue Berechnung prüfen, bevor du sie erneut übernimmst."
+        ? "Die Familien-Skalierung ist aktiv. Du kannst eine neue Berechnung prüfen, bevor du sie erneut übernimmst."
       : ready
-        ? "Die Berechnung ist bereit. Originalwerte bleiben aktiv, bis Eltern die Skalierung bewusst übernehmen."
+        ? "Die Berechnung ist bereit. Originalwerte bleiben aktiv, bis Eltern die Skalierung übernehmen."
       : "Manuelle Übernahme ist möglich, aber empfohlen ist: erst die automatische Kalibrierung abwarten.";
   }
   if (preview) renderAchievementCalibrationPreview();
@@ -4687,6 +4693,7 @@ function renderAchievementCalibrationPreview() {
   const target = byId("achievement-calibration-preview");
   if (!target) return;
   const data = state.achievementCalibrationPreview;
+  toggleHidden("achievement-calibration-cancel-btn", !data);
   if (!data) {
     target.innerHTML = "";
     return;
@@ -4703,6 +4710,13 @@ function renderAchievementCalibrationPreview() {
       </article>`).join("") : renderEmptyState("Keine Änderungen", "Die aktuelle Kalibrierung passt bereits gut.")}
     </div>
   </div>`;
+}
+
+function clearAchievementCalibrationPreview(message = "") {
+  state.achievementCalibrationPreview = null;
+  renderAchievementCalibrationPreview();
+  const status = byId("achievement-calibration-status");
+  if (status) status.textContent = message;
 }
 
 async function loadAchievementCalibrationPreview() {
@@ -4943,6 +4957,7 @@ function renderAchievements() {
     byId("achievement-user-select").value = String(state.achievementTargetUserId || "");
   }
   toggleHidden("achievement-user-select-wrap", isChildRole());
+  renderAchievementSelectedChildHint();
 
   if (!overview) {
     if (summaryPill) summaryPill.textContent = "Noch keine Erfolge geladen.";
@@ -4995,6 +5010,31 @@ async function loadAchievements() {
     : `/families/${familyId}/achievements/users/${state.achievementTargetUserId}`;
   state.achievementsOverview = await api(path);
   renderAchievements();
+}
+
+function selectAchievementTargetUser(userId, { switchToAchievements = false } = {}) {
+  const normalizedUserId = Number(userId || 0) || null;
+  if (!normalizedUserId || normalizedUserId === state.achievementTargetUserId) {
+    if (switchToAchievements) switchTab("achievements");
+    renderAchievementSelectedChildHint();
+    return;
+  }
+  state.achievementTargetUserId = normalizedUserId;
+  state.achievementsOverview = null;
+  state.achievementCalibrationPreview = null;
+  const select = byId("achievement-user-select");
+  if (select) select.value = String(normalizedUserId);
+  renderAchievementSelectedChildHint();
+  if (switchToAchievements) switchTab("achievements");
+  loadAchievements().catch((error) => log("Erfolge Kind wechseln Fehler", { error: error.message, user_id: normalizedUserId }));
+}
+
+function renderAchievementSelectedChildHint() {
+  const status = byId("achievement-freeze-status");
+  if (!status || isChildRole()) return;
+  status.textContent = state.achievementTargetUserId
+    ? `Ausgewähltes Kind: ${memberName(state.achievementTargetUserId)}`
+    : "Bitte zuerst ein Kind auswählen.";
 }
 
 function showAchievementUnlockBanner(payload) {
@@ -7420,6 +7460,18 @@ async function reviewMissedTaskRequest(taskId, action) {
   await refreshFamilyData();
 }
 
+async function bulkReviewMissedTaskRequests(action) {
+  if (!isManagerRole()) return null;
+  const familyId = getSelectedFamilyId();
+  if (!familyId) return null;
+  const result = await api(`/families/${familyId}/tasks/missed-review/bulk`, {
+    method: "POST",
+    body: { action, comment: null },
+  });
+  await refreshFamilyData();
+  return result;
+}
+
 async function reviewRedemptionRequest(redemptionId, decision) {
   if (!isManagerRole()) return;
   await api(`/redemptions/${redemptionId}/review`, {
@@ -7556,6 +7608,26 @@ async function handleDashboardReviewClick(event) {
     return true;
   }
 
+  const missedBulkButton = event.target.closest("button[data-dashboard-missed-bulk-action]");
+  if (missedBulkButton) {
+    const action = missedBulkButton.dataset.dashboardMissedBulkAction;
+    if (!action) return true;
+    const missedCount = state.tasks.filter((task) => task.status === "missed_submitted").length;
+    if (missedCount < 1) return true;
+    const message = action === "approve"
+      ? `${missedCount} verpasste Aufgaben wirklich bestätigen?\n\nDie Kinder bekommen die jeweiligen Punkte.`
+      : `${missedCount} verpasste Aufgaben wirklich löschen?\n\nEs werden keine Punkte vergeben oder abgezogen.`;
+    if (!window.confirm(message)) return true;
+    try {
+      const result = await bulkReviewMissedTaskRequests(action);
+      log("Verpasste Aufgaben gesammelt bearbeitet", result || { action });
+      refreshDashboardModalContext();
+    } catch (error) {
+      log("Nicht-erledigt Sammelprüfung Fehler", { error: error.message });
+    }
+    return true;
+  }
+
   const rewardReviewButton = event.target.closest("button[data-dashboard-reward-review-action]");
   if (rewardReviewButton) {
     const redemptionId = Number(rewardReviewButton.dataset.redemptionId);
@@ -7641,8 +7713,7 @@ document.querySelectorAll(".tab").forEach((button) => {
 const achievementUserSelect = byId("achievement-user-select");
 if (achievementUserSelect) {
   achievementUserSelect.addEventListener("change", async (event) => {
-    state.achievementTargetUserId = Number(event.target.value || 0) || null;
-    await loadAchievements();
+    selectAchievementTargetUser(event.target.value);
   });
 }
 const achievementFreezeCreateBtn = byId("achievement-freeze-create-btn");
@@ -7696,6 +7767,12 @@ if (achievementCalibrationApplyBtn) {
       achievementCalibrationApplyBtn.disabled = false;
       achievementCalibrationApplyBtn.removeAttribute("aria-busy");
     }
+  });
+}
+const achievementCalibrationCancelBtn = byId("achievement-calibration-cancel-btn");
+if (achievementCalibrationCancelBtn) {
+  achievementCalibrationCancelBtn.addEventListener("click", () => {
+    clearAchievementCalibrationPreview("Vorschau geschlossen. Es wurde nichts übernommen.");
   });
 }
 document.querySelectorAll(".achievement-board").forEach((board) => {

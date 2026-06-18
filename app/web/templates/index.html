@@ -477,7 +477,8 @@
             <div id="achievement-calibration-manager" class="achievement-calibration-manager">
               <div class="row-wrap">
                 <button id="achievement-calibration-preview-btn" type="button" class="btn-secondary">Neue Berechnung ansehen</button>
-                <button id="achievement-calibration-apply-btn" type="button">Skalierung bewusst übernehmen</button>
+                <button id="achievement-calibration-cancel-btn" type="button" class="btn-secondary hidden">Abbrechen</button>
+                <button id="achievement-calibration-apply-btn" type="button">Skalierung übernehmen</button>
               </div>
               <p id="achievement-calibration-status" class="muted"></p>
               <div id="achievement-calibration-preview" class="achievement-calibration-preview"></div>
@@ -1292,6 +1293,8 @@
                           <option value="100" selected>100</option>
                           <option value="200">200</option>
                           <option value="500">500</option>
+                          <option value="1000">1000</option>
+                          <option value="2000">2000</option>
                         </select>
                       </label>
                       <button id="system-events-refresh-btn" type="button" class="btn-secondary">Neu laden</button>

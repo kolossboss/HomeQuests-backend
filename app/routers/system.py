@@ -557,7 +557,7 @@ def list_system_events(
     membership_context = get_membership_or_403(db, family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
 
-    safe_limit = max(10, min(int(limit), 500))
+    safe_limit = max(10, min(int(limit), 2000))
     rows = (
         db.query(LiveUpdateEvent)
         .filter(LiveUpdateEvent.family_id == family_id)
