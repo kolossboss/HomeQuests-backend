@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     app_name: str = "HomeQuests API"
-    app_version: str = "0.1.0"
+    app_version: str = "2026.07.15"
     app_build_ref: str | None = None
     app_timezone: str = "Europe/Berlin"
     secret_key: str = "change-me-in-production"
     access_token_expire_minutes: int = 60 * 24 * 30
     algorithm: str = "HS256"
     database_url: str = "postgresql+psycopg2://homequests:homequests@db:5432/homequests"
-    cors_allow_origins: list[str] = ["http://localhost:8000", "http://127.0.0.1:8000"]
+    cors_allow_origins: Annotated[list[str], NoDecode] = [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    ]
     auth_cookie_secure: bool = False
     sse_allow_query_token: bool = False
+    login_rate_limit_attempts: int = 8
+    login_rate_limit_window_seconds: int = 300
+    login_rate_limit_block_seconds: int = 600
     penalty_worker_enabled: bool = True
     penalty_worker_interval_seconds: int = 60
     apns_enabled: bool = False
@@ -27,8 +35,8 @@ class Settings(BaseSettings):
     secret_encryption_key: str | None = None
     push_worker_enabled: bool = True
     push_worker_interval_seconds: int = 60
-    db_backup_allowed_dirs: list[str] = ["/tmp/homequests-backups"]
-    db_backup_default_dir: str | None = "/tmp/homequests-backups"
+    db_backup_allowed_dirs: Annotated[list[str], NoDecode] = ["/data/backups"]
+    db_backup_default_dir: str | None = "/data/backups"
     db_backup_timeout_seconds: int = 180
     db_cleanup_max_passes: int = 8
     db_backup_upload_max_bytes: int = 536_870_912
@@ -79,6 +87,20 @@ class Settings(BaseSettings):
     def validate_push_worker_interval_seconds(cls, value: int) -> int:
         if value < 15:
             raise ValueError("PUSH_WORKER_INTERVAL_SECONDS muss mindestens 15 Sekunden sein")
+        return value
+
+    @field_validator("login_rate_limit_attempts")
+    @classmethod
+    def validate_login_rate_limit_attempts(cls, value: int) -> int:
+        if not 3 <= value <= 100:
+            raise ValueError("LOGIN_RATE_LIMIT_ATTEMPTS muss zwischen 3 und 100 liegen")
+        return value
+
+    @field_validator("login_rate_limit_window_seconds", "login_rate_limit_block_seconds")
+    @classmethod
+    def validate_login_rate_limit_seconds(cls, value: int) -> int:
+        if not 30 <= value <= 86_400:
+            raise ValueError("Login-Zeitfenster müssen zwischen 30 und 86400 Sekunden liegen")
         return value
 
     @field_validator("db_backup_allowed_dirs", mode="before")

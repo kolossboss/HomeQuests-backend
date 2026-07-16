@@ -3,14 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 import asyncio
 import logging
+import re
+from uuid import uuid4
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from starlette.requests import Request
 
 from .achievement_engine import ensure_achievement_catalog
@@ -19,6 +22,7 @@ from .database import Base, SessionLocal, engine
 from .maintenance import penalty_worker, push_worker
 from .migrations import run_migrations
 from .notification_dispatcher import start_remote_dispatcher, stop_remote_dispatcher
+from .push_notifications import close_notification_clients
 from .routers import achievements, auth, events, families, live, points, push, rewards, system, tasks
 
 logger = logging.getLogger(__name__)
@@ -62,7 +66,6 @@ async def lifespan(_: FastAPI):
     try:
         yield
     finally:
-        stop_remote_dispatcher()
         if penalty_task is not None:
             penalty_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -71,9 +74,34 @@ async def lifespan(_: FastAPI):
             push_task.cancel()
             with suppress(asyncio.CancelledError):
                 await push_task
+        stop_remote_dispatcher()
+        close_notification_clients()
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+
+
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    supplied = (request.headers.get("x-request-id") or "").strip()
+    request_id = supplied if re.fullmatch(r"[A-Za-z0-9._-]{1,64}", supplied) else uuid4().hex
+    request.state.request_id = request_id
+    try:
+        response = await call_next(request)
+    except Exception:
+        logger.exception(
+            "Unbehandelter API-Fehler (request_id=%s, method=%s, path=%s)",
+            request_id,
+            request.method,
+            request.url.path,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Interner Serverfehler", "request_id": request_id},
+            headers={"X-Request-ID": request_id},
+        )
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 cors_allow_origins = settings.cors_allow_origins or []
 app.add_middleware(
@@ -105,9 +133,21 @@ app.include_router(push.router)
 
 @app.get("/health")
 def healthcheck():
-    return {"status": "ok", "version": settings.app_version}
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "version": settings.app_version, "database": "unavailable"},
+        )
+    return {"status": "ok", "version": settings.app_version, "database": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "app_name": settings.app_name})
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={"app_name": settings.app_name},
+    )

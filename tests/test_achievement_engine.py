@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -31,13 +31,13 @@ from app.models import (
     RedemptionStatusEnum,
     Reward,
     RewardRedemption,
-    RoleEnum,
     SpecialTaskIntervalEnum,
     SpecialTaskTemplate,
     Task,
     User,
 )
 from app.security import hash_password
+from app.time_utils import utc_now_naive
 
 
 class AchievementEngineTests(unittest.TestCase):
@@ -77,8 +77,8 @@ class AchievementEngineTests(unittest.TestCase):
             AchievementFamilyCalibration(
                 family_id=family.id,
                 status="ready",
-                started_at=datetime.utcnow() - timedelta(days=14),
-                calibrated_at=datetime.utcnow(),
+                started_at=utc_now_naive() - timedelta(days=14),
+                calibrated_at=utc_now_naive(),
                 baseline_weekly_points=250,
                 observed_weekly_points=250,
                 configured_weekly_points=250,
@@ -302,8 +302,8 @@ class AchievementEngineTests(unittest.TestCase):
                 AchievementFamilyCalibration(
                     family_id=family.id,
                     status="ready",
-                    started_at=datetime.utcnow() - timedelta(days=14),
-                    calibrated_at=datetime.utcnow(),
+                    started_at=utc_now_naive() - timedelta(days=14),
+                    calibrated_at=utc_now_naive(),
                     baseline_weekly_points=250,
                     observed_weekly_points=500,
                     configured_weekly_points=500,
@@ -353,8 +353,8 @@ class AchievementEngineTests(unittest.TestCase):
                 AchievementFamilyCalibration(
                     family_id=family.id,
                     status="ready",
-                    started_at=datetime.utcnow() - timedelta(days=14),
-                    calibrated_at=datetime.utcnow(),
+                    started_at=utc_now_naive() - timedelta(days=14),
+                    calibrated_at=utc_now_naive(),
                     baseline_weekly_points=250,
                     observed_weekly_points=500,
                     configured_weekly_points=500,
@@ -378,7 +378,7 @@ class AchievementEngineTests(unittest.TestCase):
                         title=f"Wöchentliche Aufgabe {index}",
                         description=None,
                         assignee_id=user.id,
-                        due_at=datetime.utcnow(),
+                        due_at=utc_now_naive(),
                         points=50,
                         reminder_offsets_minutes=[],
                         active_weekdays=[],
@@ -424,8 +424,8 @@ class AchievementEngineTests(unittest.TestCase):
                 AchievementFamilyCalibration(
                     family_id=family.id,
                     status="applied",
-                    started_at=datetime.utcnow() - timedelta(days=14),
-                    calibrated_at=datetime.utcnow(),
+                    started_at=utc_now_naive() - timedelta(days=14),
+                    calibrated_at=utc_now_naive(),
                     baseline_weekly_points=250,
                     observed_weekly_points=500,
                     configured_weekly_points=500,
@@ -489,7 +489,7 @@ class AchievementEngineTests(unittest.TestCase):
                     requested_by_id=user.id,
                     status=RedemptionStatusEnum.approved,
                     reviewed_by_id=user.id,
-                    reviewed_at=datetime.utcnow(),
+                    reviewed_at=utc_now_naive(),
                 )
                 for _ in range(20)
             ]
@@ -526,7 +526,7 @@ class AchievementEngineTests(unittest.TestCase):
         db, family, user = self._create_family_and_user()
         try:
             ensure_achievement_catalog(db)
-            now = datetime.utcnow()
+            now = utc_now_naive()
             current_week_start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=now.weekday())
             previous_week_start = current_week_start - timedelta(days=7)
             older_week_start = current_week_start - timedelta(days=14)
@@ -655,7 +655,7 @@ class AchievementEngineTests(unittest.TestCase):
                 title="Fenster putzen",
                 description=None,
                 assignee_id=user.id,
-                due_at=datetime.utcnow() - timedelta(days=2),
+                due_at=utc_now_naive() - timedelta(days=2),
                 points=15,
                 reminder_offsets_minutes=[],
                 active_weekdays=[],
@@ -673,7 +673,7 @@ class AchievementEngineTests(unittest.TestCase):
                 title="Keller aufräumen",
                 description=None,
                 assignee_id=user.id,
-                due_at=datetime.utcnow() - timedelta(days=1),
+                due_at=utc_now_naive() - timedelta(days=1),
                 points=20,
                 reminder_offsets_minutes=[],
                 active_weekdays=[],
@@ -693,16 +693,16 @@ class AchievementEngineTests(unittest.TestCase):
                 db,
                 task_a,
                 outcome=AchievementTaskOutcomeEnum.approved,
-                completed_at=datetime.utcnow() - timedelta(days=2),
-                reviewed_at=datetime.utcnow() - timedelta(days=2),
+                completed_at=utc_now_naive() - timedelta(days=2),
+                reviewed_at=utc_now_naive() - timedelta(days=2),
                 points_awarded=15,
             )
             record_task_outcome(
                 db,
                 task_b,
                 outcome=AchievementTaskOutcomeEnum.approved,
-                completed_at=datetime.utcnow() - timedelta(days=1),
-                reviewed_at=datetime.utcnow() - timedelta(days=1),
+                completed_at=utc_now_naive() - timedelta(days=1),
+                reviewed_at=utc_now_naive() - timedelta(days=1),
                 points_awarded=20,
             )
 

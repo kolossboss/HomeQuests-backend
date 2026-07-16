@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
@@ -33,6 +33,7 @@ from ..schemas import (
     PointsTrendBucketOut,
 )
 from ..services import emit_live_event, get_points_balance
+from ..time_utils import app_local_now_naive, utc_now_naive, utc_timestamp_to_app_local_naive
 
 router = APIRouter(tags=["points"])
 
@@ -209,6 +210,14 @@ def get_balance(
     if current_user.id != user_id:
         require_roles(context, {RoleEnum.admin, RoleEnum.parent})
 
+    membership = (
+        db.query(FamilyMembership.id)
+        .filter(FamilyMembership.family_id == family_id, FamilyMembership.user_id == user_id)
+        .first()
+    )
+    if membership is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nutzer nicht in der Familie")
+
     return BalanceOut(family_id=family_id, user_id=user_id, balance=get_points_balance(db, family_id, user_id))
 
 
@@ -339,7 +348,7 @@ def get_points_stats(
         .all()
     )
 
-    today = datetime.utcnow().date()
+    today = app_local_now_naive().date()
     activity_rows: list[tuple[date, int, PointsSourceEnum]] = []
     lifetime_earned_points = 0
     lifetime_spent_points = 0
@@ -347,7 +356,8 @@ def get_points_stats(
     first_activity_day: date | None = None
 
     for created_at, points_delta, source_type in ledger_rows:
-        day_value = created_at.date()
+        local_created_at = utc_timestamp_to_app_local_naive(created_at) or created_at
+        day_value = local_created_at.date()
         if first_activity_day is None:
             first_activity_day = day_value
         delta = int(points_delta or 0)
@@ -492,7 +502,7 @@ def get_points_stats(
     return ChildPointsStatsOut(
         family_id=family_id,
         user_id=user_id,
-        generated_at=datetime.utcnow(),
+        generated_at=utc_now_naive(),
         current_points=get_points_balance(db, family_id, user_id),
         lifetime_earned_points=int(lifetime_earned_points),
         lifetime_spent_points=int(lifetime_spent_points),

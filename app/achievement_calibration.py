@@ -18,6 +18,7 @@ from .models import (
     Task,
     TaskStatusEnum,
 )
+from .time_utils import utc_now_naive
 
 CALIBRATION_MIN_DAYS = 14
 CALIBRATION_MIN_TASKS = 10
@@ -56,7 +57,7 @@ def ensure_family_achievement_calibration(
     *,
     now: datetime | None = None,
 ) -> AchievementFamilyCalibration:
-    now = now or datetime.utcnow()
+    now = now or utc_now_naive()
     calibration = _get_or_create_calibration(db, family_id, now)
     if calibration.status == "applied":
         return calibration
@@ -75,7 +76,7 @@ def ensure_family_achievement_calibration(
 
 
 def preview_family_achievement_calibration(db: Session, family_id: int, *, now: datetime | None = None) -> dict:
-    now = now or datetime.utcnow()
+    now = now or utc_now_naive()
     calibration = _get_or_create_calibration(db, family_id, now)
     current_payload = _calibration_payload(calibration)
     computation = compute_family_achievement_calibration(db, family_id, calibration.started_at, now=now, force_ready=True)
@@ -96,7 +97,7 @@ def apply_family_achievement_recalibration(
     *,
     now: datetime | None = None,
 ) -> AchievementFamilyCalibration:
-    now = now or datetime.utcnow()
+    now = now or utc_now_naive()
     calibration = _get_or_create_calibration(db, family_id, now)
     computation = compute_family_achievement_calibration(db, family_id, calibration.started_at, now=now, force_ready=True)
     calibration.status = "applied"
@@ -120,7 +121,7 @@ def compute_family_achievement_calibration(
     now: datetime | None = None,
     force_ready: bool = False,
 ) -> CalibrationComputation:
-    now = now or datetime.utcnow()
+    now = now or utc_now_naive()
     sample_start = max(started_at, now - timedelta(days=HISTORICAL_SAMPLE_DAYS))
     sample_days = max((now - started_at).days, 0)
     history_days = max((now - sample_start).days, 1)

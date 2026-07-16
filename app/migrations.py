@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
+from threading import Lock
 
 from sqlalchemy import Engine, text
 
 
 MigrationFn = Callable[[Engine], None]
+MIGRATION_LOCK_KEY = 930_000_002
+_migration_process_lock = Lock()
 
 
 def _run_legacy_schema_bootstrap(engine: Engine) -> None:
@@ -496,6 +500,42 @@ def _create_achievement_family_calibrations_table(engine: Engine) -> None:
             )
 
 
+def _add_operational_query_indexes(engine: Engine) -> None:
+    # Ausschließlich additive, nicht-eindeutige Indizes. Bestehende Daten werden
+    # weder validiert noch verändert, sodass das Upgrade auch mit Altbeständen läuft.
+    statements = [
+        "CREATE INDEX IF NOT EXISTS ix_live_update_events_family_id_id ON live_update_events (family_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_points_ledger_family_user_created ON points_ledger (family_id, user_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_task_submissions_task_submitted ON task_submissions (task_id, submitted_at)",
+        "CREATE INDEX IF NOT EXISTS ix_task_approvals_submission_reviewed ON task_approvals (submission_id, reviewed_at)",
+        "CREATE INDEX IF NOT EXISTS ix_reward_redemptions_reward_status_requested ON reward_redemptions (reward_id, status, requested_at)",
+        "CREATE INDEX IF NOT EXISTS ix_reward_contributions_family_reward_status ON reward_contributions (family_id, reward_id, status, redemption_id)",
+        "CREATE INDEX IF NOT EXISTS ix_achievement_task_records_family_user_due ON achievement_task_records (family_id, user_id, due_at, outcome)",
+        "CREATE INDEX IF NOT EXISTS ix_achievement_progress_family_user_status ON achievement_progress (family_id, user_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_push_delivery_logs_device_status_dedupe ON push_delivery_logs (device_id, status, dedupe_key)",
+    ]
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))
+
+
+def _add_api_query_indexes(engine: Engine) -> None:
+    # Häufige Listen-, Dashboard- und Login-Filter. Getrennte Migration, damit
+    # bereits laufende 20260715-Installationen die Ergänzungen sicher erhalten.
+    statements = [
+        "CREATE INDEX IF NOT EXISTS ix_users_display_name_lower ON users (lower(display_name))",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_family_created ON tasks (family_id, created_at DESC)",
+        "CREATE INDEX IF NOT EXISTS ix_tasks_family_assignee_state_due "
+        "ON tasks (family_id, assignee_id, status, is_active, due_at)",
+        "CREATE INDEX IF NOT EXISTS ix_calendar_events_family_start ON calendar_events (family_id, start_at)",
+        "CREATE INDEX IF NOT EXISTS ix_reward_redemptions_requester_status_requested "
+        "ON reward_redemptions (requested_by_id, status, requested_at)",
+    ]
+    with engine.begin() as conn:
+        for statement in statements:
+            conn.execute(text(statement))
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
@@ -509,10 +549,12 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260423_achievement_claim_columns", _add_achievement_claim_columns),
     ("20260424_achievement_diamond_difficulty", _add_achievement_diamond_difficulty),
     ("20260428_achievement_family_calibrations", _create_achievement_family_calibrations_table),
+    ("20260715_operational_query_indexes", _add_operational_query_indexes),
+    ("20260715_api_query_indexes", _add_api_query_indexes),
 ]
 
 
-def run_migrations(engine: Engine) -> None:
+def _run_migrations_unlocked(engine: Engine) -> None:
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -538,3 +580,31 @@ def run_migrations(engine: Engine) -> None:
                 ),
                 {"version": version},
             )
+
+
+@contextmanager
+def _migration_guard(engine: Engine):
+    with _migration_process_lock:
+        if engine.dialect.name != "postgresql":
+            yield
+            return
+
+        # Sessionweiter Lock: Migrationen öffnen selbst Transaktionen auf weiteren
+        # Connections. Der Lock bleibt deshalb über deren gesamte Laufzeit bestehen.
+        with engine.connect() as lock_connection:
+            lock_connection.execute(
+                text("SELECT pg_advisory_lock(:key)"),
+                {"key": MIGRATION_LOCK_KEY},
+            )
+            try:
+                yield
+            finally:
+                lock_connection.execute(
+                    text("SELECT pg_advisory_unlock(:key)"),
+                    {"key": MIGRATION_LOCK_KEY},
+                )
+
+
+def run_migrations(engine: Engine) -> None:
+    with _migration_guard(engine):
+        _run_migrations_unlocked(engine)

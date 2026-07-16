@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import timedelta
+from http import HTTPStatus
 from pathlib import Path
 import logging
 import re
@@ -9,7 +10,7 @@ from threading import Lock
 import time
 
 import httpx
-from jose import jwt
+import jwt
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from .models import (
     User,
 )
 from .secret_store import decrypt_secret, encrypt_secret
+from .time_utils import app_local_now_naive, utc_now_naive
 
 logger = logging.getLogger(__name__)
 _PROVIDER_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
@@ -36,6 +38,8 @@ _PROVIDER_TOKEN_TTL_SECONDS = 45 * 60
 _MAX_REMINDER_OFFSET_MINUTES = 2880
 _PUSH_LOCK_KEY = 860032
 _fallback_push_lock = Lock()
+_provider_token_lock = Lock()
+_HA_NOTIFY_SERVICE_RE = re.compile(r"^[a-z0-9_]+$")
 
 
 def _sanitize_error_reason(reason: str | None, *, max_len: int = 400) -> str | None:
@@ -47,6 +51,13 @@ def _sanitize_error_reason(reason: str | None, *, max_len: int = 400) -> str | N
     sanitized = re.sub(r"(?i)bearer\s+[a-z0-9\-_=\.]+", "Bearer [REDACTED]", sanitized)
     sanitized = re.sub(r"(?i)(token=)[^\s&]+", r"\1[REDACTED]", sanitized)
     sanitized = re.sub(r"(?i)(authorization:)[^\s]+", r"\1[REDACTED]", sanitized)
+    sanitized = re.sub(r"(?i)(/3/device/)[a-z0-9]+", r"\1[REDACTED]", sanitized)
+    sanitized = re.sub(
+        r"-----BEGIN [^-]+-----.*?-----END [^-]+-----",
+        "[PRIVATE KEY REDACTED]",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
     if len(sanitized) > max_len:
         return f"{sanitized[:max_len]}..."
     return sanitized
@@ -85,7 +96,7 @@ class HomeAssistantDeliverySummary:
 @dataclass
 class HomeAssistantRuntimeConfig:
     base_url: str
-    token: str
+    token: str = field(repr=False)
     verify_ssl: bool
 
 
@@ -104,6 +115,8 @@ class APNsConfigurationError(RuntimeError):
 class APNsClient:
     def __init__(self) -> None:
         self._private_key = self._load_private_key()
+        self._client: httpx.Client | None = None
+        self._client_lock = Lock()
 
     def is_enabled(self) -> bool:
         return bool(
@@ -162,10 +175,9 @@ class APNsClient:
                 headers["apns-collapse-id"] = collapse_id
 
         try:
-            with httpx.Client(http2=True, timeout=10.0) as client:
-                response = client.post(url, headers=headers, json=payload)
+            response = self._http_client().post(url, headers=headers, json=payload)
         except Exception as exc:
-            logger.exception("APNs-Versand fehlgeschlagen")
+            logger.warning("APNs-Versand fehlgeschlagen (%s)", type(exc).__name__)
             return False, None, _sanitize_error_reason(str(exc))
 
         apns_id = response.headers.get("apns-id")
@@ -183,23 +195,36 @@ class APNsClient:
 
     def _provider_token(self) -> str:
         cache_key = f"{settings.apns_team_id}:{settings.apns_key_id}"
-        cached = _PROVIDER_TOKEN_CACHE.get(cache_key)
         now = time.time()
-        if cached and now - cached[1] < _PROVIDER_TOKEN_TTL_SECONDS:
-            return cached[0]
+        with _provider_token_lock:
+            cached = _PROVIDER_TOKEN_CACHE.get(cache_key)
+            if cached and now - cached[1] < _PROVIDER_TOKEN_TTL_SECONDS:
+                return cached[0]
 
-        if not self._private_key or not settings.apns_team_id or not settings.apns_key_id:
-            raise APNsConfigurationError("APNs-Credentials unvollständig")
+            if not self._private_key or not settings.apns_team_id or not settings.apns_key_id:
+                raise APNsConfigurationError("APNs-Credentials unvollständig")
 
-        issued_at = int(now)
-        token = jwt.encode(
-            {"iss": settings.apns_team_id, "iat": issued_at},
-            self._private_key,
-            algorithm="ES256",
-            headers={"alg": "ES256", "kid": settings.apns_key_id},
-        )
-        _PROVIDER_TOKEN_CACHE[cache_key] = (token, now)
-        return token
+            issued_at = int(now)
+            token = jwt.encode(
+                {"iss": settings.apns_team_id, "iat": issued_at},
+                self._private_key,
+                algorithm="ES256",
+                headers={"alg": "ES256", "kid": settings.apns_key_id},
+            )
+            _PROVIDER_TOKEN_CACHE[cache_key] = (token, now)
+            return token
+
+    def _http_client(self) -> httpx.Client:
+        with self._client_lock:
+            if self._client is None or self._client.is_closed:
+                self._client = httpx.Client(http2=True, timeout=10.0)
+            return self._client
+
+    def close(self) -> None:
+        with self._client_lock:
+            if self._client is not None:
+                self._client.close()
+                self._client = None
 
     def _load_private_key(self) -> str | None:
         inline = (settings.apns_private_key or "").strip()
@@ -210,15 +235,23 @@ class APNsClient:
         if not path:
             return None
         key_path = Path(path)
-        if not key_path.exists():
+        if not key_path.exists() or not key_path.is_file():
             return None
-        return key_path.read_text(encoding="utf-8")
+        try:
+            return key_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("APNs Private-Key-Datei konnte nicht gelesen werden (%s)", type(exc).__name__)
+            return None
 
 
 _apns_client = APNsClient()
 
 
 class HomeAssistantClient:
+    def __init__(self) -> None:
+        self._clients: dict[bool, httpx.Client] = {}
+        self._client_lock = Lock()
+
     def send_notify(
         self,
         *,
@@ -232,8 +265,12 @@ class HomeAssistantClient:
         family_id: int,
     ) -> tuple[bool, str | None]:
         service = notify_service.strip()
+        if service.startswith("notify."):
+            service = service[7:]
         if not service:
             return False, "Kein HA Notify-Service konfiguriert"
+        if service != "persistent_notification" and not _HA_NOTIFY_SERVICE_RE.fullmatch(service):
+            return False, "Ungültiger HA Notify-Service"
 
         url_base = base_url.rstrip("/")
         if service == "persistent_notification":
@@ -254,20 +291,45 @@ class HomeAssistantClient:
         headers = {"Authorization": f"Bearer {token}"}
 
         try:
-            with httpx.Client(timeout=10.0, verify=verify_ssl) as client:
-                response = client.post(url, headers=headers, json=payload)
+            response = self._http_client(verify_ssl).post(url, headers=headers, json=payload)
         except Exception as exc:
-            logger.exception("Home Assistant Versand fehlgeschlagen")
+            logger.warning("Home Assistant Versand fehlgeschlagen (%s)", type(exc).__name__)
             return False, _sanitize_error_reason(str(exc))
 
         if 200 <= response.status_code < 300:
             return True, None
 
-        detail = _sanitize_error_reason(response.text.strip() or f"HTTP {response.status_code}")
-        return False, detail
+        try:
+            phrase = HTTPStatus(response.status_code).phrase
+        except ValueError:
+            phrase = "Fehler"
+        # Fremde HA-Antworttexte können sensible Inhalte enthalten. Für die
+        # Diagnose reichen Statuscode und standardisierte Bedeutung aus.
+        return False, f"HTTP {response.status_code}: {phrase}"
+
+    def _http_client(self, verify_ssl: bool) -> httpx.Client:
+        with self._client_lock:
+            client = self._clients.get(bool(verify_ssl))
+            if client is None or client.is_closed:
+                client = httpx.Client(timeout=10.0, verify=bool(verify_ssl))
+                self._clients[bool(verify_ssl)] = client
+            return client
+
+    def close(self) -> None:
+        with self._client_lock:
+            for client in self._clients.values():
+                client.close()
+            self._clients.clear()
 
 
 _ha_client = HomeAssistantClient()
+
+
+def close_notification_clients() -> None:
+    _apns_client.close()
+    _ha_client.close()
+    with _provider_token_lock:
+        _PROVIDER_TOKEN_CACHE.clear()
 
 
 def dispatch_remote_pushes_for_event(
@@ -627,7 +689,7 @@ def _release_push_lock(db: Session) -> None:
 
 
 def run_push_reminder_sweep_once() -> bool:
-    now = datetime.utcnow()
+    now = app_local_now_naive()
     with SessionLocal() as db:  # type: ignore[name-defined]
         if not _acquire_push_lock(db):
             return False
@@ -787,7 +849,7 @@ def _eligible_devices(
     elif preference_key == "task_due_reminder":
         base_query = base_query.filter(PushDevice.task_due_reminder == True)  # noqa: E712
 
-    fresh_cutoff = datetime.utcnow() - timedelta(days=45)
+    fresh_cutoff = utc_now_naive() - timedelta(days=45)
     fresh_devices = (
         base_query
         .filter(PushDevice.last_seen_at >= fresh_cutoff)
@@ -802,7 +864,11 @@ def _eligible_devices(
 def _delivery_exists(db: Session, device_id: int, dedupe_key: str) -> bool:
     return (
         db.query(PushDeliveryLog.id)
-        .filter(PushDeliveryLog.device_id == device_id, PushDeliveryLog.dedupe_key == dedupe_key)
+        .filter(
+            PushDeliveryLog.device_id == device_id,
+            PushDeliveryLog.dedupe_key == dedupe_key,
+            PushDeliveryLog.status == "sent",
+        )
         .first()
         is not None
     )
@@ -836,7 +902,10 @@ def _record_delivery(
             "INSERT INTO push_delivery_logs "
             "(device_id, family_id, user_id, dedupe_key, event_type, apns_id, status, error_reason) "
             "VALUES (:device_id, :family_id, :user_id, :dedupe_key, :event_type, :apns_id, :status, :error_reason) "
-            "ON CONFLICT (device_id, dedupe_key) DO NOTHING"
+            "ON CONFLICT (device_id, dedupe_key) DO UPDATE SET "
+            "family_id = EXCLUDED.family_id, user_id = EXCLUDED.user_id, "
+            "event_type = EXCLUDED.event_type, apns_id = EXCLUDED.apns_id, "
+            "status = EXCLUDED.status, error_reason = EXCLUDED.error_reason, sent_at = CURRENT_TIMESTAMP"
         ),
         params,
     )

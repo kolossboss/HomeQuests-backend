@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 
 from .config import settings
@@ -30,5 +30,5 @@ def decode_access_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         return payload
-    except JWTError as exc:
+    except jwt.InvalidTokenError as exc:
         raise ValueError("Invalid token") from exc

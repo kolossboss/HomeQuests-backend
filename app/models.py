@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
+from .time_utils import utc_now_naive
 
 
 class RoleEnum(str, Enum):
@@ -118,7 +119,7 @@ class Family(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class User(Base):
@@ -135,7 +136,7 @@ class User(Base):
     ha_task_due_reminder: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class FamilyMembership(Base):
@@ -146,7 +147,7 @@ class FamilyMembership(Base):
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     role: Mapped[RoleEnum] = mapped_column(SqlEnum(RoleEnum), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class Task(Base):
@@ -174,8 +175,8 @@ class Task(Base):
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     status: Mapped[TaskStatusEnum] = mapped_column(SqlEnum(TaskStatusEnum), default=TaskStatusEnum.open, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class TaskGenerationBlock(Base):
@@ -188,8 +189,8 @@ class TaskGenerationBlock(Base):
     block_until: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     reason: Mapped[Optional[str]] = mapped_column(String(120))
     created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class TaskSubmission(Base):
@@ -199,7 +200,7 @@ class TaskSubmission(Base):
     task_id: Mapped[int] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
     submitted_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     note: Mapped[Optional[str]] = mapped_column(Text)
-    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    submitted_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class TaskApproval(Base):
@@ -210,7 +211,7 @@ class TaskApproval(Base):
     reviewed_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     decision: Mapped[ApprovalDecisionEnum] = mapped_column(SqlEnum(ApprovalDecisionEnum), nullable=False)
     comment: Mapped[Optional[str]] = mapped_column(Text)
-    reviewed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class CalendarEvent(Base):
@@ -224,7 +225,7 @@ class CalendarEvent(Base):
     start_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     end_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class Reward(Base):
@@ -238,7 +239,7 @@ class Reward(Base):
     is_shareable: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class RewardRedemption(Base):
@@ -250,7 +251,7 @@ class RewardRedemption(Base):
     status: Mapped[RedemptionStatusEnum] = mapped_column(SqlEnum(RedemptionStatusEnum), default=RedemptionStatusEnum.pending, nullable=False)
     comment: Mapped[Optional[str]] = mapped_column(Text)
     reviewed_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
-    requested_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
@@ -268,8 +269,8 @@ class RewardContribution(Base):
         nullable=False,
     )
     redemption_id: Mapped[Optional[int]] = mapped_column(ForeignKey("reward_redemptions.id", ondelete="SET NULL"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class PointsLedger(Base):
@@ -283,7 +284,7 @@ class PointsLedger(Base):
     points_delta: Mapped[int] = mapped_column(Integer, nullable=False)
     description: Mapped[str] = mapped_column(String(255), nullable=False)
     created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class SpecialTaskTemplate(Base):
@@ -300,8 +301,8 @@ class SpecialTaskTemplate(Base):
     due_time_hhmm: Mapped[Optional[str]] = mapped_column(String(5))
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     created_by_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class LiveUpdateEvent(Base):
@@ -311,7 +312,7 @@ class LiveUpdateEvent(Base):
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     payload_json: Mapped[Optional[str]] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
 
 
 class HomeAssistantSettings(Base):
@@ -325,8 +326,8 @@ class HomeAssistantSettings(Base):
     ha_token: Mapped[Optional[str]] = mapped_column(Text)
     verify_ssl: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     updated_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class PushDevice(Base):
@@ -345,9 +346,9 @@ class PushDevice(Base):
     manager_task_submitted: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     manager_reward_requested: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     task_due_reminder: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class PushDeliveryLog(Base):
@@ -363,7 +364,7 @@ class PushDeliveryLog(Base):
     apns_id: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="sent", nullable=False)
     error_reason: Mapped[Optional[str]] = mapped_column(Text)
-    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
 
 
 class HomeAssistantDeliveryLog(Base):
@@ -378,7 +379,7 @@ class HomeAssistantDeliveryLog(Base):
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="sent", nullable=False)
     error_reason: Mapped[Optional[str]] = mapped_column(Text)
-    sent_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
 
 
 class AchievementDefinition(Base):
@@ -399,8 +400,8 @@ class AchievementDefinition(Base):
     reward_config: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     teaser: Mapped[Optional[str]] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class AchievementProgress(Base):
@@ -427,8 +428,8 @@ class AchievementProgress(Base):
     profile_claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     reward_granted_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     last_evaluated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class AchievementUnlockEvent(Base):
@@ -443,7 +444,7 @@ class AchievementUnlockEvent(Base):
     reward_kind: Mapped[AchievementRewardKindEnum] = mapped_column(SqlEnum(AchievementRewardKindEnum), nullable=False)
     reward_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     presentation_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    emitted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    emitted_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
     displayed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
 
 
@@ -453,7 +454,7 @@ class AchievementFamilyCalibration(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
     calibrated_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     baseline_weekly_points: Mapped[int] = mapped_column(Integer, default=250, nullable=False)
     observed_weekly_points: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -469,7 +470,7 @@ class AchievementFamilyCalibration(Base):
     min_tasks_required: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
     min_rewards_required: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     preview_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
 
 class AchievementFreezeWindow(Base):
@@ -487,7 +488,7 @@ class AchievementFreezeWindow(Base):
     starts_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     ends_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
 
 
 class AchievementTaskRecord(Base):
@@ -507,5 +508,5 @@ class AchievementTaskRecord(Base):
     reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, index=True)
     points_awarded: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)

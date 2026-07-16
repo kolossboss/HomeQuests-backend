@@ -6,14 +6,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from uuid import uuid4
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import and_, or_, text
 from sqlalchemy.orm import Session
 
 from ..achievement_engine import evaluate_achievements_for_user, record_task_outcome
-from ..config import settings
 from ..database import engine, get_db
 from ..deps import get_current_user
 from ..models import (
@@ -47,17 +46,24 @@ from ..schemas import (
     TaskOut,
     TaskReminderOut,
     TaskReviewRequest,
+    TaskSubmitAndApproveRequest,
     TaskSubmitRequest,
     TaskUpdate,
 )
 from ..services import emit_live_event
+from ..time_utils import (
+    app_local_now_naive,
+    app_local_to_utc_naive,
+    app_timezone,
+    utc_now_naive,
+    utc_timestamp_to_app_local_naive,
+)
 
 router = APIRouter(tags=["tasks"])
 FULL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6]
 TASK_MAINTENANCE_LOCK_BASE = 870100000
 _fallback_maintenance_lock_guard = Lock()
 _fallback_maintenance_locks: dict[int, Lock] = {}
-_task_timezone_cache: ZoneInfo | None = None
 logger = logging.getLogger(__name__)
 
 
@@ -70,30 +76,20 @@ def _as_utc_naive(value: datetime | None) -> datetime | None:
 
 
 def _task_timezone() -> ZoneInfo:
-    global _task_timezone_cache
-    if _task_timezone_cache is not None:
-        return _task_timezone_cache
-    try:
-        _task_timezone_cache = ZoneInfo(settings.app_timezone)
-    except ZoneInfoNotFoundError:
-        _task_timezone_cache = ZoneInfo("UTC")
-    return _task_timezone_cache
+    return app_timezone()
 
 
 def _task_now() -> datetime:
     # Task due_at values are stored as local wall-clock datetimes from the UI.
-    return datetime.now(_task_timezone()).replace(tzinfo=None)
+    return app_local_now_naive()
 
 
 def _stored_utc_timestamp_as_task_local(value: datetime | None) -> datetime | None:
-    normalized = _as_utc_naive(value)
-    if normalized is None:
-        return None
-    return normalized.replace(tzinfo=timezone.utc).astimezone(_task_timezone()).replace(tzinfo=None)
+    return utc_timestamp_to_app_local_naive(value)
 
 
 def _task_local_as_utc_naive(value: datetime) -> datetime:
-    return value.replace(tzinfo=_task_timezone()).astimezone(timezone.utc).replace(tzinfo=None)
+    return app_local_to_utc_naive(value)
 
 
 def _task_is_overdue(task: Task, now: datetime | None = None) -> bool:
@@ -110,7 +106,7 @@ def _new_series_id() -> str:
 def _acquire_family_task_maintenance_lock(db: Session, family_id: int) -> bool:
     if engine.dialect.name == "postgresql":
         lock_key = TASK_MAINTENANCE_LOCK_BASE + int(family_id)
-        return bool(db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": lock_key}).scalar())
+        return bool(db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": lock_key}).scalar())
 
     with _fallback_maintenance_lock_guard:
         lock = _fallback_maintenance_locks.setdefault(int(family_id), Lock())
@@ -119,8 +115,7 @@ def _acquire_family_task_maintenance_lock(db: Session, family_id: int) -> bool:
 
 def _release_family_task_maintenance_lock(db: Session, family_id: int) -> None:
     if engine.dialect.name == "postgresql":
-        lock_key = TASK_MAINTENANCE_LOCK_BASE + int(family_id)
-        db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": lock_key})
+        # Transaction-scoped: Freigabe erfolgt erst nach Commit/Rollback des Aufrufers.
         return
 
     with _fallback_maintenance_lock_guard:
@@ -254,6 +249,10 @@ def _ensure_assignee_in_family(db: Session, family_id: int, assignee_id: int) ->
     )
     if not assignee_membership:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Zugewiesener Benutzer ist nicht in der Familie")
+
+
+def _get_task_for_update(db: Session, task_id: int) -> Task | None:
+    return db.query(Task).filter(Task.id == task_id).with_for_update().first()
 
 
 def _interval_start(interval_type: SpecialTaskIntervalEnum) -> datetime:
@@ -416,6 +415,7 @@ def _apply_penalties_for_family(db: Session, family_id: int) -> bool:
             Task.due_at.is_not(None),
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
         )
+        .with_for_update(skip_locked=True)
         .all()
     )
 
@@ -638,6 +638,7 @@ def _realign_daily_tasks_for_family(db: Session, family_id: int) -> bool:
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
             Task.due_at.is_not(None),
         )
+        .with_for_update(skip_locked=True)
         .all()
     )
     changed = False
@@ -884,6 +885,7 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
         )
         .order_by(Task.due_at.asc(), Task.id.asc())
+        .with_for_update(skip_locked=True)
         .all()
     )
 
@@ -1005,6 +1007,7 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.approved]),
         )
         .order_by(Task.created_at.asc(), Task.id.asc())
+        .with_for_update(skip_locked=True)
         .all()
     )
 
@@ -1264,7 +1267,7 @@ def update_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
@@ -1383,7 +1386,7 @@ def update_task(
             task,
             outcome=AchievementTaskOutcomeEnum.approved,
             completed_at=_as_utc_naive(latest_submission.submitted_at),
-            reviewed_at=datetime.utcnow(),
+            reviewed_at=utc_now_naive(),
             points_awarded=task.points,
             metadata={"source": "manual_update"},
         )
@@ -1426,13 +1429,11 @@ def list_special_task_templates(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    get_membership_or_403(db, family_id, current_user.id)
-    return (
-        db.query(SpecialTaskTemplate)
-        .filter(SpecialTaskTemplate.family_id == family_id)
-        .order_by(SpecialTaskTemplate.created_at.desc())
-        .all()
-    )
+    context = get_membership_or_403(db, family_id, current_user.id)
+    query = db.query(SpecialTaskTemplate).filter(SpecialTaskTemplate.family_id == family_id)
+    if context.role == RoleEnum.child:
+        query = query.filter(SpecialTaskTemplate.is_active == True)  # noqa: E712
+    return query.order_by(SpecialTaskTemplate.created_at.desc()).all()
 
 
 @router.post("/families/{family_id}/special-tasks/templates", response_model=SpecialTaskTemplateOut)
@@ -1652,7 +1653,7 @@ def unclaim_special_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
     if task.special_template_id is None:
@@ -1695,7 +1696,7 @@ def delete_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
@@ -1723,7 +1724,7 @@ def delete_task_instance(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
@@ -1765,6 +1766,107 @@ def delete_task_instance(
     return {"deleted": True, "instance_only": True, "next_task_id": next_task.id if next_task else None}
 
 
+def _validate_task_submission_window(task: Task, *, allow_missed_submission: bool) -> None:
+    now_local = _task_now()
+    due_at_local = _as_utc_naive(task.due_at)
+
+    if task.recurrence_type == RecurrenceTypeEnum.daily.value and not task.always_submittable and not allow_missed_submission:
+        if due_at_local is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Tägliche Aufgabe hat keine gültige Fälligkeit",
+            )
+
+        # Ohne "immer erledigbar" darf eine tägliche Aufgabe nur an ihrem
+        # aktuell fälligen Kalendertag eingereicht werden.
+        if due_at_local.date() != now_local.date():
+            if due_at_local > now_local:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Aufgabe ist nicht mehr für heute einreichbar",
+            )
+
+        allowed_weekdays = set(task.active_weekdays or [])
+        if allowed_weekdays and (
+            due_at_local.weekday() not in allowed_weekdays or now_local.weekday() not in allowed_weekdays
+        ):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist heute nicht aktiv")
+
+    if due_at_local and not task.always_submittable:
+        # Heute fällige Aufgaben dürfen vor der Uhrzeit eingereicht werden,
+        # aber nicht mehrere Kalendertage im Voraus.
+        if due_at_local > now_local and due_at_local.date() != now_local.date():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
+
+
+def _approve_task_submission(
+    db: Session,
+    task: Task,
+    submission: TaskSubmission,
+    *,
+    reviewer_id: int,
+    comment: str | None,
+    outcome_source: str,
+    achievement_reason: str,
+) -> TaskApproval:
+    approval = TaskApproval(
+        submission_id=submission.id,
+        reviewed_by_id=reviewer_id,
+        decision=ApprovalDecisionEnum.approved,
+        comment=comment,
+    )
+    db.add(approval)
+    db.flush()
+
+    task.status = TaskStatusEnum.approved
+    if task.points > 0:
+        db.add(
+            PointsLedger(
+                family_id=task.family_id,
+                user_id=task.assignee_id,
+                source_type=PointsSourceEnum.task_approval,
+                source_id=approval.id,
+                points_delta=task.points,
+                description=f"Punkte für Aufgabe: {task.title}",
+                created_by_id=reviewer_id,
+            )
+        )
+
+    record_task_outcome(
+        db,
+        task,
+        outcome=AchievementTaskOutcomeEnum.approved,
+        completed_at=_as_utc_naive(submission.submitted_at),
+        reviewed_at=utc_now_naive(),
+        points_awarded=task.points,
+        metadata={"source": outcome_source},
+    )
+    _create_next_recurring_task(db, task, reviewer_id)
+    db.flush()
+    emit_live_event(
+        db,
+        family_id=task.family_id,
+        event_type="task.reviewed",
+        payload={
+            "task_id": task.id,
+            "status": task.status.value,
+            "assignee_id": task.assignee_id,
+            "reviewed_by_id": reviewer_id,
+            "source": outcome_source,
+        },
+    )
+    evaluate_achievements_for_user(
+        db,
+        family_id=task.family_id,
+        user_id=task.assignee_id,
+        triggered_by_id=reviewer_id,
+        reason=achievement_reason,
+        emit_events=True,
+    )
+    return approval
+
+
 @router.post("/tasks/{task_id}/submit", response_model=TaskOut)
 def submit_task(
     task_id: int,
@@ -1772,7 +1874,7 @@ def submit_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
@@ -1786,36 +1888,7 @@ def submit_task(
     if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.missed_submitted}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe kann aktuell nicht eingereicht werden")
 
-    now_utc = _task_now()
-    due_at_utc = _as_utc_naive(task.due_at)
-
-    if task.recurrence_type == RecurrenceTypeEnum.daily.value and not task.always_submittable and not was_missed_submission:
-        if due_at_utc is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Tägliche Aufgabe hat keine gültige Fälligkeit",
-            )
-
-        # Für tägliche Aufgaben gilt: ohne "immer erledigbar" darf nur der
-        # aktuell fällige Kalendertag eingereicht werden.
-        if due_at_utc.date() != now_utc.date():
-            if due_at_utc > now_utc:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Aufgabe ist nicht mehr für heute einreichbar",
-            )
-
-        allowed_weekdays = set(task.active_weekdays or [])
-        if allowed_weekdays:
-            if due_at_utc.weekday() not in allowed_weekdays or now_utc.weekday() not in allowed_weekdays:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist heute nicht aktiv")
-
-    if due_at_utc and not task.always_submittable:
-        # Heute fällige Aufgaben dürfen auch vor der Uhrzeit eingereicht werden,
-        # aber nicht mehrere Kalendertage im Voraus.
-        if due_at_utc > now_utc and due_at_utc.date() != now_utc.date():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe ist noch nicht fällig")
+    _validate_task_submission_window(task, allow_missed_submission=was_missed_submission)
 
     submission_note = payload.note
     if was_missed_submission and not submission_note:
@@ -1840,13 +1913,56 @@ def submit_task(
     return task
 
 
+@router.post("/tasks/{task_id}/submit-and-approve", response_model=TaskOut)
+def submit_and_approve_task(
+    task_id: int,
+    payload: TaskSubmitAndApproveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = _get_task_for_update(db, task_id)
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
+
+    membership_context = get_membership_or_403(db, task.family_id, current_user.id)
+    require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
+
+    if task.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aufgabe kann aktuell nicht direkt eingereicht und bestätigt werden",
+        )
+    _validate_task_submission_window(task, allow_missed_submission=False)
+
+    submission = TaskSubmission(
+        task_id=task.id,
+        submitted_by_id=task.assignee_id,
+        note=payload.note or "Von Eltern eingereicht und bestätigt",
+    )
+    db.add(submission)
+    task.status = TaskStatusEnum.submitted
+    db.flush()
+    _approve_task_submission(
+        db,
+        task,
+        submission,
+        reviewer_id=current_user.id,
+        comment=payload.comment,
+        outcome_source="submit_and_approve_task",
+        achievement_reason="task_submit_and_approve",
+    )
+    db.commit()
+    db.refresh(task)
+    return task
+
+
 @router.post("/tasks/{task_id}/report-missed", response_model=TaskOut)
 def report_task_missed(
     task_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
@@ -1913,7 +2029,7 @@ def review_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
@@ -1934,58 +2050,37 @@ def review_task(
     if task.status != TaskStatusEnum.submitted:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Aufgabe wartet nicht auf Bestätigung")
 
-    approval = TaskApproval(
-        submission_id=latest_submission.id,
-        reviewed_by_id=current_user.id,
-        decision=payload.decision,
-        comment=payload.comment,
-    )
-    db.add(approval)
-    db.flush()
-
     if payload.decision == ApprovalDecisionEnum.approved:
-        task.status = TaskStatusEnum.approved
-        if task.points > 0:
-            db.add(
-                PointsLedger(
-                    family_id=task.family_id,
-                    user_id=task.assignee_id,
-                    source_type=PointsSourceEnum.task_approval,
-                    source_id=approval.id,
-                    points_delta=task.points,
-                    description=f"Punkte für Aufgabe: {task.title}",
-                    created_by_id=current_user.id,
-                )
-            )
-
-        record_task_outcome(
+        _approve_task_submission(
             db,
             task,
-            outcome=AchievementTaskOutcomeEnum.approved,
-            completed_at=_as_utc_naive(latest_submission.submitted_at),
-            reviewed_at=datetime.utcnow(),
-            points_awarded=task.points,
-            metadata={"source": "review_task"},
+            latest_submission,
+            reviewer_id=current_user.id,
+            comment=payload.comment,
+            outcome_source="review_task",
+            achievement_reason="task_approved_review",
         )
-        _create_next_recurring_task(db, task, current_user.id)
     else:
+        approval = TaskApproval(
+            submission_id=latest_submission.id,
+            reviewed_by_id=current_user.id,
+            decision=payload.decision,
+            comment=payload.comment,
+        )
+        db.add(approval)
         task.status = TaskStatusEnum.rejected
-
-    db.flush()
-    emit_live_event(
-        db,
-        family_id=task.family_id,
-        event_type="task.reviewed",
-        payload={"task_id": task.id, "status": task.status.value, "assignee_id": task.assignee_id},
-    )
-    if payload.decision == ApprovalDecisionEnum.approved:
-        evaluate_achievements_for_user(
+        db.flush()
+        emit_live_event(
             db,
             family_id=task.family_id,
-            user_id=task.assignee_id,
-            triggered_by_id=current_user.id,
-            reason="task_approved_review",
-            emit_events=True,
+            event_type="task.reviewed",
+            payload={
+                "task_id": task.id,
+                "status": task.status.value,
+                "assignee_id": task.assignee_id,
+                "reviewed_by_id": current_user.id,
+                "source": "review_task",
+            },
         )
     db.commit()
     db.refresh(task)
@@ -2050,7 +2145,7 @@ def _review_missed_task_in_session(
             task,
             outcome=AchievementTaskOutcomeEnum.approved,
             completed_at=_as_utc_naive(latest_submission.submitted_at),
-            reviewed_at=datetime.utcnow(),
+            reviewed_at=utc_now_naive(),
             points_awarded=task.points,
             metadata={"source": "missed_review_approved"},
         )
@@ -2101,7 +2196,7 @@ def _review_missed_task_in_session(
         task,
         outcome=AchievementTaskOutcomeEnum.missed,
         completed_at=_as_utc_naive(latest_submission.submitted_at) if latest_submission else None,
-        reviewed_at=datetime.utcnow(),
+        reviewed_at=utc_now_naive(),
         points_awarded=0,
         metadata={"source": f"missed_review_{action}", "deduction": deduction},
     )
@@ -2138,7 +2233,7 @@ def review_missed_task(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 
@@ -2170,6 +2265,7 @@ def review_all_missed_tasks(
         db.query(Task)
         .filter(Task.family_id == family_id, Task.status == TaskStatusEnum.missed_submitted)
         .order_by(Task.created_at.asc(), Task.id.asc())
+        .with_for_update()
         .all()
     )
 
@@ -2238,7 +2334,7 @@ def set_task_active(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    task = db.query(Task).filter(Task.id == task_id).first()
+    task = _get_task_for_update(db, task_id)
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Aufgabe nicht gefunden")
 

@@ -55,10 +55,11 @@ from ..schemas import (
 )
 from ..secret_store import encrypt_secret
 from ..services import emit_live_event
+from ..time_utils import app_local_now_naive, utc_now_naive
 from .tasks import _run_family_task_maintenance
 
 router = APIRouter(tags=["system"])
-RUNTIME_BUILD_REF = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+RUNTIME_BUILD_REF = utc_now_naive().strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _get_or_create_home_assistant_settings(db: Session, family_id: int) -> HomeAssistantSettings:
@@ -278,7 +279,7 @@ def get_system_runtime(
         app_name=app_settings.app_name,
         app_version=app_settings.app_version,
         app_build_ref=app_settings.app_build_ref or RUNTIME_BUILD_REF,
-        server_time_utc=datetime.utcnow(),
+        server_time_utc=utc_now_naive(),
     )
 
 
@@ -304,7 +305,7 @@ def get_db_tools_status(
         backup_timeout_seconds=app_settings.db_backup_timeout_seconds,
         cleanup_max_passes=app_settings.db_cleanup_max_passes,
         diagnostics=diagnostics,
-        server_time_utc=datetime.utcnow(),
+        server_time_utc=utc_now_naive(),
     )
 
 
@@ -462,7 +463,7 @@ def run_db_cleanup(
 
     requested_passes = int(payload.max_passes or app_settings.db_cleanup_max_passes)
     requested_passes = max(1, min(requested_passes, app_settings.db_cleanup_max_passes))
-    started = datetime.utcnow()
+    started = utc_now_naive()
     diagnostics_before = _collect_db_diagnostics(db, family_id)
 
     executed_passes = 0
@@ -478,7 +479,7 @@ def run_db_cleanup(
         break
 
     diagnostics_after = _collect_db_diagnostics(db, family_id)
-    finished = datetime.utcnow()
+    finished = utc_now_naive()
     emit_live_event(
         db,
         family_id=family_id,
@@ -515,7 +516,7 @@ def run_db_analyze(
     membership_context = get_membership_or_403(db, family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.admin, RoleEnum.parent})
 
-    started = datetime.utcnow()
+    started = utc_now_naive()
     engine_name = db_database_engine_name()
     if engine_name == "postgresql":
         db.execute(text("ANALYZE"))
@@ -526,7 +527,7 @@ def run_db_analyze(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"ANALYZE wird für DB-Engine '{engine_name}' derzeit nicht unterstützt",
         )
-    finished = datetime.utcnow()
+    finished = utc_now_naive()
     emit_live_event(
         db,
         family_id=family_id,
@@ -866,7 +867,7 @@ def send_home_assistant_user_test(
         body=payload.message,
         recipient_user_ids=[user_id],
         event_type="notification.test.manual.user",
-        dedupe_key=f"manual-ha-user-test:{family_id}:{user_id}:{datetime.utcnow().isoformat()}",
+        dedupe_key=f"manual-ha-user-test:{family_id}:{user_id}:{utc_now_naive().isoformat()}",
     )
     db.commit()
     return {"sent": summary.sent_count > 0, "delivery": summary.as_dict()}
@@ -912,7 +913,7 @@ def send_system_test_notification(
 
     recipient_user_ids = [entry.id for entry in selected_recipients]
     recipient_display_names = [entry.display_name for entry in selected_recipients]
-    sent_at = datetime.utcnow().isoformat()
+    sent_at = utc_now_naive().isoformat()
     home_assistant_delivery = None
     sent = False
     settings = (
@@ -1055,7 +1056,7 @@ def send_system_practical_test_notification(
 
     recipient_user_ids = [user.id for _, user in selected_recipients]
     recipient_display_names = [user.display_name for _, user in selected_recipients]
-    now = datetime.utcnow()
+    now = app_local_now_naive()
 
     def create_test_task_for_user(
         assignee_user_id: int,

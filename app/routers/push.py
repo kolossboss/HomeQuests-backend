@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -9,6 +9,7 @@ from ..database import get_db
 from ..deps import get_current_user
 from ..models import FamilyMembership, PushDevice, User
 from ..schemas import PushDeviceOut, PushDeviceRegisterRequest, PushDeviceUnregisterRequest
+from ..time_utils import utc_now_naive
 
 router = APIRouter(tags=["push"])
 
@@ -43,7 +44,7 @@ def register_push_device(
     family_id = _family_id_for_user(db, current_user.id)
 
     device = db.query(PushDevice).filter(PushDevice.device_token == payload.device_token).first()
-    now = datetime.utcnow()
+    now = utc_now_naive()
     if device is None:
         device = PushDevice(
             family_id=family_id,

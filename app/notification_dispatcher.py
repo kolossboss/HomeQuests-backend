@@ -4,7 +4,6 @@ from dataclasses import dataclass
 import logging
 from queue import Empty, Full, Queue
 from threading import Event, Lock, Thread
-import time
 
 from .database import SessionLocal
 from .models import LiveUpdateEvent
@@ -42,15 +41,17 @@ def stop_remote_dispatcher(timeout_seconds: float = 5.0) -> None:
     global _worker_thread
     with _worker_lock:
         thread = _worker_thread
-        _worker_thread = None
     if thread is None:
         return
     _stop_event.set()
     try:
         _queue.put_nowait(None)
     except Full:
-        pass
+        logger.warning("Remote-Dispatcher konnte beim Stoppen kein Stop-Signal einreihen")
     thread.join(timeout=timeout_seconds)
+    with _worker_lock:
+        if _worker_thread is thread and not thread.is_alive():
+            _worker_thread = None
 
 
 def enqueue_remote_dispatch_job(*, family_id: int, event_id: int, payload: dict | None) -> bool:
@@ -59,11 +60,11 @@ def enqueue_remote_dispatch_job(*, family_id: int, event_id: int, payload: dict 
         return False
     job = RemoteDispatchJob(family_id=family_id, event_id=event_id, payload=payload)
     try:
-        _queue.put_nowait(job)
+        _queue.put(job, timeout=0.25)
         return True
     except Full:
-        logger.warning(
-            "Remote-Dispatcher Queue voll; Event %s fuer Familie %s wird inline verarbeitet",
+        logger.error(
+            "Remote-Dispatcher Queue voll; Event %s fuer Familie %s konnte nicht eingereiht werden",
             event_id,
             family_id,
         )
@@ -71,10 +72,12 @@ def enqueue_remote_dispatch_job(*, family_id: int, event_id: int, payload: dict 
 
 
 def _worker_loop() -> None:
-    while not _stop_event.is_set():
+    while True:
         try:
             job = _queue.get(timeout=0.5)
         except Empty:
+            if _stop_event.is_set():
+                break
             continue
         if job is None:
             _queue.task_done()
@@ -108,7 +111,8 @@ def _process_job(job: RemoteDispatchJob) -> None:
                 )
                 db.commit()
                 return
-        time.sleep(0.15 * (attempt + 1))
+        if _stop_event.wait(0.15 * (attempt + 1)):
+            return
 
     logger.info(
         "Remote-Dispatcher: Event %s in Familie %s nicht gefunden (vermutlich Rollback), Versand uebersprungen",
