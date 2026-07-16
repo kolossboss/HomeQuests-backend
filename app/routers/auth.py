@@ -21,6 +21,7 @@ from ..db_tools import (
 )
 from ..deps import get_current_user
 from ..models import Family, FamilyMembership, RoleEnum, User
+from ..login_limiter import login_rate_limiter
 from ..schemas import (
     BootstrapBackupFileOut,
     BootstrapBackupListOut,
@@ -40,7 +41,9 @@ COOKIE_NAME = "fp_token"
 COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 BOOTSTRAP_LOCK_KEY = 930_000_001
 _bootstrap_fallback_lock = Lock()
+_bootstrap_operation_lock = Lock()
 logger = logging.getLogger(__name__)
+_DUMMY_PASSWORD_HASH = hash_password("homequests-login-timing-placeholder")
 
 
 def _request_uses_https(request: Request) -> bool:
@@ -88,6 +91,19 @@ def _bootstrap_guard(db: Session):
         _bootstrap_fallback_lock.release()
 
 
+@contextmanager
+def _bootstrap_operation_guard():
+    if not _bootstrap_operation_lock.acquire(blocking=False):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Eine Bootstrap-/Restore-Operation läuft bereits",
+        )
+    try:
+        yield
+    finally:
+        _bootstrap_operation_lock.release()
+
+
 @router.get("/bootstrap-status", response_model=BootstrapStatusOut)
 def bootstrap_status(db: Session = Depends(get_db)):
     has_user = db.query(User.id).first() is not None
@@ -125,19 +141,20 @@ def bootstrap_backup_upload(
     db: Session = Depends(get_db),
 ):
     try:
-        has_user = db.query(User.id).first() is not None
-        if has_user:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
+        with _bootstrap_operation_guard():
+            has_user = db.query(User.id).first() is not None
+            if has_user:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
 
-        if not file.filename:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dateiname fehlt")
+            if not file.filename:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dateiname fehlt")
 
-        saved = store_uploaded_backup(
-            file_obj=file.file,
-            original_filename=file.filename,
-            target_dir=(target_dir or None),
-            max_bytes=settings.db_backup_upload_max_bytes,
-        )
+            saved = store_uploaded_backup(
+                file_obj=file.file,
+                original_filename=file.filename,
+                target_dir=(target_dir or None),
+                max_bytes=settings.db_backup_upload_max_bytes,
+            )
     except DbToolsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc) or "Upload fehlgeschlagen") from exc
     finally:
@@ -168,24 +185,25 @@ def _bootstrap_restore_error_status(message: str) -> int:
 
 @router.post("/bootstrap-restore", response_model=BootstrapRestoreOut)
 def bootstrap_restore(payload: BootstrapRestoreRequest, db: Session = Depends(get_db)):
-    has_user = db.query(User.id).first() is not None
-    if has_user:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
+    with _bootstrap_operation_guard():
+        has_user = db.query(User.id).first() is not None
+        if has_user:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
 
-    # Laufende DB-Sessions schließen, damit pg_restore konsistent schreiben kann.
-    db.close()
-    engine.dispose()
-    try:
-        result = restore_backup(backup_file=payload.backup_file)
-    except DbToolsError as exc:
-        detail = str(exc) or "Restore fehlgeschlagen"
-        raise HTTPException(status_code=_bootstrap_restore_error_status(detail), detail=detail) from exc
+        # Laufende DB-Sessions schließen, damit pg_restore konsistent schreiben kann.
+        db.close()
+        engine.dispose()
+        try:
+            result = restore_backup(backup_file=payload.backup_file)
+        except DbToolsError as exc:
+            detail = str(exc) or "Restore fehlgeschlagen"
+            raise HTTPException(status_code=_bootstrap_restore_error_status(detail), detail=detail) from exc
 
-    verify_db = SessionLocal()
-    try:
-        user_count = int(verify_db.query(func.count(User.id)).scalar() or 0)
-    finally:
-        verify_db.close()
+        verify_db = SessionLocal()
+        try:
+            user_count = int(verify_db.query(func.count(User.id)).scalar() or 0)
+        finally:
+            verify_db.close()
 
     if user_count < 1:
         raise HTTPException(
@@ -205,7 +223,7 @@ def bootstrap_restore(payload: BootstrapRestoreRequest, db: Session = Depends(ge
 
 @router.post("/bootstrap", response_model=TokenResponse)
 def bootstrap(payload: BootstrapRequest, request: Request, response: Response, db: Session = Depends(get_db)):
-    with _bootstrap_guard(db):
+    with _bootstrap_operation_guard(), _bootstrap_guard(db):
         existing = db.query(User.id).first() is not None
         if existing:
             logger.info("Bootstrap abgelehnt: bereits initialisiert")
@@ -239,6 +257,16 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
     if not identifier:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Login fehlt")
 
+    client_host = request.client.host if request.client else "unknown"
+    limiter_key = login_rate_limiter.key(client_host, identifier)
+    retry_after = login_rate_limiter.retry_after(limiter_key)
+    if retry_after:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Zu viele Anmeldeversuche. Bitte später erneut versuchen.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     user = db.query(User).filter(User.email == identifier.lower()).first()
 
     if not user:
@@ -254,14 +282,31 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             )
         user = users_by_name[0] if users_by_name else None
 
-    if not user or not verify_password(payload.password, user.password_hash):
+    password_hash = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
+    try:
+        password_matches = verify_password(payload.password, password_hash)
+    except (TypeError, ValueError):
+        password_matches = False
+
+    if not user or not user.is_active or not password_matches:
+        blocked_for = login_rate_limiter.record_failure(limiter_key)
         logger.warning(
             "Login fehlgeschlagen (identifier=%s, ip=%s)",
             _mask_identifier(identifier),
-            request.client.host if request.client else "unknown",
+            client_host,
         )
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Falsche Zugangsdaten")
+        headers = {"Retry-After": str(blocked_for)} if blocked_for else None
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS if blocked_for else status.HTTP_401_UNAUTHORIZED,
+            detail=(
+                "Zu viele Anmeldeversuche. Bitte später erneut versuchen."
+                if blocked_for
+                else "Falsche Zugangsdaten"
+            ),
+            headers=headers,
+        )
 
+    login_rate_limiter.clear(limiter_key)
     token = create_access_token(str(user.id))
     _set_auth_cookie(response, token, request)
     logger.info("Login erfolgreich für Nutzer-ID %s", user.id)

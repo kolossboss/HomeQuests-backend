@@ -30,6 +30,7 @@ from .models import (
     PointsLedger,
     PointsSourceEnum,
     RedemptionStatusEnum,
+    Reward,
     RewardRedemption,
     SpecialTaskTemplate,
     Task,
@@ -37,6 +38,7 @@ from .models import (
     User,
 )
 from .services import emit_live_event
+from .time_utils import utc_now_naive
 
 STREAK_FREEZE_SCOPE = AchievementFreezeScopeEnum.streaks
 EARNED_POINTS_SOURCES = {
@@ -142,6 +144,7 @@ def evaluate_achievements_for_user(
     reason: str = "system",
     emit_events: bool = True,
 ) -> list[AchievementUnlockEvent]:
+    _lock_achievement_user(db, user_id)
     ensure_achievement_catalog(db)
     definitions = (
         db.query(AchievementDefinition)
@@ -153,7 +156,7 @@ def evaluate_achievements_for_user(
         return []
 
     unlock_events: list[AchievementUnlockEvent] = []
-    now = datetime.utcnow()
+    now = utc_now_naive()
     calibration = ensure_family_achievement_calibration(db, family_id, now=now)
 
     for _ in range(4):
@@ -263,11 +266,12 @@ def claim_achievement_profile(
     *,
     triggered_by_id: int | None = None,
 ) -> AchievementProgress:
+    _lock_achievement_user(db, user_id)
     definition, progress = _load_unlocked_progress(db, family_id, user_id, achievement_id)
     calibration = ensure_family_achievement_calibration(db, family_id)
     context = _load_context(db, family_id, user_id, calibration=calibration)
     if progress.profile_claimed_at is None:
-        progress.profile_claimed_at = datetime.utcnow()
+        progress.profile_claimed_at = utc_now_naive()
         db.flush()
         emit_live_event(
             db,
@@ -295,6 +299,7 @@ def claim_achievement_reward(
     *,
     triggered_by_id: int | None = None,
 ) -> tuple[AchievementProgress, int]:
+    _lock_achievement_user(db, user_id)
     definition, progress = _load_unlocked_progress(db, family_id, user_id, achievement_id)
     calibration = ensure_family_achievement_calibration(db, family_id)
     context = _load_context(db, family_id, user_id, calibration=calibration)
@@ -307,7 +312,7 @@ def claim_achievement_reward(
     if progress.reward_granted_at is not None:
         return progress, 0
 
-    now = datetime.utcnow()
+    now = utc_now_naive()
     progress.reward_granted_at = now
     db.flush()
     db.add(
@@ -392,7 +397,7 @@ def build_achievement_overview(db: Session, family_id: int, user_id: int) -> dic
     )
     freezes = list_freeze_windows(db, family_id, user_id)
     context = _load_context(db, family_id, user_id, calibration=calibration)
-    now = datetime.utcnow()
+    now = utc_now_naive()
 
     items: list[dict] = []
     unlocked_count = 0
@@ -521,6 +526,7 @@ def _load_unlocked_progress(
             AchievementProgress.family_id == family_id,
             AchievementProgress.user_id == user_id,
         )
+        .with_for_update()
         .first()
     )
     if row is None:
@@ -529,6 +535,13 @@ def _load_unlocked_progress(
     if progress.unlocked_at is None:
         raise ValueError("Erfolg ist noch nicht freigeschaltet")
     return definition, progress
+
+
+def _lock_achievement_user(db: Session, user_id: int) -> User:
+    user = db.query(User).filter(User.id == user_id).with_for_update().first()
+    if user is None:
+        raise ValueError("Nutzer nicht gefunden")
+    return user
 
 
 def _load_context(
@@ -573,7 +586,7 @@ def _load_context(
     freeze_windows = list_freeze_windows(db, family_id, user_id)
     earned_points_total = _earned_points_total(db, family_id, user_id)
     current_points_balance = _current_points_balance(db, family_id, user_id)
-    approved_reward_redemptions_total = _approved_reward_redemptions_total(db, user_id)
+    approved_reward_redemptions_total = _approved_reward_redemptions_total(db, family_id, user_id)
     return EvaluationContext(
         family_id=family_id,
         user=user,
@@ -614,10 +627,12 @@ def _current_points_balance(db: Session, family_id: int, user_id: int) -> int:
     return int(result or 0)
 
 
-def _approved_reward_redemptions_total(db: Session, user_id: int) -> int:
+def _approved_reward_redemptions_total(db: Session, family_id: int, user_id: int) -> int:
     result = (
         db.query(func.count(RewardRedemption.id))
+        .join(Reward, Reward.id == RewardRedemption.reward_id)
         .filter(
+            Reward.family_id == family_id,
             RewardRedemption.requested_by_id == user_id,
             RewardRedemption.status == RedemptionStatusEnum.approved,
         )
@@ -877,7 +892,7 @@ def _evaluate_task_period(
                 continue
             approved += 1
             continue
-        if _task_status_value(task.status) == TaskStatusEnum.missed_submitted.value and period_end <= datetime.utcnow():
+        if _task_status_value(task.status) == TaskStatusEnum.missed_submitted.value and period_end <= utc_now_naive():
             missed += 1
 
     if total < minimum_tasks or total == 0:

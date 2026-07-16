@@ -1,5 +1,17 @@
 # Changelog
 
+## v2026.07.15-01 (2026-07-15)
+
+- Sicherheit: bekannte Abhängigkeitslücken entfernt, JWT-Bibliothek modernisiert, Login-Rate-Limit, sichere Fehlerantworten und striktere Eingabegrenzen ergänzt.
+- Stabilität: Task-/Reward-Mutationen serialisiert, familienbezogene Wartung transaktionsweit gelockt und atomarer Eltern-Workflow `submit-and-approve` ergänzt.
+- Live/Push: SSE- und Remote-Push-Signale laufen erst nach erfolgreichem DB-Commit; Queue-, Shutdown-, Dedupe- und Client-Lebenszyklen wurden gehärtet.
+- Zugriff: laufende SSE-Streams prüfen Mitgliedschaft und Nutzerstatus regelmäßig und enden nach einem Rechteentzug automatisch.
+- Performance: familienbezogener SSE-Bus ohne blockierende Executor-Threads, wiederverwendete HTTP-Clients, blockweises Event-Cleanup und additive Query-Indizes.
+- Backups: sichere relative Pfadauflösung, rekursive Dateiliste, atomare `.partial`-Erstellung und Dateirechte `0600`; Standardziel `/data/backups`.
+- Betrieb: DB-prüfender Healthcheck, expliziter Docker-Netzwerkalias `db`, datumsbasierte Version und Docker-Build-Hygiene ergänzt.
+- Betrieb: Compose-Listenwerte bleiben komma-separiert kompatibel; Migrationen sind gegen parallele API-Starts serialisiert.
+- Kompatibilität: keine destruktive Migration; bestehende API-Abläufe bleiben erhalten.
+
 ## v2026.06.18-01 (2026-06-18)
 
 - Aufgaben/Dashboard: Eltern/Admins koennen jetzt alle verpassten Aufgaben gesammelt bestaetigen oder loeschen.

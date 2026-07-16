@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
 from typing import Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
@@ -22,6 +24,37 @@ from .models import (
 )
 
 
+HA_NOTIFY_SERVICE_RE = re.compile(r"^[a-z0-9_]+$")
+
+
+def _normalize_ha_notify_service(value):
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text.startswith("notify."):
+        text = text[7:]
+    if not text:
+        return None
+    if text != "persistent_notification" and not HA_NOTIFY_SERVICE_RE.fullmatch(text):
+        raise ValueError("HA Notify-Service darf nur Kleinbuchstaben, Zahlen und Unterstriche enthalten")
+    return text
+
+
+def _normalize_ha_base_url(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    parsed = urlsplit(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("HA Base URL muss eine vollständige HTTP- oder HTTPS-URL sein")
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError("HA Base URL darf keine Zugangsdaten, Query-Parameter oder Fragmente enthalten")
+    normalized_path = parsed.path.rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, normalized_path, "", ""))
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -30,7 +63,7 @@ class TokenResponse(BaseModel):
 class LoginRequest(BaseModel):
     login: str | None = Field(default=None, min_length=2, max_length=255)
     email: EmailStr | None = None
-    password: str
+    password: str = Field(min_length=1, max_length=128)
 
 
 class BootstrapRequest(BaseModel):
@@ -183,10 +216,7 @@ class MemberCreate(BaseModel):
     @field_validator("ha_notify_service", mode="before")
     @classmethod
     def normalize_ha_notify_service(cls, value):
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
+        return _normalize_ha_notify_service(value)
 
     @model_validator(mode="after")
     def validate_passwords(self):
@@ -210,10 +240,7 @@ class MemberUpdate(BaseModel):
     @field_validator("ha_notify_service", mode="before")
     @classmethod
     def normalize_ha_notify_service(cls, value):
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
+        return _normalize_ha_notify_service(value)
 
 
 ALLOWED_TASK_REMINDER_MINUTES = {15, 30, 60, 120, 1440, 2880}
@@ -260,12 +287,12 @@ def _normalize_due_time_hhmm(value: str | None) -> str | None:
 
 class TaskCreate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=5000)
     assignee_id: int
     due_at: datetime | None = None
-    points: int = Field(default=0, ge=0)
-    reminder_offsets_minutes: list[int] = Field(default_factory=list)
-    active_weekdays: list[int] = Field(default_factory=list)
+    points: int = Field(default=0, ge=0, le=2_000_000_000)
+    reminder_offsets_minutes: list[int] = Field(default_factory=list, max_length=6)
+    active_weekdays: list[int] = Field(default_factory=list, max_length=7)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
     always_submittable: bool = False
     penalty_enabled: bool = False
@@ -320,12 +347,12 @@ class TaskCreate(BaseModel):
 
 class TaskUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=5000)
     assignee_id: int
     due_at: datetime | None = None
-    points: int = Field(default=0, ge=0)
-    reminder_offsets_minutes: list[int] = Field(default_factory=list)
-    active_weekdays: list[int] = Field(default_factory=list)
+    points: int = Field(default=0, ge=0, le=2_000_000_000)
+    reminder_offsets_minutes: list[int] = Field(default_factory=list, max_length=6)
+    active_weekdays: list[int] = Field(default_factory=list, max_length=7)
     recurrence_type: RecurrenceTypeEnum = RecurrenceTypeEnum.none
     always_submittable: bool = False
     penalty_enabled: bool = False
@@ -407,22 +434,27 @@ class TaskOut(BaseModel):
 
 
 class TaskSubmitRequest(BaseModel):
-    note: str | None = None
+    note: str | None = Field(default=None, max_length=1000)
+
+
+class TaskSubmitAndApproveRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=1000)
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class TaskReviewRequest(BaseModel):
     decision: ApprovalDecisionEnum
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class MissedTaskReviewRequest(BaseModel):
     action: Literal["delete", "penalty", "approve"]
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class MissedTaskBulkReviewRequest(BaseModel):
     action: Literal["delete", "approve"]
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class MissedTaskBulkReviewOut(BaseModel):
@@ -449,7 +481,7 @@ class TaskActiveUpdate(BaseModel):
 
 class CalendarEventCreate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    description: str | None = None
+    description: str | None = Field(default=None, max_length=5000)
     responsible_user_id: int | None = None
     start_at: datetime
     end_at: datetime
@@ -470,16 +502,16 @@ class CalendarEventOut(BaseModel):
 
 class RewardCreate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    description: str | None = None
-    cost_points: int = Field(ge=1)
+    description: str | None = Field(default=None, max_length=5000)
+    cost_points: int = Field(ge=1, le=2_000_000_000)
     is_shareable: bool = False
     is_active: bool = True
 
 
 class RewardUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    description: str | None = None
-    cost_points: int = Field(ge=1)
+    description: str | None = Field(default=None, max_length=5000)
+    cost_points: int = Field(ge=1, le=2_000_000_000)
     is_shareable: bool = False
     is_active: bool = True
 
@@ -497,12 +529,12 @@ class RewardOut(BaseModel):
 
 
 class RedemptionRequest(BaseModel):
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class RedemptionReviewRequest(BaseModel):
     decision: RedemptionStatusEnum
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class RedemptionOut(BaseModel):
@@ -520,7 +552,7 @@ class RedemptionOut(BaseModel):
 
 class RewardContributionRequest(BaseModel):
     points: int = Field(ge=1, le=9999)
-    comment: str | None = None
+    comment: str | None = Field(default=None, max_length=1000)
 
 
 class RewardContributionOut(BaseModel):
@@ -637,11 +669,11 @@ class PointsAdjustRequest(BaseModel):
 
 class SpecialTaskTemplateCreate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    description: str | None = None
-    points: int = Field(default=0, ge=0)
+    description: str | None = Field(default=None, max_length=5000)
+    points: int = Field(default=0, ge=0, le=2_000_000_000)
     interval_type: SpecialTaskIntervalEnum
     max_claims_per_interval: int = Field(default=1, ge=1, le=50)
-    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy())
+    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy(), max_length=7)
     due_time_hhmm: str | None = Field(default=None, min_length=5, max_length=5)
     is_active: bool = True
 
@@ -670,11 +702,11 @@ class SpecialTaskTemplateCreate(BaseModel):
 
 class SpecialTaskTemplateUpdate(BaseModel):
     title: str = Field(min_length=2, max_length=180)
-    description: str | None = None
-    points: int = Field(default=0, ge=0)
+    description: str | None = Field(default=None, max_length=5000)
+    points: int = Field(default=0, ge=0, le=2_000_000_000)
     interval_type: SpecialTaskIntervalEnum
     max_claims_per_interval: int = Field(default=1, ge=1, le=50)
-    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy())
+    active_weekdays: list[int] = Field(default_factory=lambda: FULL_WEEKDAYS.copy(), max_length=7)
     due_time_hhmm: str | None = Field(default=None, min_length=5, max_length=5)
     is_active: bool = True
 
@@ -728,7 +760,7 @@ class SpecialTaskAvailabilityOut(SpecialTaskTemplateOut):
 class SystemTestNotificationRequest(BaseModel):
     title: str = Field(min_length=2, max_length=120)
     message: str = Field(min_length=2, max_length=500)
-    recipient_user_ids: list[int] | None = None
+    recipient_user_ids: list[int] | None = Field(default=None, max_length=100)
     test_channel: Literal["active", "sse", "apns", "home_assistant"] = "active"
     send_via_home_assistant: bool = False
 
@@ -878,9 +910,14 @@ class HomeAssistantSettingsUpdateRequest(BaseModel):
     verify_ssl: bool = True
     keep_existing_token: bool = True
 
-    @field_validator("ha_base_url", "ha_token", mode="before")
+    @field_validator("ha_base_url", mode="before")
     @classmethod
-    def normalize_home_assistant_strings(cls, value):
+    def normalize_home_assistant_url(cls, value):
+        return _normalize_ha_base_url(value)
+
+    @field_validator("ha_token", mode="before")
+    @classmethod
+    def normalize_home_assistant_token(cls, value):
         if value is None:
             return None
         text = str(value).strip()
@@ -910,10 +947,7 @@ class HomeAssistantUserConfigUpdateRequest(BaseModel):
     @field_validator("ha_notify_service", mode="before")
     @classmethod
     def normalize_ha_user_notify_service(cls, value):
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
+        return _normalize_ha_notify_service(value)
 
 
 class HomeAssistantUserConfigOut(BaseModel):

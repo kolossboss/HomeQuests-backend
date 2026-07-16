@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
@@ -33,6 +31,7 @@ from ..schemas import (
     RewardUpdate,
 )
 from ..services import emit_live_event, get_points_balance
+from ..time_utils import utc_now_naive
 
 router = APIRouter(tags=["rewards"])
 
@@ -147,8 +146,11 @@ def list_rewards(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    get_membership_or_403(db, family_id, current_user.id)
-    return db.query(Reward).filter(Reward.family_id == family_id).order_by(Reward.created_at.desc()).all()
+    context = get_membership_or_403(db, family_id, current_user.id)
+    query = db.query(Reward).filter(Reward.family_id == family_id)
+    if context.role == RoleEnum.child:
+        query = query.filter(Reward.is_active == True)  # noqa: E712
+    return query.order_by(Reward.created_at.desc()).all()
 
 
 @router.get("/families/{family_id}/rewards/{reward_id}/contributions", response_model=RewardContributionProgressOut)
@@ -206,12 +208,38 @@ def update_reward(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    reward = db.query(Reward).filter(Reward.id == reward_id).first()
+    reward = db.query(Reward).filter(Reward.id == reward_id).with_for_update().first()
     if not reward:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Belohnung nicht gefunden")
 
     context = get_membership_or_403(db, reward.family_id, current_user.id)
     require_roles(context, {RoleEnum.admin, RoleEnum.parent})
+
+    has_open_redemption = (
+        db.query(RewardRedemption.id)
+        .filter(
+            RewardRedemption.reward_id == reward.id,
+            RewardRedemption.status == RedemptionStatusEnum.pending,
+        )
+        .first()
+        is not None
+    )
+    has_active_contribution = (
+        db.query(RewardContribution.id)
+        .filter(
+            RewardContribution.reward_id == reward.id,
+            RewardContribution.status.in_(list(ACTIVE_CONTRIBUTION_STATUSES)),
+        )
+        .first()
+        is not None
+    )
+    if (has_open_redemption or has_active_contribution) and (
+        reward.cost_points != payload.cost_points or reward.is_shareable != payload.is_shareable
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Kosten und Aufteilbarkeit können während laufender Anfragen nicht geändert werden",
+        )
 
     reward.title = payload.title
     reward.description = payload.description
@@ -237,12 +265,22 @@ def delete_reward(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    reward = db.query(Reward).filter(Reward.id == reward_id).first()
+    reward = db.query(Reward).filter(Reward.id == reward_id).with_for_update().first()
     if not reward:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Belohnung nicht gefunden")
 
     context = get_membership_or_403(db, reward.family_id, current_user.id)
     require_roles(context, {RoleEnum.admin, RoleEnum.parent})
+
+    has_history = (
+        db.query(RewardRedemption.id).filter(RewardRedemption.reward_id == reward.id).first() is not None
+        or db.query(RewardContribution.id).filter(RewardContribution.reward_id == reward.id).first() is not None
+    )
+    if has_history:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Belohnung besitzt Einlösungen oder Beiträge und kann nicht gelöscht werden. Bitte deaktivieren.",
+        )
 
     reward_id_value = reward.id
     family_id_value = reward.family_id
@@ -543,6 +581,7 @@ def review_redemption(
             # Rückwärtskompatibel: alte Anfragen hatten ggf. noch keine Reservierung.
             missing_points = max(reward.cost_points - reserved_points, 0)
             if missing_points > 0:
+                db.query(User).filter(User.id == redemption.requested_by_id).with_for_update().first()
                 balance = get_points_balance(db, reward.family_id, redemption.requested_by_id)
                 if balance < missing_points:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nicht genug Punkte")
@@ -591,7 +630,7 @@ def review_redemption(
     redemption.status = payload.decision
     redemption.comment = payload.comment
     redemption.reviewed_by_id = current_user.id
-    redemption.reviewed_at = datetime.utcnow()
+    redemption.reviewed_at = utc_now_naive()
 
     db.flush()
     emit_live_event(

@@ -15,6 +15,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      default:
+        aliases:
+          - db
 
   api:
     image: ghcr.io/kolossboss/homequests-api:latest
@@ -23,13 +27,16 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://homequests:${POSTGRES_PASSWORD}@db:5432/homequests
       SECRET_KEY: ${SECRET_KEY}
-      ACCESS_TOKEN_EXPIRE_MINUTES: 525600
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
       APP_TIMEZONE: ${APP_TIMEZONE:-Europe/Berlin}
+      LOGIN_RATE_LIMIT_ATTEMPTS: ${LOGIN_RATE_LIMIT_ATTEMPTS:-8}
+      LOGIN_RATE_LIMIT_WINDOW_SECONDS: ${LOGIN_RATE_LIMIT_WINDOW_SECONDS:-300}
+      LOGIN_RATE_LIMIT_BLOCK_SECONDS: ${LOGIN_RATE_LIMIT_BLOCK_SECONDS:-600}
       APNS_ENABLED: "false"
       PUSH_WORKER_ENABLED: "false"
       # Backup-Ziele (im Container). Standard zeigt auf den persistenten Backup-Mount.
-      # Optional weitere Pfade via Komma ergänzen, z. B. "/data/backups,/tmp/homequests-backups"
-      DB_BACKUP_ALLOWED_DIRS: ${DB_BACKUP_ALLOWED_DIRS:-/data/backups,/tmp/homequests-backups}
+      # Optional weitere explizit gemountete Pfade via Komma ergänzen.
+      DB_BACKUP_ALLOWED_DIRS: ${DB_BACKUP_ALLOWED_DIRS:-/data/backups}
       DB_BACKUP_DEFAULT_DIR: ${DB_BACKUP_DEFAULT_DIR:-/data/backups}
       DB_BACKUP_TIMEOUT_SECONDS: ${DB_BACKUP_TIMEOUT_SECONDS:-180}
       DB_BACKUP_UPLOAD_MAX_BYTES: ${DB_BACKUP_UPLOAD_MAX_BYTES:-536870912}

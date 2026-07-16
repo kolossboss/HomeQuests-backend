@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
-from datetime import datetime
 from threading import Lock
 
 from sqlalchemy import text
@@ -13,6 +12,7 @@ from .database import SessionLocal, engine
 from .models import RecurrenceTypeEnum, Task, TaskStatusEnum
 from .push_notifications import run_push_reminder_sweep_once
 from .routers.tasks import _run_family_task_maintenance
+from .time_utils import app_local_now_naive
 
 logger = logging.getLogger(__name__)
 PENALTY_LOCK_KEY = 860031
@@ -39,7 +39,7 @@ def run_penalty_sweep_once() -> bool:
             return False
 
         try:
-            now = datetime.utcnow()
+            now = app_local_now_naive()
             penalty_family_ids = [
                 int(row[0])
                 for row in (

@@ -3,17 +3,19 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess
+# Ausschließlich feste PostgreSQL-CLI-Programme ohne Shell-Auswertung.
+import subprocess  # nosec B404
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy.engine import make_url
 
 from .config import settings
 from .database import engine
+from .time_utils import utc_now_naive
 
 SAFE_BACKUP_PREFIX_RE = re.compile(r"[^A-Za-z0-9._-]+")
 SAFE_BACKUP_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -112,29 +114,42 @@ def resolve_backup_target_dir(requested_dir: str | None) -> Path:
             f"Erlaubte Basispfade: {', '.join(str(entry) for entry in allowed)}"
         )
 
-    target.mkdir(parents=True, exist_ok=True)
+    target.mkdir(parents=True, exist_ok=True, mode=0o700)
     return target
 
 
 def list_backup_files(*, limit: int = 200) -> list[DbBackupFileInfo]:
     files: list[DbBackupFileInfo] = []
+    max_scan_entries = 10_000
+    scanned = 0
     for base in backup_allowed_dirs():
         if not base.exists() or not base.is_dir():
             continue
-        for entry in base.iterdir():
-            if not entry.is_file():
-                continue
-            if entry.suffix.lower() != ".dump":
-                continue
-            stat = entry.stat()
-            files.append(
-                DbBackupFileInfo(
-                    file_name=entry.name,
-                    file_path=str(entry),
-                    size_bytes=int(stat.st_size),
-                    modified_at_utc=datetime.utcfromtimestamp(stat.st_mtime),
+        for root, directories, names in os.walk(base, followlinks=False):
+            directories[:] = [name for name in directories if not Path(root, name).is_symlink()]
+            for name in names:
+                scanned += 1
+                if scanned > max_scan_entries:
+                    break
+                entry = Path(root, name)
+                if entry.suffix.lower() != ".dump" or entry.is_symlink():
+                    continue
+                resolved = entry.resolve(strict=False)
+                if not resolved.is_relative_to(base) or not resolved.is_file():
+                    continue
+                stat = resolved.stat()
+                files.append(
+                    DbBackupFileInfo(
+                        file_name=resolved.name,
+                        file_path=str(resolved),
+                        size_bytes=int(stat.st_size),
+                        modified_at_utc=datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(tzinfo=None),
+                    )
                 )
-            )
+            if scanned > max_scan_entries:
+                break
+        if scanned > max_scan_entries:
+            break
     files.sort(key=lambda item: item.modified_at_utc, reverse=True)
     return files[: max(1, min(int(limit), 500))]
 
@@ -144,8 +159,9 @@ def resolve_backup_file_path(path_or_name: str) -> Path:
     if not raw:
         raise DbToolsError("Backup-Datei fehlt")
 
-    candidate = Path(raw).expanduser().resolve(strict=False)
-    if candidate.is_absolute():
+    requested = Path(raw).expanduser()
+    if requested.is_absolute():
+        candidate = requested.resolve(strict=False)
         if not any(candidate.is_relative_to(base) for base in backup_allowed_dirs()):
             raise DbToolsError("Backup-Datei liegt außerhalb der erlaubten Pfade")
         if not candidate.exists() or not candidate.is_file():
@@ -184,7 +200,7 @@ def resolve_backup_directory_path(path_or_none: str | None) -> Path:
 def list_backup_directories(path_or_none: str | None = None) -> tuple[Path, Path | None, list[Path]]:
     current = resolve_backup_directory_path(path_or_none)
     entries = sorted(
-        [entry for entry in current.iterdir() if entry.is_dir()],
+        [entry for entry in current.iterdir() if entry.is_dir() and not entry.is_symlink()],
         key=lambda entry: entry.name.lower(),
     )
 
@@ -219,7 +235,7 @@ def create_backup_directory(*, parent_dir: str, directory_name: str) -> Path:
     if target.exists():
         raise DbToolsError("Ordner existiert bereits")
 
-    target.mkdir(parents=False, exist_ok=False)
+    target.mkdir(parents=False, exist_ok=False, mode=0o700)
     return target
 
 
@@ -237,7 +253,7 @@ def store_uploaded_backup(
 
     max_size = int(max_bytes or settings.db_backup_upload_max_bytes)
     stem = sanitize_backup_filename(original)
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    timestamp = utc_now_naive().strftime("%Y%m%d_%H%M%S_%f")
     file_name = f"{stem}_{timestamp}.dump"
     target_path = target / file_name
     counter = 1
@@ -249,7 +265,8 @@ def store_uploaded_backup(
     chunk_size = 1024 * 1024
     written = 0
     try:
-        with temp_path.open("wb") as handle:
+        with temp_path.open("xb") as handle:
+            temp_path.chmod(0o600)
             while True:
                 chunk = file_obj.read(chunk_size)
                 if not chunk:
@@ -267,7 +284,7 @@ def store_uploaded_backup(
             file_name=target_path.name,
             file_path=str(target_path),
             size_bytes=int(stat.st_size),
-            modified_at_utc=datetime.utcfromtimestamp(stat.st_mtime),
+            modified_at_utc=datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(tzinfo=None),
         )
     finally:
         if temp_path.exists():
@@ -297,9 +314,10 @@ def create_backup(*, target_dir: str | None, filename_prefix: str, timeout_secon
     host, port, username, password, database_name = _pg_connection_parts()
     target = resolve_backup_target_dir(target_dir)
     prefix = sanitize_backup_prefix(filename_prefix)
-    started = datetime.utcnow()
-    timestamp = started.strftime("%Y%m%d_%H%M%S")
+    started = utc_now_naive()
+    timestamp = started.strftime("%Y%m%d_%H%M%S_%f")
     file_path = target / f"{prefix}_{timestamp}.dump"
+    partial_path = target / f".{prefix}_{timestamp}.dump.partial"
 
     cmd = [
         "pg_dump",
@@ -313,7 +331,7 @@ def create_backup(*, target_dir: str | None, filename_prefix: str, timeout_secon
         "--username",
         username,
         "--file",
-        str(file_path),
+        str(partial_path),
         database_name,
     ]
     env = os.environ.copy()
@@ -322,7 +340,11 @@ def create_backup(*, target_dir: str | None, filename_prefix: str, timeout_secon
     timeout_value = int(timeout_seconds or settings.db_backup_timeout_seconds)
     started_perf = time.perf_counter()
     try:
-        result = subprocess.run(
+        # pg_dump behält die Rechte einer vorhandenen Zieldatei bei. So ist
+        # auch der noch unvollständige Dump zu keinem Zeitpunkt world-readable.
+        partial_path.touch(mode=0o600, exist_ok=False)
+        # Argumentliste statt Shell-Parsing; Werte können keine Befehle einschleusen.
+        result = subprocess.run(  # nosec B603
             cmd,
             env=env,
             capture_output=True,
@@ -330,18 +352,19 @@ def create_backup(*, target_dir: str | None, filename_prefix: str, timeout_secon
             timeout=timeout_value,
             check=False,
         )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            safe_stderr = stderr[-400:] if stderr else "unbekannter Fehler"
+            raise DbToolsError(f"Backup fehlgeschlagen: {safe_stderr}")
+
+        if not partial_path.exists() or partial_path.stat().st_size <= 0:
+            raise DbToolsError("Backup wurde nicht erstellt")
+        partial_path.replace(file_path)
     except subprocess.TimeoutExpired as exc:
         raise DbToolsError(f"Backup-Timeout nach {timeout_value} Sekunden") from exc
     finally:
         env.pop("PGPASSWORD", None)
-
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        safe_stderr = stderr[-400:] if stderr else "unbekannter Fehler"
-        raise DbToolsError(f"Backup fehlgeschlagen: {safe_stderr}")
-
-    if not file_path.exists():
-        raise DbToolsError("Backup wurde nicht erstellt")
+        partial_path.unlink(missing_ok=True)
 
     duration = round(time.perf_counter() - started_perf, 3)
     file_size = int(file_path.stat().st_size)
@@ -369,7 +392,7 @@ def restore_backup(*, backup_file: str, timeout_seconds: int | None = None) -> D
     if password:
         env["PGPASSWORD"] = password
     timeout_value = int(timeout_seconds or settings.db_backup_timeout_seconds)
-    started = datetime.utcnow()
+    started = utc_now_naive()
     started_perf = time.perf_counter()
     try:
         # pg_restore kann Dumps neuerer Versionen enthalten (z. B. SET transaction_timeout),
@@ -389,7 +412,8 @@ def restore_backup(*, backup_file: str, timeout_seconds: int | None = None) -> D
                 str(sql_path),
                 str(backup_path),
             ]
-            to_sql_result = subprocess.run(
+            # Argumentliste statt Shell-Parsing.
+            to_sql_result = subprocess.run(  # nosec B603
                 to_sql_cmd,
                 env=env,
                 capture_output=True,
@@ -427,7 +451,8 @@ def restore_backup(*, backup_file: str, timeout_seconds: int | None = None) -> D
                 "--file",
                 str(filtered_sql_path),
             ]
-            result = subprocess.run(
+            # Argumentliste statt Shell-Parsing.
+            result = subprocess.run(  # nosec B603
                 restore_cmd,
                 env=env,
                 capture_output=True,
