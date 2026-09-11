@@ -17,7 +17,7 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from starlette.requests import Request
 
 from .achievement_engine import ensure_achievement_catalog
-from .config import settings
+from .config import is_known_secret_key_placeholder, settings
 from .database import Base, SessionLocal, engine
 from .maintenance import penalty_worker, push_worker
 from .migrations import run_migrations
@@ -29,8 +29,12 @@ logger = logging.getLogger(__name__)
 
 
 def _warn_about_insecure_defaults() -> None:
-    if settings.secret_key in {"change-me-in-production", "CHANGE_THIS_SECRET"}:
-        logger.warning("SECRET_KEY verwendet noch einen Platzhalter. Bitte in Produktion ersetzen.")
+    if settings.environment != "production" and is_known_secret_key_placeholder(settings.secret_key):
+        logger.warning(
+            "SECRET_KEY verwendet einen Development/Test-Platzhalter (ENVIRONMENT=%s). "
+            "Für Produktion muss ein zufälliger Schlüssel gesetzt werden.",
+            settings.environment,
+        )
     if "homequests:homequests@" in settings.database_url:
         logger.warning("DATABASE_URL verwendet Standard-Zugangsdaten. Bitte produktive Zugangsdaten setzen.")
     if settings.access_token_expire_minutes > 60 * 24 * 90:

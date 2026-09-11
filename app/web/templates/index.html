@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&family=Sora:wght@500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260424-erfolge1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260819-tasklogic1" />
   </head>
   <body>
     <main class="container">
@@ -38,6 +38,9 @@
           <p class="muted">Nur beim allerersten Start notwendig. Der Haushalt wird automatisch angelegt.</p>
           <p class="muted auth-hint auth-hint-strong">Passwort-Regel: mindestens 3 Zeichen, zweimal identisch eingeben.</p>
           <div class="form-grid auth-form">
+            <label id="bootstrap-setup-token-wrap" class="hidden">Setup-Token
+              <input id="bootstrap-setup-token" type="password" autocomplete="off" placeholder="Token aus der Server-Konfiguration" />
+            </label>
             <label>Name<input id="boot-name" type="text" placeholder="Admin Name" /></label>
             <label>E-Mail (optional)<input id="boot-email" type="email" placeholder="optional@example.com" /></label>
             <label>Passwort<input id="boot-password" type="password" placeholder="mind. 3 Zeichen" /></label>
@@ -1396,6 +1399,6 @@
       </div>
     </div>
 
-    <script src="/static/app.js?v=20260424-erfolge1"></script>
+    <script src="/static/app.js?v=20260819-tasklogic1"></script>
   </body>
 </html>

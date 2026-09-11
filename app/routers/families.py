@@ -57,6 +57,14 @@ def _serialize_family_member(
     )
 
 
+def _get_family_for_update(db: Session, family_id: int) -> Family:
+    """Lock the family row before changing membership roles or membership rows."""
+    family = db.query(Family).filter(Family.id == family_id).with_for_update().first()
+    if not family:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Familie nicht gefunden")
+    return family
+
+
 @router.get("/my", response_model=list[FamilyOut])
 def my_families(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     family_ids = (
@@ -188,9 +196,11 @@ def update_member(
     membership_context = get_membership_or_403(db, family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.admin})
 
+    _get_family_for_update(db, family_id)
     membership = (
         db.query(FamilyMembership)
         .filter(FamilyMembership.family_id == family_id, FamilyMembership.user_id == user_id)
+        .with_for_update()
         .first()
     )
     if not membership:
@@ -269,9 +279,11 @@ def delete_member(
             detail="Du kannst dein eigenes Admin-Mitglied hier nicht löschen",
         )
 
+    _get_family_for_update(db, family_id)
     membership = (
         db.query(FamilyMembership)
         .filter(FamilyMembership.family_id == family_id, FamilyMembership.user_id == user_id)
+        .with_for_update()
         .first()
     )
     if not membership:

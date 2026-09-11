@@ -1,17 +1,47 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+
+KNOWN_SECRET_KEY_PLACEHOLDERS = frozenset(
+    {
+        "change-me-in-production",
+        "change-me-in-development",
+        "change_this_secret",
+        "change_this_with_openssl_output",
+        "please_change_this_secret_key",
+        "paste_secret_key_here",
+    }
+)
+
+
+KNOWN_BOOTSTRAP_SETUP_TOKEN_PLACEHOLDERS = frozenset(
+    {
+        "change_this_setup_token",
+        "change_this_with_openssl_output",
+        "paste_setup_token_here",
+        "please_generate_a_random_setup_token",
+    }
+)
+
+
+def is_known_secret_key_placeholder(value: str) -> bool:
+    return value.strip().lower() in KNOWN_SECRET_KEY_PLACEHOLDERS
 
 
 class Settings(BaseSettings):
     app_name: str = "HomeQuests API"
-    app_version: str = "2026.07.15"
+    app_version: str = "2026.08.19"
     app_build_ref: str | None = None
     app_timezone: str = "Europe/Berlin"
-    secret_key: str = "change-me-in-production"
+    # Source checkout / local Compose bleiben ohne weitere Variablen startbar.
+    # Produktive Compose-Dateien setzen ENVIRONMENT=production und erzwingen
+    # SECRET_KEY explizit; dort greift die Placeholder-Prüfung unten.
+    environment: Literal["production", "development", "test"] = "development"
+    secret_key: str = "change-me-in-development"
     access_token_expire_minutes: int = 60 * 24 * 30
     algorithm: str = "HS256"
     database_url: str = "postgresql+psycopg2://homequests:homequests@db:5432/homequests"
@@ -33,6 +63,7 @@ class Settings(BaseSettings):
     apns_private_key: str | None = None
     apns_private_key_path: str | None = None
     secret_encryption_key: str | None = None
+    bootstrap_setup_token: str | None = None
     push_worker_enabled: bool = True
     push_worker_interval_seconds: int = 60
     db_backup_allowed_dirs: Annotated[list[str], NoDecode] = ["/data/backups"]
@@ -41,12 +72,43 @@ class Settings(BaseSettings):
     db_cleanup_max_passes: int = 8
     db_backup_upload_max_bytes: int = 536_870_912
 
+    @model_validator(mode="after")
+    def validate_production_security(self) -> "Settings":
+        if self.environment == "production" and not self.bootstrap_setup_token:
+            raise ValueError("BOOTSTRAP_SETUP_TOKEN muss in ENVIRONMENT=production gesetzt sein")
+        normalized_database_url = self.database_url.strip().lower()
+        if self.environment == "production" and any(
+            marker in normalized_database_url
+            for marker in (":homequests@", ":please_change_db_password@")
+        ):
+            raise ValueError("DATABASE_URL darf in ENVIRONMENT=production keine Standard-Zugangsdaten verwenden")
+        return self
+
+    @field_validator("bootstrap_setup_token", mode="before")
+    @classmethod
+    def validate_bootstrap_setup_token(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        token = str(value).strip()
+        if not token:
+            return None
+        if len(token) < 16:
+            raise ValueError("BOOTSTRAP_SETUP_TOKEN muss mindestens 16 Zeichen lang sein")
+        if token.lower() in KNOWN_BOOTSTRAP_SETUP_TOKEN_PLACEHOLDERS:
+            raise ValueError("BOOTSTRAP_SETUP_TOKEN darf keinen Platzhalter verwenden")
+        return token
+
     @field_validator("secret_key")
     @classmethod
-    def validate_secret_key(cls, value: str) -> str:
+    def validate_secret_key_for_environment(cls, value: str, info) -> str:
         secret = value.strip()
         if len(secret) < 16:
             raise ValueError("SECRET_KEY muss mindestens 16 Zeichen lang sein")
+        environment = info.data.get("environment", "development")
+        if environment == "production" and is_known_secret_key_placeholder(secret):
+            raise ValueError(
+                "SECRET_KEY darf in ENVIRONMENT=production keinen bekannten Platzhalter verwenden"
+            )
         return secret
 
     @field_validator("secret_encryption_key")

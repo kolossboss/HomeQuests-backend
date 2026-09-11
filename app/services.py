@@ -7,7 +7,7 @@ from sqlalchemy import event, func
 from sqlalchemy.orm import Session
 
 from .live_bus import live_event_bus
-from .models import LiveUpdateEvent, PointsLedger
+from .models import LiveUpdateEvent, PointsLedger, RemoteNotificationOutbox
 from .notification_dispatcher import enqueue_remote_dispatch_job
 
 MAX_LIVE_EVENTS_PER_FAMILY = 5000
@@ -21,27 +21,39 @@ def _publish_committed_events(session: Session) -> None:
     for family_id, event_id, payload, dispatch_notifications in pending:
         try:
             live_event_bus.publish(family_id)
-            if dispatch_notifications:
+        except Exception:
+            # Ein bereits erfolgreicher Fach-Commit darf nicht nachträglich als
+            # API-Fehler erscheinen, nur weil ein optionaler Live-Kanal ausfällt.
+            logger.exception(
+                "Live-Signal nach Commit fehlgeschlagen (family_id=%s, event_id=%s)",
+                family_id,
+                event_id,
+            )
+
+        if dispatch_notifications:
+            try:
                 queued = enqueue_remote_dispatch_job(
                     family_id=family_id,
                     event_id=event_id,
                     payload=payload,
                 )
                 if not queued:
-                    logger.error(
-                        "Remote-Push konnte nach Commit nicht eingeplant werden "
+                    logger.warning(
+                        "Remote-Push-Wakeup nach Commit nicht verfügbar; der persistente "
+                        "Outbox-Eintrag bleibt für Polling erhalten "
                         "(family_id=%s, event_id=%s)",
                         family_id,
                         event_id,
                     )
-        except Exception:
-            # Ein bereits erfolgreicher Fach-Commit darf nicht nachträglich als
-            # API-Fehler erscheinen, nur weil ein optionaler Live-Kanal ausfällt.
-            logger.exception(
-                "Live-/Push-Signal nach Commit fehlgeschlagen (family_id=%s, event_id=%s)",
-                family_id,
-                event_id,
-            )
+            except Exception:
+                # Der Outbox-Eintrag wurde bereits atomar mit dem Fach-Commit
+                # gespeichert. Ein verlorenes Wakeup ist deshalb unkritisch.
+                logger.exception(
+                    "Remote-Push-Wakeup nach Commit fehlgeschlagen "
+                    "(family_id=%s, event_id=%s)",
+                    family_id,
+                    event_id,
+                )
 
 
 @event.listens_for(Session, "after_commit")
@@ -78,6 +90,15 @@ def emit_live_event(
     )
     db.add(event)
     db.flush()
+    if dispatch_notifications:
+        db.add(
+            RemoteNotificationOutbox(
+                family_id=int(family_id),
+                event_id=int(event.id),
+                event_type=event_type,
+                payload_json=event.payload_json,
+            )
+        )
     db.info.setdefault(_PENDING_LIVE_EVENTS_KEY, []).append(
         (int(family_id), int(event.id), payload, bool(dispatch_notifications))
     )

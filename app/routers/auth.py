@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from hmac import compare_digest
 from threading import Lock
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
@@ -40,6 +41,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 COOKIE_NAME = "fp_token"
 COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 BOOTSTRAP_LOCK_KEY = 930_000_001
+SETUP_TOKEN_HEADER = "X-HomeQuests-Setup-Token"
 _bootstrap_fallback_lock = Lock()
 _bootstrap_operation_lock = Lock()
 logger = logging.getLogger(__name__)
@@ -104,14 +106,36 @@ def _bootstrap_operation_guard():
         _bootstrap_operation_lock.release()
 
 
+def _require_setup_token(supplied_token: str | None) -> None:
+    """Schützt die Pre-Init-API nur, wenn ein Setup-Token konfiguriert ist."""
+
+    configured_token = settings.bootstrap_setup_token
+    if not configured_token:
+        return
+
+    candidate = supplied_token if isinstance(supplied_token, str) else ""
+    if not compare_digest(candidate, configured_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Gültiger Setup-Token im Header {SETUP_TOKEN_HEADER} erforderlich",
+        )
+
+
 @router.get("/bootstrap-status", response_model=BootstrapStatusOut)
 def bootstrap_status(db: Session = Depends(get_db)):
     has_user = db.query(User.id).first() is not None
-    return BootstrapStatusOut(bootstrap_required=not has_user)
+    return BootstrapStatusOut(
+        bootstrap_required=not has_user,
+        setup_token_required=bool(settings.bootstrap_setup_token and not has_user),
+    )
 
 
 @router.get("/bootstrap-backups", response_model=BootstrapBackupListOut)
-def bootstrap_backups(db: Session = Depends(get_db)):
+def bootstrap_backups(
+    setup_token: str | None = Header(default=None, alias=SETUP_TOKEN_HEADER),
+    db: Session = Depends(get_db),
+):
+    _require_setup_token(setup_token)
     has_user = db.query(User.id).first() is not None
     if has_user:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bootstrap bereits erfolgt")
@@ -138,8 +162,10 @@ def bootstrap_backups(db: Session = Depends(get_db)):
 def bootstrap_backup_upload(
     file: UploadFile = File(...),
     target_dir: str | None = Form(default=None),
+    setup_token: str | None = Header(default=None, alias=SETUP_TOKEN_HEADER),
     db: Session = Depends(get_db),
 ):
+    _require_setup_token(setup_token)
     try:
         with _bootstrap_operation_guard():
             has_user = db.query(User.id).first() is not None
@@ -184,7 +210,12 @@ def _bootstrap_restore_error_status(message: str) -> int:
 
 
 @router.post("/bootstrap-restore", response_model=BootstrapRestoreOut)
-def bootstrap_restore(payload: BootstrapRestoreRequest, db: Session = Depends(get_db)):
+def bootstrap_restore(
+    payload: BootstrapRestoreRequest,
+    setup_token: str | None = Header(default=None, alias=SETUP_TOKEN_HEADER),
+    db: Session = Depends(get_db),
+):
+    _require_setup_token(setup_token)
     with _bootstrap_operation_guard():
         has_user = db.query(User.id).first() is not None
         if has_user:
@@ -222,7 +253,14 @@ def bootstrap_restore(payload: BootstrapRestoreRequest, db: Session = Depends(ge
 
 
 @router.post("/bootstrap", response_model=TokenResponse)
-def bootstrap(payload: BootstrapRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+def bootstrap(
+    payload: BootstrapRequest,
+    request: Request,
+    response: Response,
+    setup_token: str | None = Header(default=None, alias=SETUP_TOKEN_HEADER),
+    db: Session = Depends(get_db),
+):
+    _require_setup_token(setup_token)
     with _bootstrap_operation_guard(), _bootstrap_guard(db):
         existing = db.query(User.id).first() is not None
         if existing:
