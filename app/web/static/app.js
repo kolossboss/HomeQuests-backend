@@ -49,6 +49,7 @@ const state = {
   bootstrapBackups: [],
   bootstrapBackupAllowedDirs: [],
   bootstrapUploadMaxBytes: 0,
+  bootstrapSetupTokenRequired: false,
   dbDirectoryBrowse: null,
   dbDirectoryTree: null,
 };
@@ -83,6 +84,7 @@ const FIELD_ERROR_MESSAGES = {
   "boot-email": "Bitte eine gültige E-Mail-Adresse eingeben.",
   "boot-password": "Passwort muss mindestens 3 Zeichen haben.",
   "boot-password-confirm": "Passwörter müssen identisch sein.",
+  "bootstrap-setup-token": "Bitte den Setup-Token aus der Server-Konfiguration eingeben.",
   "bootstrap-backup-manual": "Bitte eine Backup-Datei wählen oder einen Dateinamen/Pfad eingeben.",
   "bootstrap-backup-upload-file": "Bitte eine .dump-Datei auswählen.",
   "member-name": "Name ist erforderlich.",
@@ -143,21 +145,167 @@ const LIVE_REFRESH_DEBOUNCE_MS = 350;
 const LIVE_RECONNECT_BASE_MS = 1000;
 const LIVE_RECONNECT_MAX_MS = 15000;
 
+// BEGIN LIVE REFRESH POLICY
+// Diese Klassifikation bleibt absichtlich auf tatsächlich vom Backend erzeugte
+// Eventtypen begrenzt. Neue oder abweichende Typen fallen unten auf Vollrefresh
+// zurück, damit ein neues Backend-Event keinen stillen UI-Teilverlust erzeugt.
+const LIVE_REFRESH_DOMAIN_ORDER = Object.freeze([
+  "members",
+  "tasks",
+  "specialTasks",
+  "events",
+  "rewards",
+  "redemptions",
+  "points",
+  "achievements",
+  "notificationChannels",
+  "haSettings",
+  "haUsers",
+  "systemRuntime",
+  "systemEvents",
+  "dbTools",
+]);
+
+const LIVE_REFRESH_EVENT_SCOPES = Object.freeze({
+  "task.created": ["tasks"],
+  "task.updated": ["tasks"],
+  "task.deleted": ["tasks"],
+  "task.action_rejected": ["tasks"],
+  "task.submitted": ["tasks"],
+  "task.missed_reported": ["tasks"],
+  "task.reviewed": ["tasks", "points", "achievements"],
+  "task.missed_review_bulk": ["tasks", "points", "achievements"],
+  "special_task_template.created": ["specialTasks"],
+  "special_task_template.updated": ["specialTasks"],
+  "special_task_template.deleted": ["specialTasks"],
+  "event.created": ["events"],
+  "reward.created": ["rewards"],
+  "reward.updated": ["rewards", "redemptions"],
+  "reward.deleted": ["rewards"],
+  "reward.contribution.updated": ["rewards", "redemptions", "points"],
+  "reward.redeem_requested": ["redemptions", "points"],
+  "reward.redeem_reviewed": ["redemptions", "points", "achievements"],
+  "points.adjusted": ["points", "achievements"],
+  "achievement.unlocked": ["achievements"],
+  "achievement.profile_claimed": ["achievements"],
+  "achievement.reward_claimed": ["achievements", "points"],
+  "notification.test": ["systemEvents"],
+  "notification.test.manual": ["systemEvents"],
+  "notification.test.manual.user": ["systemEvents"],
+  "system.db.backup_directory_created": ["systemEvents", "dbTools"],
+  "system.db.backup_created": ["systemEvents", "dbTools"],
+  "system.db.cleanup_run": ["systemEvents", "dbTools"],
+  "system.db.analyze_run": ["systemEvents", "dbTools"],
+});
+
+const LIVE_REFRESH_FULL_EVENT_TYPES = Object.freeze([
+  "family_update",
+  "connected",
+  "reconnected",
+  "recovery",
+  "recovery_required",
+  "live.reconnected",
+  "live.recovery",
+]);
+
+function createLiveRefreshScope(domains = [], full = false) {
+  const normalizedDomains = [];
+  (Array.isArray(domains) ? domains : []).forEach((domain) => {
+    if (LIVE_REFRESH_DOMAIN_ORDER.includes(domain) && !normalizedDomains.includes(domain)) {
+      normalizedDomains.push(domain);
+    }
+  });
+  return Object.freeze({
+    full: Boolean(full),
+    domains: Object.freeze(normalizedDomains),
+  });
+}
+
+const LIVE_REFRESH_FULL_SCOPE = createLiveRefreshScope([], true);
+
+function normalizeLiveRefreshScope(scope) {
+  if (!scope || typeof scope !== "object") return LIVE_REFRESH_FULL_SCOPE;
+  if (scope.full) return LIVE_REFRESH_FULL_SCOPE;
+  return createLiveRefreshScope(scope.domains || []);
+}
+
+function mergeLiveRefreshScopes(currentScope, nextScope) {
+  if (!currentScope) return normalizeLiveRefreshScope(nextScope);
+  if (!nextScope) return normalizeLiveRefreshScope(currentScope);
+  const current = normalizeLiveRefreshScope(currentScope);
+  const next = normalizeLiveRefreshScope(nextScope);
+  if (current.full || next.full) return LIVE_REFRESH_FULL_SCOPE;
+  return createLiveRefreshScope([...current.domains, ...next.domains]);
+}
+
+function liveRefreshScopeIncludes(scope, domain) {
+  const normalized = normalizeLiveRefreshScope(scope);
+  return normalized.full || normalized.domains.includes(domain);
+}
+
+function buildLiveRefreshDomainPlan(scope, role) {
+  const normalized = normalizeLiveRefreshScope(scope);
+  const manager = role === "admin" || role === "parent";
+  const managerOnlyDomains = [
+    "notificationChannels",
+    "haSettings",
+    "haUsers",
+    "systemRuntime",
+    "systemEvents",
+    "dbTools",
+  ];
+  return LIVE_REFRESH_DOMAIN_ORDER.filter((domain) => {
+    if (managerOnlyDomains.includes(domain)) {
+      return manager && (normalized.full || normalized.domains.includes(domain));
+    }
+    return liveRefreshScopeIncludes(normalized, domain);
+  });
+}
+
+function liveRefreshScopeForEvent(eventType) {
+  const normalized = String(eventType || "").trim().toLowerCase();
+  if (!normalized || LIVE_REFRESH_FULL_EVENT_TYPES.includes(normalized)) {
+    return LIVE_REFRESH_FULL_SCOPE;
+  }
+  if (
+    normalized.startsWith("member.") ||
+    normalized.startsWith("membership.") ||
+    normalized.startsWith("role.") ||
+    normalized.startsWith("family.")
+  ) {
+    return LIVE_REFRESH_FULL_SCOPE;
+  }
+  const domains = LIVE_REFRESH_EVENT_SCOPES[normalized];
+  return domains ? createLiveRefreshScope(domains) : LIVE_REFRESH_FULL_SCOPE;
+}
+// END LIVE REFRESH POLICY
+
 let liveEventSource = null;
 let liveReconnectTimer = null;
 let liveRefreshTimer = null;
 let liveRefreshInFlight = false;
 let liveRefreshPending = false;
+let liveRefreshPendingRequest = null;
 let liveReconnectDelayMs = LIVE_RECONNECT_BASE_MS;
 let liveShouldRun = false;
 let liveConnected = false;
+let liveHasConnectedOnce = false;
 let liveFamilyId = null;
 let liveCursor = 0;
+let liveSourceGeneration = 0;
 let specialTaskRefreshTimer = null;
 let shellSyncFrame = 0;
 let dataRefreshInFlight = false;
+let dataRefreshPromise = null;
+let dataRefreshGeneration = 0;
+let dataRefreshPending = false;
+let dataRefreshPendingScope = null;
+let dataRefreshActiveScope = null;
+let dataRefreshPendingSilent = true;
 let achievementUnlockBannerTimer = null;
 let uiLoadingCounter = 0;
+let authActionInFlight = false;
+const unsafeMutationInFlight = new Map();
 let uiStatusTimer = null;
 let membersPanelOriginalParent = null;
 let membersPanelOriginalNextSibling = null;
@@ -1774,43 +1922,104 @@ function getOwnBalance() {
   return own ? own.balance : null;
 }
 
-async function api(path, { method = "GET", body = null } = {}) {
-  const headers = { "Content-Type": "application/json" };
-  let response;
+function isUnsafeHttpMethod(method) {
+  return ["POST", "PUT", "PATCH", "DELETE"].includes(String(method || "GET").toUpperCase());
+}
+
+function unsafeMutationKey(path, method, body) {
+  let serializedBody = "";
   try {
-    response = await fetch(path, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : null,
-      credentials: "same-origin",
-    });
-  } catch (error) {
-    showUiStatus("error", "Server ist gerade nicht erreichbar. Bitte erneut versuchen.");
-    if (!state.me && authPanel && !authPanel.classList.contains("hidden")) {
-      showAuthStatus("Server ist gerade nicht erreichbar. Bitte erneut versuchen.");
-    }
-    throw error;
+    serializedBody = JSON.stringify(body) || "";
+  } catch (_) {
+    serializedBody = String(body || "");
   }
+  return `${String(method || "GET").toUpperCase()} ${path} ${serializedBody}`;
+}
 
-  const raw = await response.text();
-  let payload = {};
-  if (raw) {
+async function api(path, { method = "GET", body = null, headers: requestHeaders = {} } = {}) {
+  const normalizedMethod = String(method || "GET").toUpperCase();
+  const isUnsafe = isUnsafeHttpMethod(normalizedMethod);
+  const mutationKey = isUnsafe ? unsafeMutationKey(path, normalizedMethod, body) : null;
+  const existingMutation = mutationKey ? unsafeMutationInFlight.get(mutationKey) : null;
+  if (existingMutation) return existingMutation;
+
+  const request = (async () => {
+    const headers = { "Content-Type": "application/json", ...requestHeaders };
+    let response;
     try {
-      payload = JSON.parse(raw);
-    } catch (_) {
-      payload = {};
+      response = await fetch(path, {
+        method: normalizedMethod,
+        headers,
+        body: body ? JSON.stringify(body) : null,
+        credentials: "same-origin",
+      });
+    } catch (error) {
+      showUiStatus("error", "Server ist gerade nicht erreichbar. Bitte erneut versuchen.");
+      if (!state.me && authPanel && !authPanel.classList.contains("hidden")) {
+        showAuthStatus("Server ist gerade nicht erreichbar. Bitte erneut versuchen.");
+      }
+      throw error;
     }
-  }
 
-  if (!response.ok) {
-    const detail = payload?.detail || raw || `HTTP ${response.status}`;
-    const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
-    showUiStatus("error", detailText, { autoHideMs: 8000 });
-    if (!state.me && authPanel && !authPanel.classList.contains("hidden")) {
-      showAuthStatus(detailText);
+    const raw = await response.text();
+    let payload = {};
+    if (raw) {
+      try {
+        payload = JSON.parse(raw);
+      } catch (_) {
+        payload = {};
+      }
     }
-    throw new Error(detailText);
+
+    if (!response.ok) {
+      const detail = payload?.detail || raw || `HTTP ${response.status}`;
+      const detailText = typeof detail === "string" ? detail : JSON.stringify(detail);
+      showUiStatus("error", detailText, { autoHideMs: 8000 });
+      if (!state.me && authPanel && !authPanel.classList.contains("hidden")) {
+        showAuthStatus(detailText);
+      }
+      throw new Error(detailText);
+    }
+    return payload;
+  })();
+
+  if (!mutationKey) return request;
+  unsafeMutationInFlight.set(mutationKey, request);
+  try {
+    return await request;
+  } finally {
+    if (unsafeMutationInFlight.get(mutationKey) === request) {
+      unsafeMutationInFlight.delete(mutationKey);
+    }
   }
+}
+
+class StaleRefreshError extends Error {
+  constructor() {
+    super("Refresh-Ergebnis gehört zu einer veralteten Generation.");
+    this.name = "StaleRefreshError";
+  }
+}
+
+function isStaleRefreshError(error) {
+  return error instanceof StaleRefreshError || error?.name === "StaleRefreshError";
+}
+
+function assertRefreshContextCurrent(refreshContext) {
+  if (!refreshContext) return;
+  const currentFamilyId = getSelectedFamilyId();
+  if (
+    refreshContext.generation !== dataRefreshGeneration ||
+    refreshContext.familyId !== currentFamilyId
+  ) {
+    throw new StaleRefreshError();
+  }
+}
+
+async function refreshApi(path, options = {}, refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
+  const payload = await api(path, options);
+  assertRefreshContextCurrent(refreshContext);
   return payload;
 }
 
@@ -1858,13 +2067,24 @@ function isUiInteractionLocked() {
 }
 
 function flushDeferredLiveRefresh(reason = "ui_unlocked") {
-  if (!liveRefreshPending || !liveShouldRun || dataRefreshInFlight || isUiInteractionLocked()) return;
+  if (
+    !liveRefreshPending ||
+    !liveShouldRun ||
+    liveRefreshInFlight ||
+    dataRefreshInFlight ||
+    isUiInteractionLocked()
+  ) return;
+  const pendingRequest = liveRefreshPendingRequest || {
+    reason,
+    scope: LIVE_REFRESH_FULL_SCOPE,
+  };
+  liveRefreshPendingRequest = null;
   liveRefreshPending = false;
-  queueLiveRefresh(reason);
+  queueLiveRefresh(pendingRequest.reason || reason, pendingRequest.scope);
 }
 
-function closeLiveSource() {
-  if (!liveEventSource) return;
+function closeLiveSource(source = null) {
+  if (!liveEventSource || (source && liveEventSource !== source)) return;
   liveEventSource.close();
   liveEventSource = null;
 }
@@ -1875,40 +2095,62 @@ function buildLiveStreamUrl(familyId) {
   return `/families/${familyId}/live/stream?${params.toString()}`;
 }
 
-function queueLiveRefresh(reason = "live_update") {
+function queueLiveRefresh(reason = "live_update", scope = null) {
   if (!liveShouldRun || !state.me || !getSelectedFamilyId()) return;
+  const request = {
+    reason,
+    scope: scope ? normalizeLiveRefreshScope(scope) : liveRefreshScopeForEvent(reason),
+  };
+  liveRefreshPendingRequest = liveRefreshPendingRequest
+    ? {
+      reason: request.reason,
+      scope: mergeLiveRefreshScopes(liveRefreshPendingRequest.scope, request.scope),
+    }
+    : request;
+  liveRefreshPending = true;
   if (isUiInteractionLocked() || dataRefreshInFlight) {
-    liveRefreshPending = true;
     return;
   }
   if (liveRefreshTimer) return;
   liveRefreshTimer = window.setTimeout(async () => {
     liveRefreshTimer = null;
+    const pendingRequest = liveRefreshPendingRequest || request;
+    liveRefreshPendingRequest = null;
+    liveRefreshPending = false;
     if (liveRefreshInFlight || dataRefreshInFlight || isUiInteractionLocked()) {
+      liveRefreshPendingRequest = pendingRequest;
       liveRefreshPending = true;
       return;
     }
 
     liveRefreshInFlight = true;
     try {
-      await refreshFamilyData({ silent: true });
+      await refreshFamilyData({ silent: true, scope: pendingRequest.scope });
     } catch (error) {
-      log("Live-Refresh Fehler", { error: error.message, reason });
+      log("Live-Refresh Fehler", { error: error.message, reason: pendingRequest.reason });
     } finally {
       liveRefreshInFlight = false;
-      if (liveRefreshPending) {
+      if (liveRefreshPendingRequest) {
+        const followUpRequest = liveRefreshPendingRequest;
+        liveRefreshPendingRequest = null;
         liveRefreshPending = false;
-        queueLiveRefresh("queued_follow_up");
+        queueLiveRefresh(followUpRequest.reason || "queued_follow_up", followUpRequest.scope);
       }
     }
   }, LIVE_REFRESH_DEBOUNCE_MS);
 }
 
-function scheduleLiveReconnect(familyId) {
+function scheduleLiveReconnect(familyId, sourceGeneration = liveSourceGeneration) {
   if (!liveShouldRun || !state.me || !familyId) return;
   clearLiveReconnectTimer();
   const delay = liveReconnectDelayMs;
   liveReconnectTimer = window.setTimeout(() => {
+    liveReconnectTimer = null;
+    if (
+      !liveShouldRun ||
+      liveFamilyId !== familyId ||
+      liveSourceGeneration !== sourceGeneration
+    ) return;
     connectLiveUpdates(familyId);
   }, delay);
   liveReconnectDelayMs = Math.min(liveReconnectDelayMs * 2, LIVE_RECONNECT_MAX_MS);
@@ -1917,6 +2159,13 @@ function scheduleLiveReconnect(familyId) {
 function connectLiveUpdates(familyId) {
   if (!liveShouldRun || !state.me || !familyId) return;
   closeLiveSource();
+  const sourceGeneration = ++liveSourceGeneration;
+
+  const isCurrentSource = () =>
+    liveEventSource === source &&
+    liveSourceGeneration === sourceGeneration &&
+    liveShouldRun &&
+    liveFamilyId === familyId;
 
   const streamUrl = buildLiveStreamUrl(familyId);
   let source = null;
@@ -1930,6 +2179,7 @@ function connectLiveUpdates(familyId) {
   liveEventSource = source;
 
   source.onopen = () => {
+    if (!isCurrentSource()) return;
     liveReconnectDelayMs = LIVE_RECONNECT_BASE_MS;
     if (!liveConnected) {
       log("Live-Updates verbunden", { family_id: familyId });
@@ -1938,6 +2188,7 @@ function connectLiveUpdates(familyId) {
   };
 
   source.addEventListener("connected", (event) => {
+    if (!isCurrentSource()) return;
     try {
       const payload = JSON.parse(event.data || "{}");
       const connectedCursor = Number(payload.since_id || 0);
@@ -1948,9 +2199,20 @@ function connectLiveUpdates(familyId) {
     } catch (_) {
       // Ignore malformed connected payload and continue streaming.
     }
+    // Erst bei einer zweiten oder späteren Stream-Session kann zwischen zwei
+    // Sessions ein Refresh-Fenster verpasst worden sein. Der Cursor schließt
+    // diese Lücke nicht für bereits gerenderte Domänen; Recovery/Reconnect ist
+    // deshalb bewusst ein Vollrefresh. Der initiale Connect folgt bereits auf
+    // den Session-Vollrefresh und löst keinen zweiten Vollrefresh aus.
+    const isReconnect = liveHasConnectedOnce;
+    liveHasConnectedOnce = true;
+    if (isReconnect) {
+      queueLiveRefresh("connected", LIVE_REFRESH_FULL_SCOPE);
+    }
   });
 
   source.addEventListener("family_update", (event) => {
+    if (!isCurrentSource()) return;
     try {
       const payload = JSON.parse(event.data || "{}");
       const eventId = Number(payload.id || event.lastEventId || 0);
@@ -1984,19 +2246,21 @@ function connectLiveUpdates(familyId) {
         const info = payload.payload || {};
         log(`DB-Ereignis: ${payload.event_type}`, info);
       }
-      queueLiveRefresh(payload.event_type || "family_update");
+      const eventType = payload.event_type || "family_update";
+      queueLiveRefresh(eventType, liveRefreshScopeForEvent(eventType));
     } catch (error) {
       log("Live-Event Parse Fehler", { error: error.message });
     }
   });
 
   source.onerror = () => {
-    closeLiveSource();
+    if (!isCurrentSource()) return;
+    closeLiveSource(source);
     if (liveConnected) {
       log("Live-Updates getrennt, verbinde neu ...", { family_id: familyId });
     }
     liveConnected = false;
-    scheduleLiveReconnect(familyId);
+    scheduleLiveReconnect(familyId, sourceGeneration);
   };
 }
 
@@ -2010,6 +2274,7 @@ function startLiveUpdates() {
 
   if (liveShouldRun && liveFamilyId === familyId && liveEventSource) return;
   liveShouldRun = true;
+  liveHasConnectedOnce = false;
   liveFamilyId = familyId;
   liveCursor = loadLiveCursor(familyId);
   liveReconnectDelayMs = LIVE_RECONNECT_BASE_MS;
@@ -2019,11 +2284,14 @@ function startLiveUpdates() {
 
 function stopLiveUpdates({ resetCursor = false } = {}) {
   liveShouldRun = false;
+  liveSourceGeneration += 1;
   clearLiveReconnectTimer();
   clearLiveRefreshTimer();
   closeLiveSource();
   liveConnected = false;
+  liveHasConnectedOnce = false;
   liveRefreshInFlight = false;
+  liveRefreshPendingRequest = null;
   liveRefreshPending = false;
   if (resetCursor && liveFamilyId) {
     localStorage.removeItem(liveCursorStorageKey(liveFamilyId));
@@ -2435,7 +2703,7 @@ function getChildTaskBuckets(userId) {
   const actionableTasks = newestRecurringEntries(ownVisibleTasks
     .filter((task) => task.status === "open" || task.status === "rejected")
     .filter((task) => !(task.recurrence_type === "none" && !task.due_at))
-    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)), "earliest_due");
+    .filter((task) => !(task.recurrence_type === "weekly" && task.due_at && new Date(task.due_at) > now)), "latest_activity");
   const weekTasks = actionableTasks.filter(
     (task) => task.recurrence_type === "weekly" && !(task.due_at && new Date(task.due_at) < now)
   );
@@ -2956,6 +3224,8 @@ async function initAuthPanel() {
   state.bootstrapBackups = [];
   state.bootstrapBackupAllowedDirs = [];
   state.bootstrapUploadMaxBytes = 0;
+  state.bootstrapSetupTokenRequired = false;
+  toggleHidden("bootstrap-setup-token-wrap", true);
   if (byId("bootstrap-backup-manual")) byId("bootstrap-backup-manual").value = "";
   if (byId("bootstrap-backup-upload-file")) byId("bootstrap-backup-upload-file").value = "";
   renderBootstrapBackups();
@@ -2966,10 +3236,16 @@ async function initAuthPanel() {
     setUiLoading(true, "Anmeldung wird vorbereitet ...");
     const status = await api("/auth/bootstrap-status");
     if (status.bootstrap_required) {
+      state.bootstrapSetupTokenRequired = Boolean(status.setup_token_required);
+      toggleHidden("bootstrap-setup-token-wrap", !state.bootstrapSetupTokenRequired);
       toggleHidden("bootstrap-section", false);
-      await loadBootstrapBackups().catch((error) => {
-        setBootstrapRestoreStatus(`Backups konnten nicht geladen werden: ${error.message}`, true);
-      });
+      if (state.bootstrapSetupTokenRequired) {
+        setBootstrapRestoreStatus("Setup-Token eingeben, um Backups zu laden oder die Initialisierung zu starten.", false);
+      } else {
+        await loadBootstrapBackups().catch((error) => {
+          setBootstrapRestoreStatus(`Backups konnten nicht geladen werden: ${error.message}`, true);
+        });
+      }
     } else {
       toggleHidden("login-section", false);
     }
@@ -2980,6 +3256,24 @@ async function initAuthPanel() {
   } finally {
     setUiLoading(false);
   }
+}
+
+function bootstrapSetupToken() {
+  return String(byId("bootstrap-setup-token")?.value || "").trim();
+}
+
+function bootstrapSetupHeaders() {
+  const token = bootstrapSetupToken();
+  return token ? { "X-HomeQuests-Setup-Token": token } : {};
+}
+
+function validateBootstrapSetupToken() {
+  const input = byId("bootstrap-setup-token");
+  clearInvalid(["bootstrap-setup-token"]);
+  if (!state.bootstrapSetupTokenRequired || bootstrapSetupToken()) return true;
+  setInvalid(input, true);
+  showAuthStatus("Bitte den Setup-Token aus der Server-Konfiguration eingeben.");
+  return false;
 }
 
 function setBootstrapRestoreStatus(message, isError = false) {
@@ -3013,7 +3307,8 @@ function renderBootstrapUploadTargets() {
 }
 
 async function loadBootstrapBackups() {
-  const payload = await api("/auth/bootstrap-backups");
+  if (!validateBootstrapSetupToken()) throw new Error("Setup-Token fehlt.");
+  const payload = await api("/auth/bootstrap-backups", { headers: bootstrapSetupHeaders() });
   state.bootstrapBackups = payload.files || [];
   state.bootstrapBackupAllowedDirs = payload.backup_allowed_dirs || [];
   state.bootstrapUploadMaxBytes = Number(payload.upload_max_bytes || 0);
@@ -3039,6 +3334,7 @@ function resolveBootstrapBackupSelection() {
 }
 
 async function runBootstrapRestore() {
+  if (!validateBootstrapSetupToken()) throw new Error("Setup-Token fehlt.");
   clearInvalid(["bootstrap-backup-manual"]);
   clearAuthStatus();
   const backupFile = resolveBootstrapBackupSelection();
@@ -3051,6 +3347,7 @@ async function runBootstrapRestore() {
   const response = await api("/auth/bootstrap-restore", {
     method: "POST",
     body: { backup_file: backupFile },
+    headers: bootstrapSetupHeaders(),
   });
   log("Bootstrap Restore erfolgreich", response);
   setBootstrapRestoreStatus(
@@ -3062,6 +3359,7 @@ async function runBootstrapRestore() {
 }
 
 async function runBootstrapUpload() {
+  if (!validateBootstrapSetupToken()) throw new Error("Setup-Token fehlt.");
   clearInvalid(["bootstrap-backup-upload-file"]);
   const fileInput = byId("bootstrap-backup-upload-file");
   if (!fileInput || !fileInput.files || fileInput.files.length < 1) {
@@ -3088,6 +3386,7 @@ async function runBootstrapUpload() {
   setBootstrapRestoreStatus("Upload läuft ...", false);
   const response = await fetch("/auth/bootstrap-backups/upload", {
     method: "POST",
+    headers: bootstrapSetupHeaders(),
     body: formData,
     credentials: "same-origin",
   });
@@ -4356,7 +4655,8 @@ async function refreshSelectedRewardContribution() {
   renderSelectedRewardContribution();
 }
 
-async function refreshChildRewardContributionMap(familyId = null) {
+async function refreshChildRewardContributionMap(familyId = null, refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   if (!isChildRole()) {
     state.rewardContributionProgressById = {};
     return;
@@ -4377,9 +4677,14 @@ async function refreshChildRewardContributionMap(familyId = null) {
   const results = await Promise.all(
     shareableRewards.map(async (reward) => {
       try {
-        const progress = await api(`/families/${selectedFamilyId}/rewards/${reward.id}/contributions`);
+        const progress = await refreshApi(
+          `/families/${selectedFamilyId}/rewards/${reward.id}/contributions`,
+          {},
+          refreshContext
+        );
         return [reward.id, progress];
       } catch (error) {
+        if (isStaleRefreshError(error)) throw error;
         log("Belohnungs-Sammelstand Fehler", { reward_id: reward.id, error: error.message });
         return [reward.id, null];
       }
@@ -4388,6 +4693,7 @@ async function refreshChildRewardContributionMap(familyId = null) {
   results.forEach(([rewardId, progress]) => {
     if (progress) resultMap[rewardId] = progress;
   });
+  assertRefreshContextCurrent(refreshContext);
   state.rewardContributionProgressById = resultMap;
 }
 
@@ -4511,56 +4817,81 @@ function renderPointsHistory() {
   applyMobileLabelsToTableBodies(["points-history-body"]);
 }
 
-async function loadMembers() {
+async function loadMembers(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
 
-  state.members = await api(`/families/${familyId}/members`);
-  const selfMembership = state.members.find((member) => state.me && member.user_id === state.me.id);
+  const members = await refreshApi(`/families/${familyId}/members`, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.members = members;
+  const selfMembership = members.find((member) => state.me && member.user_id === state.me.id);
   state.currentRole = selfMembership ? selfMembership.role : "child";
 
   applyRoleVisibility();
   renderMembers();
 }
 
-async function loadTasks() {
+async function loadTasks(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
-  state.tasks = await api(`/families/${familyId}/tasks`);
+  const tasks = await refreshApi(`/families/${familyId}/tasks`, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.tasks = tasks;
   renderTasks();
 }
 
-async function loadSpecialTasks() {
+async function loadSpecialTasks(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
 
   if (isChildRole()) {
     state.specialTaskTemplates = [];
-    state.availableSpecialTasks = await api(`/families/${familyId}/special-tasks/available?include_unavailable=true`);
+    const availableSpecialTasks = await refreshApi(
+      `/families/${familyId}/special-tasks/available?include_unavailable=true`,
+      {},
+      refreshContext
+    );
+    assertRefreshContextCurrent(refreshContext);
+    state.availableSpecialTasks = availableSpecialTasks;
     renderChildSpecialTaskCards();
     byId("special-task-manager-cards").innerHTML = "";
     return;
   }
 
   state.availableSpecialTasks = [];
-  state.specialTaskTemplates = await api(`/families/${familyId}/special-tasks/templates`);
+  const specialTaskTemplates = await refreshApi(
+    `/families/${familyId}/special-tasks/templates`,
+    {},
+    refreshContext
+  );
+  assertRefreshContextCurrent(refreshContext);
+  state.specialTaskTemplates = specialTaskTemplates;
   renderSpecialTaskTemplates();
   byId("child-special-task-cards").innerHTML = "";
 }
 
-async function loadEvents() {
+async function loadEvents(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
-  state.events = await api(`/families/${familyId}/events`);
+  const events = await refreshApi(`/families/${familyId}/events`, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.events = events;
   renderEvents();
 }
 
-async function loadRewards() {
+async function loadRewards(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
-  state.rewards = await api(`/families/${familyId}/rewards`);
+  const rewards = await refreshApi(`/families/${familyId}/rewards`, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.rewards = rewards;
   if (isChildRole()) {
-    await refreshChildRewardContributionMap(familyId);
+    await refreshChildRewardContributionMap(familyId, refreshContext);
   } else {
     state.rewardContributionProgressById = {};
     state.expandedChildRewardId = null;
@@ -4568,20 +4899,26 @@ async function loadRewards() {
   renderRewards();
 }
 
-async function loadRedemptions() {
+async function loadRedemptions(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
-  state.redemptions = await api(`/families/${familyId}/redemptions`);
+  const redemptions = await refreshApi(`/families/${familyId}/redemptions`, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.redemptions = redemptions;
   renderRedemptions();
   if (isChildRole()) {
     renderChildRewardCards();
   }
 }
 
-async function loadPointsBalances() {
+async function loadPointsBalances(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
-  state.pointsBalances = await api(`/families/${familyId}/points/balances`);
+  const pointsBalances = await refreshApi(`/families/${familyId}/points/balances`, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.pointsBalances = pointsBalances;
   renderDashboardPoints();
   renderPointsUsers();
   if (isChildRole()) {
@@ -4589,14 +4926,18 @@ async function loadPointsBalances() {
   }
 }
 
-async function loadPointsHistory(userId) {
+async function loadPointsHistory(userId, refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
 
   try {
-    state.pointsHistory = await api(`/families/${familyId}/points/ledger/${userId}`);
+    const pointsHistory = await refreshApi(`/families/${familyId}/points/ledger/${userId}`, {}, refreshContext);
+    assertRefreshContextCurrent(refreshContext);
+    state.pointsHistory = pointsHistory;
     byId("points-history-info").textContent = "";
   } catch (error) {
+    if (isStaleRefreshError(error)) throw error;
     state.pointsHistory = [];
     byId("points-history-info").textContent = `Hinweis: ${error.message}`;
   }
@@ -4604,7 +4945,8 @@ async function loadPointsHistory(userId) {
   renderPointsHistory();
 }
 
-async function loadChildPointsStats() {
+async function loadChildPointsStats(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   if (!isChildRole() || !state.me) {
     state.childPointsStats = null;
     renderChildPointsInsights({ animateTrend: false });
@@ -4612,7 +4954,13 @@ async function loadChildPointsStats() {
   }
   const familyId = getSelectedFamilyId();
   if (!familyId) return;
-  state.childPointsStats = await api(`/families/${familyId}/points/stats/${state.me.id}`);
+  const childPointsStats = await refreshApi(
+    `/families/${familyId}/points/stats/${state.me.id}`,
+    {},
+    refreshContext
+  );
+  assertRefreshContextCurrent(refreshContext);
+  state.childPointsStats = childPointsStats;
   renderChildPointsInsights({ animateTrend: true });
 }
 
@@ -4985,7 +5333,8 @@ function renderAchievements() {
   renderChildAchievementFocus();
 }
 
-async function loadAchievements() {
+async function loadAchievements(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId || !state.me) return;
 
@@ -5008,7 +5357,9 @@ async function loadAchievements() {
   const path = isChildRole()
     ? `/families/${familyId}/achievements/me`
     : `/families/${familyId}/achievements/users/${state.achievementTargetUserId}`;
-  state.achievementsOverview = await api(path);
+  const achievementsOverview = await refreshApi(path, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.achievementsOverview = achievementsOverview;
   renderAchievements();
 }
 
@@ -5430,18 +5781,22 @@ function renderSystemEvents() {
   eventsView.classList.remove("muted");
 }
 
-async function loadSystemRuntime() {
+async function loadSystemRuntime(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId || !isManagerRole()) {
     state.systemRuntime = null;
     renderSystemRuntime();
     return;
   }
-  state.systemRuntime = await api(`/families/${familyId}/system/runtime`);
+  const systemRuntime = await refreshApi(`/families/${familyId}/system/runtime`, {}, refreshContext);
+  assertRefreshContextCurrent(refreshContext);
+  state.systemRuntime = systemRuntime;
   renderSystemRuntime();
 }
 
-async function loadSystemEvents() {
+async function loadSystemEvents(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   const limitInput = byId("system-events-limit");
   const limit = Number(limitInput ? limitInput.value : 100) || 100;
@@ -5450,7 +5805,13 @@ async function loadSystemEvents() {
     renderSystemEvents();
     return;
   }
-  state.systemEvents = await api(`/families/${familyId}/system/events?limit=${limit}`);
+  const systemEvents = await refreshApi(
+    `/families/${familyId}/system/events?limit=${limit}`,
+    {},
+    refreshContext
+  );
+  assertRefreshContextCurrent(refreshContext);
+  state.systemEvents = systemEvents;
   renderSystemEvents();
 }
 
@@ -5510,14 +5871,21 @@ function appendDbToolsOutput(title, payload) {
   outputTarget.classList.remove("muted");
 }
 
-async function loadDbToolsStatus() {
+async function loadDbToolsStatus(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId || !isManagerRole()) {
     state.dbToolsStatus = null;
     renderDbToolsStatus();
     return;
   }
-  state.dbToolsStatus = await api(`/families/${familyId}/system/db-tools/status`);
+  const dbToolsStatus = await refreshApi(
+    `/families/${familyId}/system/db-tools/status`,
+    {},
+    refreshContext
+  );
+  assertRefreshContextCurrent(refreshContext);
+  state.dbToolsStatus = dbToolsStatus;
   renderDbToolsStatus();
 }
 
@@ -5996,13 +6364,19 @@ function updateNotificationChannelRows(statusPayload) {
   });
 }
 
-async function loadNotificationChannelStatus() {
+async function loadNotificationChannelStatus(refreshContext = null) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   if (!familyId || !isManagerRole()) {
     state.channelStatus = null;
     return;
   }
-  const payload = await api(`/families/${familyId}/system/notification-channels-status`);
+  const payload = await refreshApi(
+    `/families/${familyId}/system/notification-channels-status`,
+    {},
+    refreshContext
+  );
+  assertRefreshContextCurrent(refreshContext);
   updateNotificationChannelRows(payload);
 }
 
@@ -6122,7 +6496,8 @@ function renderHomeAssistantUserConfigs() {
   }
 }
 
-async function loadHomeAssistantUserConfigs({ showStatus = false } = {}) {
+async function loadHomeAssistantUserConfigs({ showStatus = false, refreshContext = null } = {}) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   const resultTarget = byId("ha-user-config-result");
   if (!familyId || !isManagerRole()) {
@@ -6130,14 +6505,21 @@ async function loadHomeAssistantUserConfigs({ showStatus = false } = {}) {
     renderHomeAssistantUserConfigs();
     return;
   }
-  state.haUserConfigs = await api(`/families/${familyId}/system/home-assistant-users`);
+  const haUserConfigs = await refreshApi(
+    `/families/${familyId}/system/home-assistant-users`,
+    {},
+    refreshContext
+  );
+  assertRefreshContextCurrent(refreshContext);
+  state.haUserConfigs = haUserConfigs;
   renderHomeAssistantUserConfigs();
   if (showStatus && resultTarget) {
     resultTarget.textContent = `${state.haUserConfigs.length} Nutzer-Konfiguration(en) geladen.`;
   }
 }
 
-async function loadHomeAssistantSettings({ showStatus = false } = {}) {
+async function loadHomeAssistantSettings({ showStatus = false, refreshContext = null } = {}) {
+  assertRefreshContextCurrent(refreshContext);
   const familyId = getSelectedFamilyId();
   const resultTarget = byId("ha-settings-result");
   if (!familyId || !isManagerRole()) {
@@ -6145,7 +6527,12 @@ async function loadHomeAssistantSettings({ showStatus = false } = {}) {
     return;
   }
 
-  const settingsPayload = await api(`/families/${familyId}/system/home-assistant-settings`);
+  const settingsPayload = await refreshApi(
+    `/families/${familyId}/system/home-assistant-settings`,
+    {},
+    refreshContext
+  );
+  assertRefreshContextCurrent(refreshContext);
   applyHomeAssistantSettingsToForm(settingsPayload);
   if (showStatus && resultTarget) {
     const tokenStatus = settingsPayload.has_token ? "Token ist hinterlegt." : "Kein Token hinterlegt.";
@@ -6301,43 +6688,201 @@ async function sendHomeAssistantUserTest(userIdOverride = null) {
   });
 }
 
-async function refreshFamilyData({ silent = false } = {}) {
-  if (dataRefreshInFlight) return;
-  dataRefreshInFlight = true;
-  if (!silent) setUiLoading(true, "Familiendaten werden aktualisiert ...");
+async function runOptionalLiveRefresh(operation, label) {
   try {
-    await loadMembers();
-    await Promise.all([loadTasks(), loadSpecialTasks(), loadEvents(), loadRewards(), loadRedemptions(), loadPointsBalances(), loadAchievements()]);
-    if (isChildRole()) {
-      await loadChildPointsStats().catch((error) => {
-        state.childPointsStats = null;
-        renderChildPointsInsights({ animateTrend: false });
-        log("Kinder-Punktestatistik laden Fehler", { error: error.message });
-      });
-    } else {
+    await operation();
+  } catch (error) {
+    if (isStaleRefreshError(error)) throw error;
+    log(label, { error: error.message });
+  }
+}
+
+async function refreshPointsDependentData(refreshContext) {
+  assertRefreshContextCurrent(refreshContext);
+  if (isChildRole()) {
+    await loadChildPointsStats(refreshContext).catch((error) => {
+      if (isStaleRefreshError(error)) throw error;
       state.childPointsStats = null;
       renderChildPointsInsights({ animateTrend: false });
+      log("Kinder-Punktestatistik laden Fehler", { error: error.message });
+    });
+  } else {
+    state.childPointsStats = null;
+    renderChildPointsInsights({ animateTrend: false });
+  }
+
+  assertRefreshContextCurrent(refreshContext);
+  if (isChildRole() && state.me) {
+    const own = state.pointsBalances.find((entry) => entry.user_id === state.me.id);
+    const ownBalance = own ? own.balance : null;
+    byId("child-reward-points").textContent = ownBalance ?? "-";
+    byId("stat-child-points-value").textContent = ownBalance ?? "-";
+    state.selectedPointsUserId = state.me.id;
+    byId("points-history-title").textContent = "Deine Punkte-Historie";
+    await loadPointsHistory(state.me.id, refreshContext);
+    toggleHidden("points-adjust-section", true);
+    return;
+  }
+
+  byId("child-reward-points").textContent = "-";
+  byId("stat-child-points-value").textContent = "-";
+  state.rewardContributionProgressById = {};
+  state.expandedChildRewardId = null;
+  state.selectedRewardContribution = null;
+  if (
+    state.selectedPointsUserId &&
+    !state.pointsBalances.some((entry) => entry.user_id === state.selectedPointsUserId)
+  ) {
+    state.selectedPointsUserId = null;
+  }
+  if (!state.selectedPointsUserId && state.pointsBalances.length > 0) {
+    state.selectedPointsUserId = state.pointsBalances[0].user_id;
+  }
+  if (state.selectedPointsUserId) {
+    byId("points-history-title").textContent = `Punkte-Historie: ${getPointsUserDisplayName(state.selectedPointsUserId)}`;
+    await loadPointsHistory(state.selectedPointsUserId, refreshContext);
+  } else {
+    state.pointsHistory = [];
+    byId("points-history-title").textContent = "Punkte-Historie";
+    byId("points-history-info").textContent = "Keine Nutzer vorhanden.";
+    renderPointsHistory();
+  }
+}
+
+function refreshScopeHasAny(scope, domains) {
+  return domains.some((domain) => liveRefreshScopeIncludes(scope, domain));
+}
+
+function refreshFamilyData({ silent = false, scope = null } = {}) {
+  dataRefreshGeneration += 1;
+  const requestedScope = scope ? normalizeLiveRefreshScope(scope) : LIVE_REFRESH_FULL_SCOPE;
+  const existingScope = dataRefreshPending
+    ? dataRefreshPendingScope
+    : dataRefreshInFlight
+      ? dataRefreshActiveScope
+      : null;
+  dataRefreshPendingScope = existingScope
+    ? mergeLiveRefreshScopes(existingScope, requestedScope)
+    : requestedScope;
+  dataRefreshPending = true;
+  if (!dataRefreshInFlight) {
+    dataRefreshPendingSilent = Boolean(silent);
+  } else if (!silent) {
+    dataRefreshPendingSilent = false;
+  }
+
+  if (dataRefreshPromise) return dataRefreshPromise;
+
+  dataRefreshInFlight = true;
+  dataRefreshPromise = (async () => {
+    try {
+      while (dataRefreshPending) {
+        dataRefreshPending = false;
+        const runScope = dataRefreshPendingScope || LIVE_REFRESH_FULL_SCOPE;
+        dataRefreshPendingScope = null;
+        dataRefreshActiveScope = runScope;
+        const runSilent = dataRefreshPendingSilent;
+        dataRefreshPendingSilent = true;
+        const refreshContext = {
+          familyId: getSelectedFamilyId(),
+          generation: dataRefreshGeneration,
+        };
+
+        try {
+          try {
+            await refreshFamilyDataRun(refreshContext, { silent: runSilent, scope: runScope });
+          } catch (error) {
+            if (isStaleRefreshError(error) || dataRefreshPending) continue;
+            throw error;
+          }
+        } finally {
+          dataRefreshActiveScope = null;
+        }
+      }
+    } finally {
+      dataRefreshInFlight = false;
+      dataRefreshPromise = null;
+      flushDeferredLiveRefresh("post_refresh");
     }
+  })();
+  return dataRefreshPromise;
+}
+
+async function refreshFamilyDataRun(
+  refreshContext,
+  { silent = false, scope = LIVE_REFRESH_FULL_SCOPE } = {}
+) {
+  assertRefreshContextCurrent(refreshContext);
+  const normalizedScope = normalizeLiveRefreshScope(scope);
+  let refreshPlan = buildLiveRefreshDomainPlan(normalizedScope, state.currentRole);
+  if (!silent) setUiLoading(true, "Familiendaten werden aktualisiert ...");
+  try {
+    if (refreshPlan.includes("members")) {
+      await loadMembers(refreshContext);
+    }
+    assertRefreshContextCurrent(refreshContext);
+    refreshPlan = buildLiveRefreshDomainPlan(normalizedScope, state.currentRole);
+
+    const domainLoaders = {
+      tasks: loadTasks,
+      specialTasks: loadSpecialTasks,
+      events: loadEvents,
+      rewards: loadRewards,
+      redemptions: loadRedemptions,
+      achievements: loadAchievements,
+    };
+    const parallelLoads = Object.entries(domainLoaders)
+      .filter(([domain]) => refreshPlan.includes(domain))
+      .map(([, loader]) => loader(refreshContext));
+    if (refreshPlan.includes("points")) {
+      parallelLoads.push(loadPointsBalances(refreshContext));
+    }
+    await Promise.all(parallelLoads);
+    assertRefreshContextCurrent(refreshContext);
+
+    if (refreshPlan.includes("points")) {
+      await refreshPointsDependentData(refreshContext);
+    }
+
     if (isManagerRole()) {
-      await loadNotificationChannelStatus().catch((error) =>
-        log("Kanalstatus laden Fehler", { error: error.message })
-      );
-      await loadHomeAssistantSettings({ showStatus: false }).catch((error) =>
-        log("HA Einstellungen laden Fehler", { error: error.message })
-      );
-      await loadHomeAssistantUserConfigs({ showStatus: false }).catch((error) =>
-        log("HA Nutzer laden Fehler", { error: error.message })
-      );
-      await loadSystemRuntime().catch((error) =>
-        log("Systeminfo laden Fehler", { error: error.message })
-      );
-      await loadSystemEvents().catch((error) =>
-        log("Ereignis-Log laden Fehler", { error: error.message })
-      );
-      await loadDbToolsStatus().catch((error) =>
-        log("DB-Tools Status laden Fehler", { error: error.message })
-      );
-    } else {
+      if (refreshPlan.includes("notificationChannels")) {
+        await runOptionalLiveRefresh(
+          () => loadNotificationChannelStatus(refreshContext),
+          "Kanalstatus laden Fehler"
+        );
+      }
+      if (refreshPlan.includes("haSettings")) {
+        await runOptionalLiveRefresh(
+          () => loadHomeAssistantSettings({ showStatus: false, refreshContext }),
+          "HA Einstellungen laden Fehler"
+        );
+      }
+      if (refreshPlan.includes("haUsers")) {
+        await runOptionalLiveRefresh(
+          () => loadHomeAssistantUserConfigs({ showStatus: false, refreshContext }),
+          "HA Nutzer laden Fehler"
+        );
+      }
+      if (refreshPlan.includes("systemRuntime")) {
+        await runOptionalLiveRefresh(
+          () => loadSystemRuntime(refreshContext),
+          "Systeminfo laden Fehler"
+        );
+      }
+      if (refreshPlan.includes("systemEvents")) {
+        await runOptionalLiveRefresh(
+          () => loadSystemEvents(refreshContext),
+          "Ereignis-Log laden Fehler"
+        );
+      }
+      if (refreshPlan.includes("dbTools")) {
+        await runOptionalLiveRefresh(
+          () => loadDbToolsStatus(refreshContext),
+          "DB-Tools Status laden Fehler"
+        );
+      }
+    } else if (normalizedScope.full) {
+      assertRefreshContextCurrent(refreshContext);
       resetHomeAssistantSettingsForm();
       state.dbToolsStatus = null;
       state.systemRuntime = null;
@@ -6347,48 +6892,17 @@ async function refreshFamilyData({ silent = false } = {}) {
       renderSystemEvents();
     }
 
-    if (isChildRole() && state.me) {
-      const own = state.pointsBalances.find((entry) => entry.user_id === state.me.id);
-      const ownBalance = own ? own.balance : null;
-      byId("child-reward-points").textContent = ownBalance ?? "-";
-      byId("stat-child-points-value").textContent = ownBalance ?? "-";
-      state.selectedPointsUserId = state.me.id;
-      byId("points-history-title").textContent = "Deine Punkte-Historie";
-      await loadPointsHistory(state.me.id);
-      toggleHidden("points-adjust-section", true);
-    } else {
-      byId("child-reward-points").textContent = "-";
-      byId("stat-child-points-value").textContent = "-";
-      state.rewardContributionProgressById = {};
-      state.expandedChildRewardId = null;
-      state.selectedRewardContribution = null;
-      if (
-        state.selectedPointsUserId &&
-        !state.pointsBalances.some((entry) => entry.user_id === state.selectedPointsUserId)
-      ) {
-        state.selectedPointsUserId = null;
-      }
-      if (!state.selectedPointsUserId && state.pointsBalances.length > 0) {
-        state.selectedPointsUserId = state.pointsBalances[0].user_id;
-      }
-      if (state.selectedPointsUserId) {
-        byId("points-history-title").textContent = `Punkte-Historie: ${getPointsUserDisplayName(state.selectedPointsUserId)}`;
-        await loadPointsHistory(state.selectedPointsUserId);
-      } else {
-        state.pointsHistory = [];
-        byId("points-history-title").textContent = "Punkte-Historie";
-        byId("points-history-info").textContent = "Keine Nutzer vorhanden.";
-        renderPointsHistory();
-      }
+    assertRefreshContextCurrent(refreshContext);
+    if (refreshScopeHasAny(normalizedScope, ["rewards", "redemptions", "points"])) {
+      renderChildRewardCards();
+      renderSelectedRewardContribution();
     }
 
-    renderSelectedRewardContribution();
+    assertRefreshContextCurrent(refreshContext);
 
     // Header user info removed by design; all actions stay available in System > Mitglieder.
   } finally {
     if (!silent) setUiLoading(false);
-    dataRefreshInFlight = false;
-    flushDeferredLiveRefresh("post_refresh");
   }
 }
 
@@ -6436,7 +6950,8 @@ async function refreshSession() {
 }
 
 async function login() {
-  if (state.uiLoading) return;
+  if (authActionInFlight) return;
+  authActionInFlight = true;
   setUiLoading(true);
   clearInvalid(["login-email", "login-password"]);
   clearAuthStatus();
@@ -6460,6 +6975,7 @@ async function login() {
     showAuthStatus("Bitte Username/E-Mail und Passwort eingeben.");
     log("Login: Bitte Pflichtfelder korrekt ausfuellen");
     setUiLoading(false);
+    authActionInFlight = false;
     return;
   }
 
@@ -6470,13 +6986,15 @@ async function login() {
     showUiStatus("success", "Erfolgreich angemeldet.");
   } finally {
     setUiLoading(false);
+    authActionInFlight = false;
   }
 }
 
 async function bootstrap() {
-  if (state.uiLoading) return;
+  if (authActionInFlight) return;
+  authActionInFlight = true;
   setUiLoading(true);
-  clearInvalid(["boot-name", "boot-email", "boot-password", "boot-password-confirm"]);
+  clearInvalid(["boot-name", "boot-email", "boot-password", "boot-password-confirm", "bootstrap-setup-token"]);
   clearAuthStatus();
   const nameInput = byId("boot-name");
   const emailInput = byId("boot-email");
@@ -6490,6 +7008,10 @@ async function bootstrap() {
 
   let invalid = false;
   const validationMessages = [];
+  if (!validateBootstrapSetupToken()) {
+    invalid = true;
+    validationMessages.push("Setup-Token fehlt");
+  }
   if (!display_name) {
     setInvalid(nameInput, true);
     invalid = true;
@@ -6515,6 +7037,7 @@ async function bootstrap() {
     showAuthStatus(validationMessages.join(" • "));
     log("Initialisierung: Bitte Eingaben prüfen", { details: validationMessages });
     setUiLoading(false);
+    authActionInFlight = false;
     return;
   }
 
@@ -6522,13 +7045,17 @@ async function bootstrap() {
     await api("/auth/bootstrap", {
       method: "POST",
       body: { display_name, email: email || null, password, password_confirm },
+      headers: bootstrapSetupHeaders(),
     });
+
+    if (byId("bootstrap-setup-token")) byId("bootstrap-setup-token").value = "";
 
     clearAuthStatus();
     await refreshSession();
     showUiStatus("success", "Initialisierung abgeschlossen.");
   } finally {
     setUiLoading(false);
+    authActionInFlight = false;
   }
 }
 

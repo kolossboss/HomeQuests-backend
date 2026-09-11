@@ -135,9 +135,9 @@ def _active_notification_channel(family_id: int) -> str:
         return NotificationChannelEnum.sse.value
 
 
-def _stream_membership_active(db: Session, *, family_id: int, user_id: int) -> bool:
-    return (
-        db.query(FamilyMembership.id)
+def _stream_membership_role(db: Session, *, family_id: int, user_id: int) -> RoleEnum | None:
+    row = (
+        db.query(FamilyMembership.role)
         .join(User, User.id == FamilyMembership.user_id)
         .filter(
             FamilyMembership.family_id == family_id,
@@ -145,8 +145,15 @@ def _stream_membership_active(db: Session, *, family_id: int, user_id: int) -> b
             User.is_active.is_(True),
         )
         .first()
-        is not None
     )
+    if row is None:
+        return None
+    role = row[0]
+    return role if isinstance(role, RoleEnum) else RoleEnum(str(role))
+
+
+def _stream_membership_active(db: Session, *, family_id: int, user_id: int) -> bool:
+    return _stream_membership_role(db, family_id=family_id, user_id=user_id) is not None
 
 
 @router.get("/families/{family_id}/live/stream")
@@ -176,7 +183,7 @@ async def stream_family_updates(
     active_channel = _active_notification_channel(family_id)
 
     async def event_generator():
-        nonlocal cursor
+        nonlocal cursor, current_user_role
         signal_version = live_event_bus.current_version(family_id)
         last_auth_check_at = time.monotonic()
         connected_payload = {
@@ -197,11 +204,12 @@ async def stream_family_updates(
                 try:
                     now_monotonic = time.monotonic()
                     if now_monotonic - last_auth_check_at >= 60.0:
-                        if not _stream_membership_active(
+                        refreshed_role = _stream_membership_role(
                             stream_db,
                             family_id=family_id,
                             user_id=current_user_id,
-                        ):
+                        )
+                        if refreshed_role is None:
                             logger.info(
                                 "Live-Stream wegen entzogenem Zugriff beendet "
                                 "(family_id=%s, user_id=%s)",
@@ -209,6 +217,7 @@ async def stream_family_updates(
                                 current_user_id,
                             )
                             break
+                        current_user_role = refreshed_role
                         last_auth_check_at = now_monotonic
                     events = (
                         stream_db.query(LiveUpdateEvent)

@@ -106,11 +106,15 @@ def _new_series_id() -> str:
 def _acquire_family_task_maintenance_lock(db: Session, family_id: int) -> bool:
     if engine.dialect.name == "postgresql":
         lock_key = TASK_MAINTENANCE_LOCK_BASE + int(family_id)
-        return bool(db.execute(text("SELECT pg_try_advisory_xact_lock(:key)"), {"key": lock_key}).scalar())
+        # Ein veralteter Read ist bei der Task-Ansicht schlimmer als ein kurzer
+        # Wait: Submit/Edit und Maintenance muessen denselben Serienstand sehen.
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+        return True
 
     with _fallback_maintenance_lock_guard:
         lock = _fallback_maintenance_locks.setdefault(int(family_id), Lock())
-    return lock.acquire(blocking=False)
+    lock.acquire()
+    return True
 
 
 def _release_family_task_maintenance_lock(db: Session, family_id: int) -> None:
@@ -325,12 +329,14 @@ def _special_task_usage_count(
     db: Session,
     template_id: int,
     interval_type: SpecialTaskIntervalEnum,
+    assignee_id: int,
 ) -> int:
     start = _interval_start(interval_type)
     return (
         db.query(Task)
         .filter(
             Task.special_template_id == template_id,
+            Task.assignee_id == assignee_id,
             Task.created_at >= start,
         )
         .count()
@@ -345,12 +351,15 @@ def _special_task_limit_reached_reason(interval_type: SpecialTaskIntervalEnum) -
     return "Wochenlimit für diese Sonderaufgabe erreicht"
 
 
-def _lock_special_task_claim_window(db: Session, template_id: int) -> None:
+def _lock_special_task_claim_window(db: Session, template_id: int, assignee_id: int) -> None:
     if engine.dialect.name != "postgresql":
         return
-    # Verhindert parallele Claim-Races pro Vorlage über mehrere Worker/Instanzen.
-    lock_key = 870000000 + int(template_id)
-    db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_key})
+    # Das Limit gilt pro Vorlage und Kind. Ein zweischluessliger Advisory-Lock
+    # serialisiert deshalb nur Claims desselben Kindes ueber Worker hinweg.
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(:template_id, :assignee_id)"),
+        {"template_id": int(template_id), "assignee_id": int(assignee_id)},
+    )
 
 
 def _apply_penalty_for_task(db: Session, task: Task) -> bool:
@@ -415,7 +424,7 @@ def _apply_penalties_for_family(db: Session, family_id: int) -> bool:
             Task.due_at.is_not(None),
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
         )
-        .with_for_update(skip_locked=True)
+        .with_for_update()
         .all()
     )
 
@@ -638,7 +647,7 @@ def _realign_daily_tasks_for_family(db: Session, family_id: int) -> bool:
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
             Task.due_at.is_not(None),
         )
-        .with_for_update(skip_locked=True)
+        .with_for_update()
         .all()
     )
     changed = False
@@ -885,7 +894,7 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
         )
         .order_by(Task.due_at.asc(), Task.id.asc())
-        .with_for_update(skip_locked=True)
+        .with_for_update()
         .all()
     )
 
@@ -929,6 +938,44 @@ def _rollover_missed_tasks_for_family(db: Session, family_id: int) -> bool:
     return changed
 
 
+def _deduplicate_active_open_recurring_tasks(db: Session, family_id: int) -> bool:
+    """Keep one current open row per recurring series without deleting history."""
+    candidates = (
+        db.query(Task)
+        .filter(
+            Task.family_id == family_id,
+            Task.series_id.is_not(None),
+            Task.is_active == True,  # noqa: E712
+            Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected]),
+        )
+        .order_by(Task.series_id.asc(), Task.created_at.asc(), Task.id.asc())
+        .with_for_update()
+        .all()
+    )
+    grouped: dict[str, list[Task]] = {}
+    for task in candidates:
+        grouped.setdefault(str(task.series_id), []).append(task)
+
+    changed = False
+    for series_tasks in grouped.values():
+        if len(series_tasks) < 2:
+            continue
+        keeper = max(series_tasks, key=lambda entry: (entry.created_at, entry.id))
+        for duplicate in series_tasks:
+            if duplicate.id == keeper.id:
+                continue
+            duplicate.is_active = False
+            db.flush()
+            emit_live_event(
+                db,
+                family_id=duplicate.family_id,
+                event_type="task.updated",
+                payload=_task_event_payload(duplicate, reason="recurring_duplicate_cleanup"),
+            )
+            changed = True
+    return changed
+
+
 def _run_family_task_maintenance(db: Session, family_id: int) -> bool:
     if not _acquire_family_task_maintenance_lock(db, family_id):
         return False
@@ -938,6 +985,10 @@ def _run_family_task_maintenance(db: Session, family_id: int) -> bool:
         changed = _realign_daily_tasks_for_family(db, family_id) or changed
         changed = _rollover_missed_tasks_for_family(db, family_id) or changed
         changed = _advance_weekly_flexible_tasks_for_family(db, family_id) or changed
+        # Erst alle normalen Zykluswechsel erzeugen, dann verbliebene Altlasten
+        # derselben Serie bereinigen. Sonst wuerde eine alte flexible
+        # Wochenaufgabe vor ihrem Wochenwechsel fälschlich deaktiviert.
+        changed = _deduplicate_active_open_recurring_tasks(db, family_id) or changed
         changed = _apply_penalties_for_family(db, family_id) or changed
         return changed
     finally:
@@ -1007,7 +1058,7 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
             Task.status.in_([TaskStatusEnum.open, TaskStatusEnum.rejected, TaskStatusEnum.approved]),
         )
         .order_by(Task.created_at.asc(), Task.id.asc())
-        .with_for_update(skip_locked=True)
+        .with_for_update()
         .all()
     )
 
@@ -1016,23 +1067,24 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
         grouped_by_key.setdefault(_weekly_flexible_semantic_key(task), []).append(task)
 
     changed = False
-    latest_by_key: dict[tuple, Task] = {}
-    for key, tasks in grouped_by_key.items():
+    for tasks in grouped_by_key.values():
         tasks.sort(key=lambda entry: (entry.created_at, entry.id))
+
+        def cycle_start(entry: Task) -> datetime:
+            created = _stored_utc_timestamp_as_task_local(entry.created_at) or now
+            return _start_of_week(created)
 
         cycle_has_approved: dict[datetime, bool] = {}
         for entry in tasks:
             if entry.is_active and entry.status == TaskStatusEnum.approved:
-                entry_created = _stored_utc_timestamp_as_task_local(entry.created_at) or now
-                cycle_has_approved[_start_of_week(entry_created)] = True
+                cycle_has_approved[cycle_start(entry)] = True
 
         for entry in tasks:
             if not entry.is_active:
                 continue
             if entry.status not in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
                 continue
-            entry_created = _stored_utc_timestamp_as_task_local(entry.created_at) or now
-            if not cycle_has_approved.get(_start_of_week(entry_created), False):
+            if not cycle_has_approved.get(cycle_start(entry), False):
                 continue
             entry.is_active = False
             db.flush()
@@ -1044,16 +1096,32 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
             )
             changed = True
 
-        active_tasks = [entry for entry in tasks if entry.is_active]
-        if not active_tasks:
-            continue
+        # Deduplizieren nur innerhalb derselben Kalenderwoche. Die alte
+        # Implementierung verglich die gesamte semantische Gruppe und konnte
+        # dadurch eine offene Vorwocheninstanz statt des aktuellen Zyklus
+        # behalten. Jede alte Woche muss zuerst als verpasst abgeschlossen
+        # werden, bevor der aktuelle Zyklus betrachtet wird.
+        active_by_cycle: dict[datetime, list[Task]] = {}
+        for entry in tasks:
+            if entry.is_active:
+                active_by_cycle.setdefault(cycle_start(entry), []).append(entry)
 
-        active_open_rejected = [
-            entry for entry in active_tasks if entry.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}
-        ]
-        if len(active_open_rejected) >= 2:
-            keeper = max(active_open_rejected, key=lambda entry: (_stored_utc_timestamp_as_task_local(entry.updated_at), entry.id))
-            for duplicate in active_open_rejected:
+        for cycle_tasks in active_by_cycle.values():
+            open_rejected = [
+                entry for entry in cycle_tasks if entry.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}
+            ]
+            if len(open_rejected) < 2:
+                continue
+            keeper = max(
+                open_rejected,
+                key=lambda entry: (
+                    _stored_utc_timestamp_as_task_local(entry.updated_at)
+                    or _stored_utc_timestamp_as_task_local(entry.created_at)
+                    or now,
+                    entry.id,
+                ),
+            )
+            for duplicate in open_rejected:
                 if duplicate.id == keeper.id:
                     continue
                 duplicate.is_active = False
@@ -1065,70 +1133,46 @@ def _advance_weekly_flexible_tasks_for_family(db: Session, family_id: int) -> bo
                     payload=_task_event_payload(duplicate, reason="weekly_duplicate_cleanup"),
                 )
                 changed = True
-            active_tasks = [entry for entry in tasks if entry.is_active]
-            if not active_tasks:
-                continue
 
-        if len(active_tasks) >= 2:
-            latest = active_tasks[-1]
-            previous = active_tasks[-2]
-            latest_created = _stored_utc_timestamp_as_task_local(latest.created_at) or now
-            previous_created = _stored_utc_timestamp_as_task_local(previous.created_at) or now
-            same_cycle = _start_of_week(latest_created) == _start_of_week(previous_created)
-            previous_updated = _stored_utc_timestamp_as_task_local(previous.updated_at) or previous_created
-            approval_gap = latest_created - previous_updated
-            if (
-                same_cycle
-                and previous.status == TaskStatusEnum.approved
-                and latest.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}
-                and timedelta(0) <= approval_gap <= timedelta(minutes=10)
-            ):
-                latest.is_active = False
-                db.flush()
-                emit_live_event(
-                    db,
-                    family_id=latest.family_id,
-                    event_type="task.updated",
-                    payload=_task_event_payload(latest, reason="weekly_duplicate_cleanup"),
-                )
-                changed = True
-                active_tasks = [entry for entry in tasks if entry.is_active]
-                if not active_tasks:
-                    continue
-
-        latest_by_key[key] = active_tasks[-1]
-
-    for task in latest_by_key.values():
-        key_hash = _recurring_identity_hash(_weekly_flexible_semantic_key(task))
+        current_cycle_has_entry = any(
+            entry.is_active and cycle_start(entry) == now_week_start
+            for entry in tasks
+        )
+        generated_for_key = False
+        key_hash = _recurring_identity_hash(_weekly_flexible_semantic_key(tasks[0]))
         if key_hash and key_hash in blocked_hashes:
             continue
-        task_created = _stored_utc_timestamp_as_task_local(task.created_at) or now
-        cycle_start = _start_of_week(task_created)
-        if cycle_start >= now_week_start:
-            continue
+        for cycle, cycle_tasks in sorted(active_by_cycle.items()):
+            if cycle >= now_week_start:
+                continue
+            for task in cycle_tasks:
+                if not task.is_active:
+                    continue
+                if task.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
+                    db.add(
+                        TaskSubmission(
+                            task_id=task.id,
+                            submitted_by_id=task.assignee_id,
+                            note="Automatisch als verpasst markiert (Wochenaufgabe)",
+                        )
+                    )
+                    task.status = TaskStatusEnum.missed_submitted
+                    db.flush()
+                    emit_live_event(
+                        db,
+                        family_id=task.family_id,
+                        event_type="task.missed_reported",
+                        payload={"task_id": task.id, "assignee_id": task.assignee_id, "auto": True},
+                    )
+                    changed = True
 
-        if task.status in {TaskStatusEnum.open, TaskStatusEnum.rejected}:
-            db.add(
-                TaskSubmission(
-                    task_id=task.id,
-                    submitted_by_id=task.assignee_id,
-                    note="Automatisch als verpasst markiert (Wochenaufgabe)",
-                )
-            )
-            task.status = TaskStatusEnum.missed_submitted
-            db.flush()
-            emit_live_event(
-                db,
-                family_id=task.family_id,
-                event_type="task.missed_reported",
-                payload={"task_id": task.id, "assignee_id": task.assignee_id, "auto": True},
-            )
-            _create_next_recurring_task(db, task, task.created_by_id, force=True)
-            changed = True
-            continue
-
-        if task.status == TaskStatusEnum.approved:
-            changed = _create_next_recurring_task(db, task, task.created_by_id, force=True) is not None or changed
+                # Eine bereits erledigte aktuelle Woche darf nicht durch eine
+                # verspätet entdeckte Altlast erneut geöffnet werden.
+                if current_cycle_has_entry or generated_for_key:
+                    continue
+                successor = _create_next_recurring_task(db, task, task.created_by_id, force=True)
+                generated_for_key = successor is not None
+                changed = generated_for_key or changed
 
     return changed
 
@@ -1552,7 +1596,12 @@ def list_available_special_tasks(
     result: list[SpecialTaskAvailabilityOut] = []
     now = _task_now()
     for template in templates:
-        used = _special_task_usage_count(db, template.id, template.interval_type)
+        used = _special_task_usage_count(
+            db,
+            template.id,
+            template.interval_type,
+            assignee_id=current_user.id,
+        )
         remaining = max(template.max_claims_per_interval - used, 0)
         available_now, unavailable_reason = _special_task_is_available_now(template, now)
         if remaining <= 0:
@@ -1592,20 +1641,33 @@ def claim_special_task(
     template = db.query(SpecialTaskTemplate).filter(SpecialTaskTemplate.id == template_id).first()
     if not template:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sonderaufgabe nicht gefunden")
-    if not template.is_active:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sonderaufgabe ist deaktiviert")
 
     membership_context = get_membership_or_403(db, template.family_id, current_user.id)
     require_roles(membership_context, {RoleEnum.child})
+
+    _lock_special_task_claim_window(db, template.id, current_user.id)
+    template = (
+        db.query(SpecialTaskTemplate)
+        .filter(SpecialTaskTemplate.id == template_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+    if not template:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Sonderaufgabe nicht gefunden")
+    if not template.is_active:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Sonderaufgabe ist deaktiviert")
 
     available_now, unavailability_reason = _special_task_is_available_now(template)
     if not available_now:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=unavailability_reason or "Sonderaufgabe ist aktuell nicht verfügbar")
 
-    _lock_special_task_claim_window(db, template.id)
-    db.refresh(template)
-
-    used = _special_task_usage_count(db, template.id, template.interval_type)
+    used = _special_task_usage_count(
+        db,
+        template.id,
+        template.interval_type,
+        assignee_id=current_user.id,
+    )
     if used >= template.max_claims_per_interval:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

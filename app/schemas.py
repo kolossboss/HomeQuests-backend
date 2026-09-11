@@ -81,6 +81,7 @@ class BootstrapRequest(BaseModel):
 
 class BootstrapStatusOut(BaseModel):
     bootstrap_required: bool
+    setup_token_required: bool = False
 
 
 class BootstrapBackupFileOut(BaseModel):

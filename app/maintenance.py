@@ -21,13 +21,18 @@ _fallback_penalty_lock = Lock()
 
 def _acquire_penalty_lock(db) -> bool:
     if engine.dialect.name == "postgresql":
-        return bool(db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": PENALTY_LOCK_KEY}).scalar())
+        return bool(
+            db.execute(
+                text("SELECT pg_try_advisory_xact_lock(:key)"),
+                {"key": PENALTY_LOCK_KEY},
+            ).scalar()
+        )
     return _fallback_penalty_lock.acquire(blocking=False)
 
 
 def _release_penalty_lock(db) -> None:
     if engine.dialect.name == "postgresql":
-        db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": PENALTY_LOCK_KEY})
+        # Transaction-scoped lock: SessionLocal commit/rollback releases it.
         return
     if _fallback_penalty_lock.locked():
         _fallback_penalty_lock.release()

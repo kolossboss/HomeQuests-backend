@@ -49,6 +49,7 @@ Weitere Punkte:
 4. Unter **Environment variables** setzen:
    - `POSTGRES_PASSWORD`
    - `SECRET_KEY`
+   - `BOOTSTRAP_SETUP_TOKEN` (Setup-Nachweis für den Pre-Init-API-Zugriff)
    - optional `API_PORT` (Standard `8010`)
    - optional fuer APNs:
      - `APNS_ENABLED=true`
@@ -75,13 +76,14 @@ git clone https://github.com/kolossboss/HomeQuests-backend.git
 cd HomeQuests-backend
 ```
 
-#### 2) Sicheren Secret Key erzeugen
+#### 2) Sichere Schlüssel erzeugen
 
 ```bash
 openssl rand -base64 48
+openssl rand -hex 32
 ```
 
-Den erzeugten Wert aufheben (wird gleich in `.env` verwendet).
+Den ersten Wert als `SECRET_KEY` und den zweiten als `BOOTSTRAP_SETUP_TOKEN` aufheben.
 
 #### 3) `.env` Datei erstellen
 
@@ -90,7 +92,9 @@ Im Projektordner ausfuehren:
 ```bash
 cat > .env <<'ENV'
 POSTGRES_PASSWORD=CHANGE_DB_PASSWORD
-SECRET_KEY=CHANGE_THIS_WITH_OPENSSL_OUTPUT
+ENVIRONMENT=production
+SECRET_KEY=PASTE_SECRET_KEY_HERE
+BOOTSTRAP_SETUP_TOKEN=PASTE_SETUP_TOKEN_HERE
 SECRET_ENCRYPTION_KEY=
 API_PORT=8010
 APNS_ENABLED=false
@@ -141,7 +145,9 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql+psycopg2://homequests:${POSTGRES_PASSWORD}@db:5432/homequests
-      SECRET_KEY: ${SECRET_KEY}
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY muss gesetzt sein}
+      BOOTSTRAP_SETUP_TOKEN: ${BOOTSTRAP_SETUP_TOKEN:?BOOTSTRAP_SETUP_TOKEN muss gesetzt sein}
       ACCESS_TOKEN_EXPIRE_MINUTES: 525600
       APNS_ENABLED: ${APNS_ENABLED:-false}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
@@ -208,7 +214,9 @@ docker run -d \
   --network homequests_net \
   -p 8010:8000 \
   -e DATABASE_URL='postgresql+psycopg2://homequests:CHANGE_DB_PASSWORD@homequests-db:5432/homequests' \
-  -e SECRET_KEY='CHANGE_THIS_WITH_OPENSSL_OUTPUT' \
+  -e ENVIRONMENT='production' \
+  -e SECRET_KEY='PASTE_SECRET_KEY_HERE' \
+  -e BOOTSTRAP_SETUP_TOKEN='PASTE_SETUP_TOKEN_HERE' \
   -e ACCESS_TOKEN_EXPIRE_MINUTES='525600' \
   -e APNS_ENABLED='false' \
   -e PUSH_WORKER_ENABLED='false' \
@@ -286,7 +294,16 @@ Restore:
   - `GET /families/{family_id}/system/db-tools/backup/download?backup_file=...`
 - Restore ist nur erlaubt, wenn noch kein Benutzer existiert (Bootstrap-Phase), damit aktive Produktivdaten nicht überschrieben werden.
 
+Wenn `BOOTSTRAP_SETUP_TOKEN` gesetzt ist, bleibt `GET /auth/bootstrap-status` öffentlich.
+`GET /auth/bootstrap-backups` sowie Upload, Restore und `POST /auth/bootstrap` verlangen zusätzlich den Header
+`X-HomeQuests-Setup-Token`. Der Vergleich erfolgt konstantzeitnah; der Nachweis wird nicht in URLs akzeptiert.
+Der Token bleibt für die zusammengehörige Pre-Init-Sequenz gültig und ist nach erfolgreichem Bootstrap wegen des
+vorhandenen Benutzers nicht mehr verwendbar. Für den ersten Admin oder einen Restore kann daher ein API-Client
+mit diesem Header verwendet werden; danach funktioniert die normale WebUI wie gewohnt.
+
 Wichtige ENV-Variablen:
+- `ENVIRONMENT` (`production`, `development` oder `test`; Produktion lehnt Secret-Platzhalter ab)
+- `BOOTSTRAP_SETUP_TOKEN` (in `ENVIRONMENT=production` erforderlich, in Development optional; mindestens 16 Zeichen)
 - `DB_BACKUP_ALLOWED_DIRS` (Komma-getrennte absolute Basispfade)
 - `DB_BACKUP_DEFAULT_DIR` (muss unter `DB_BACKUP_ALLOWED_DIRS` liegen)
 - `DB_BACKUP_TIMEOUT_SECONDS` (Default `180`)

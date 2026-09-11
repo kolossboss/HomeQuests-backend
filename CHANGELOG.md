@@ -1,5 +1,16 @@
 # Changelog
 
+## v2026.08.19-01 (2026-08-19)
+
+- Aufgabenlogik: flexible Wochenaufgaben werden pro Kalenderwoche statt über die gesamte Aufgabenserie dedupliziert.
+- Aufgabenlogik: eine alte offene Wocheninstanz wird beim Zykluswechsel als `missed_submitted` markiert und kann die aktuelle Woche nicht mehr verdecken.
+- Stabilität: familienbezogene Task-Wartung wartet transaktionsgebunden auf den Serien-Lock, statt bei Parallelzugriffen einen veralteten Stand zu liefern.
+- Stabilität: Reminder-/Push-Worker verwenden ebenfalls transaktionsgebundene Locks; Session-Locks können nicht im Connection-Pool hängenbleiben.
+- Benachrichtigungen: APNs-/Home-Assistant-Delivery-Logs setzen `sent_at` jetzt auch bei Raw-SQL-INSERTs; erfolgreiche Zustellungen erzeugen dadurch keine Dispatcher-Fehler oder unnötigen Retries mehr.
+- WebUI: Kinder-Dashboard priorisiert bei widersprüchlichen Legacy-Instanzen die zuletzt aktive wiederkehrende Task-Instanz, damit ein zukünftiger Task unter „Demnächst fällig“ sichtbar bleibt.
+- Tests: Matrix um den Cross-Cycle-Fall „alte offene Wocheninstanz plus aktuelle offene Instanz“ erweitert.
+- Kompatibilität: nur additive Datenbankänderung (sicherer `sent_at`-Default), keine destruktive Migration und keine Breaking-API-Änderung.
+
 ## v2026.07.15-01 (2026-07-15)
 
 - Sicherheit: bekannte Abhängigkeitslücken entfernt, JWT-Bibliothek modernisiert, Login-Rate-Limit, sichere Fehlerantworten und striktere Eingabegrenzen ergänzt.

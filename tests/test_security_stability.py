@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, datetime, timedelta
 import os
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+from threading import Event, Thread
 import unittest
 from unittest.mock import patch
 
@@ -22,6 +23,7 @@ from app.login_limiter import LoginRateLimiter
 from app.models import (
     Family,
     FamilyMembership,
+    HomeAssistantDeliveryLog,
     PointsLedger,
     PointsSourceEnum,
     RecurrenceTypeEnum,
@@ -32,11 +34,18 @@ from app.models import (
     Task,
     TaskStatusEnum,
     User,
+    PushDevice,
+    PushDeliveryLog,
 )
-from app.push_notifications import _sanitize_error_reason
-from app.routers.live import _event_payload_for_user, _stream_membership_active
+from app.push_notifications import _record_delivery, _record_ha_delivery, _sanitize_error_reason
+from app.routers.live import (
+    _event_payload_for_user,
+    _stream_membership_active,
+    _stream_membership_role,
+)
 from app.routers.points import _build_month_trend
 from app.routers.rewards import delete_reward, update_reward
+from app.routers import tasks as task_router
 from app.routers.tasks import submit_and_approve_task
 from app.schemas import (
     HomeAssistantSettingsUpdateRequest,
@@ -146,6 +155,21 @@ class SecurityStabilityTests(unittest.TestCase):
             self.assertTrue(
                 _stream_membership_active(db, family_id=family.id, user_id=user.id)
             )
+            self.assertEqual(
+                _stream_membership_role(db, family_id=family.id, user_id=user.id),
+                RoleEnum.child,
+            )
+            membership = (
+                db.query(FamilyMembership)
+                .filter_by(family_id=family.id, user_id=user.id)
+                .one()
+            )
+            membership.role = RoleEnum.parent
+            db.commit()
+            self.assertEqual(
+                _stream_membership_role(db, family_id=family.id, user_id=user.id),
+                RoleEnum.parent,
+            )
             user.is_active = False
             db.commit()
             self.assertFalse(
@@ -155,12 +179,84 @@ class SecurityStabilityTests(unittest.TestCase):
             db.close()
             engine.dispose()
 
+    def test_task_maintenance_lock_waits_instead_of_returning_stale_state(self) -> None:
+        fake_engine = SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+        family_id = 917_001
+        started = Event()
+        acquired = Event()
+        result: dict[str, bool] = {}
+
+        def acquire_in_worker() -> None:
+            started.set()
+            result["acquired"] = task_router._acquire_family_task_maintenance_lock(None, family_id)
+            acquired.set()
+            if result["acquired"]:
+                task_router._release_family_task_maintenance_lock(None, family_id)
+
+        with patch.object(task_router, "engine", fake_engine):
+            self.assertTrue(task_router._acquire_family_task_maintenance_lock(None, family_id))
+            worker = Thread(target=acquire_in_worker)
+            worker.start()
+            self.assertTrue(started.wait(1.0))
+            self.assertFalse(acquired.wait(0.15))
+            task_router._release_family_task_maintenance_lock(None, family_id)
+            self.assertTrue(acquired.wait(1.0))
+            worker.join(timeout=1.0)
+            self.assertFalse(worker.is_alive())
+            self.assertTrue(result.get("acquired"))
+
     def test_notification_error_redaction(self) -> None:
         raw = "POST https://api.push.apple.com/3/device/ABCDEF123 token=secret Authorization:BearerSecret"
         sanitized = _sanitize_error_reason(raw)
         self.assertNotIn("ABCDEF123", sanitized)
         self.assertNotIn("token=secret", sanitized)
         self.assertNotIn("BearerSecret", sanitized)
+
+    def test_delivery_logs_always_set_sent_at_for_raw_sql_inserts(self) -> None:
+        engine = create_engine("sqlite:///:memory:")
+        session_factory = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        Base.metadata.create_all(bind=engine)
+        db = session_factory()
+        try:
+            family = Family(name="Delivery-Test")
+            user = User(display_name="Kind", password_hash=hash_password("123"))
+            db.add_all([family, user])
+            db.flush()
+            device = PushDevice(
+                family_id=family.id,
+                user_id=user.id,
+                device_token="device-token",
+                bundle_id="swapps.HomeQuests",
+            )
+            db.add(device)
+            db.commit()
+
+            _record_delivery(
+                db,
+                device=device,
+                family_id=family.id,
+                user_id=user.id,
+                dedupe_key="live:test",
+                event_type="task.created",
+                sent=True,
+                apns_id="apns-id",
+                reason=None,
+            )
+            _record_ha_delivery(
+                db,
+                family_id=family.id,
+                user_id=user.id,
+                notify_service="mobile_app_test",
+                dedupe_key="live:test",
+                event_type="task.created",
+                sent=True,
+                reason=None,
+            )
+            db.commit()
+            self.assertIsNotNone(db.query(PushDeliveryLog).one().sent_at)
+            self.assertIsNotNone(db.query(HomeAssistantDeliveryLog).one().sent_at)
+        finally:
+            db.close()
 
     def test_home_assistant_inputs_are_normalized_and_validated(self) -> None:
         config = HomeAssistantSettingsUpdateRequest(ha_base_url="https://ha.local/", ha_token=" token ")
@@ -409,6 +505,75 @@ class TaskAtomicWorkflowTests(unittest.TestCase):
                 )
             self.assertEqual(context.exception.status_code, 400)
             self.assertEqual(db.query(PointsLedger).filter(PointsLedger.user_id == child.id).count(), 1)
+        finally:
+            db.close()
+
+    def test_weekly_flexible_old_cycle_does_not_hide_current_cycle(self) -> None:
+        db = self._session_factory()
+        try:
+            family = Family(name="Familie")
+            child = User(display_name="Kind", password_hash=hash_password("123"))
+            db.add_all([family, child])
+            db.flush()
+            db.add(FamilyMembership(family_id=family.id, user_id=child.id, role=RoleEnum.child))
+            now = datetime(2026, 8, 19, 12, 0, 0)
+            old_task = Task(
+                family_id=family.id,
+                title="Schreibtisch aufräumen",
+                description="alt",
+                assignee_id=child.id,
+                due_at=None,
+                points=5,
+                active_weekdays=[],
+                recurrence_type=RecurrenceTypeEnum.weekly.value,
+                series_id="old-series",
+                status=TaskStatusEnum.open,
+                is_active=True,
+                created_by_id=child.id,
+                created_at=now - timedelta(days=8),
+                updated_at=now - timedelta(days=8),
+            )
+            current_task = Task(
+                family_id=family.id,
+                title="Schreibtisch aufräumen",
+                description="aktuell",
+                assignee_id=child.id,
+                due_at=None,
+                points=5,
+                active_weekdays=[],
+                recurrence_type=RecurrenceTypeEnum.weekly.value,
+                series_id="current-series",
+                status=TaskStatusEnum.open,
+                is_active=True,
+                created_by_id=child.id,
+                created_at=now,
+                updated_at=now,
+            )
+            db.add_all([old_task, current_task])
+            db.commit()
+
+            with (
+                patch.object(task_router, "engine", self._engine),
+                patch.object(task_router, "_task_now", return_value=now),
+                patch("app.services.enqueue_remote_dispatch_job", return_value=True),
+            ):
+                self.assertTrue(task_router._advance_weekly_flexible_tasks_for_family(db, family.id))
+                db.commit()
+
+            self.assertEqual(old_task.status, TaskStatusEnum.missed_submitted)
+            self.assertTrue(old_task.is_active)
+            self.assertEqual(current_task.status, TaskStatusEnum.open)
+            self.assertTrue(current_task.is_active)
+            active_open = (
+                db.query(Task)
+                .filter(
+                    Task.family_id == family.id,
+                    Task.status == TaskStatusEnum.open,
+                    Task.is_active.is_(True),
+                )
+                .count()
+            )
+            self.assertEqual(active_open, 1)
         finally:
             db.close()
 

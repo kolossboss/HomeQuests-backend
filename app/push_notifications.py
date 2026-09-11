@@ -662,8 +662,8 @@ def _record_ha_delivery(
     db.execute(
         text(
             "INSERT INTO home_assistant_delivery_logs "
-            "(family_id, user_id, notify_service, dedupe_key, event_type, status, error_reason) "
-            "VALUES (:family_id, :user_id, :notify_service, :dedupe_key, :event_type, :status, :error_reason) "
+            "(family_id, user_id, notify_service, dedupe_key, event_type, status, error_reason, sent_at) "
+            "VALUES (:family_id, :user_id, :notify_service, :dedupe_key, :event_type, :status, :error_reason, CURRENT_TIMESTAMP) "
             "ON CONFLICT (family_id, user_id, notify_service, dedupe_key) DO UPDATE SET "
             "status = EXCLUDED.status, "
             "event_type = EXCLUDED.event_type, "
@@ -676,13 +676,20 @@ def _record_ha_delivery(
 
 def _acquire_push_lock(db: Session) -> bool:
     if engine.dialect.name == "postgresql":
-        return bool(db.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": _PUSH_LOCK_KEY}).scalar())
+        return bool(
+            db.execute(
+                text("SELECT pg_try_advisory_xact_lock(:key)"),
+                {"key": _PUSH_LOCK_KEY},
+            ).scalar()
+        )
     return _fallback_push_lock.acquire(blocking=False)
 
 
 def _release_push_lock(db: Session) -> None:
     if engine.dialect.name == "postgresql":
-        db.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _PUSH_LOCK_KEY})
+        # Transaction-scoped lock: commit/rollback releases it even on early
+        # returns or exceptions. A session-scoped lock would require a second
+        # connection-sensitive cleanup path here.
         return
     if _fallback_push_lock.locked():
         _fallback_push_lock.release()
@@ -900,8 +907,8 @@ def _record_delivery(
     db.execute(
         text(
             "INSERT INTO push_delivery_logs "
-            "(device_id, family_id, user_id, dedupe_key, event_type, apns_id, status, error_reason) "
-            "VALUES (:device_id, :family_id, :user_id, :dedupe_key, :event_type, :apns_id, :status, :error_reason) "
+            "(device_id, family_id, user_id, dedupe_key, event_type, apns_id, status, error_reason, sent_at) "
+            "VALUES (:device_id, :family_id, :user_id, :dedupe_key, :event_type, :apns_id, :status, :error_reason, CURRENT_TIMESTAMP) "
             "ON CONFLICT (device_id, dedupe_key) DO UPDATE SET "
             "family_id = EXCLUDED.family_id, user_id = EXCLUDED.user_id, "
             "event_type = EXCLUDED.event_type, apns_id = EXCLUDED.apns_id, "

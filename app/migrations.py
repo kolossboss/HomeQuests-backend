@@ -298,6 +298,55 @@ def _create_home_assistant_delivery_logs_table(engine: Engine) -> None:
             )
 
 
+def _create_remote_notification_outbox_table(engine: Engine) -> None:
+    # event_id has no foreign key on purpose: live events are retention-trimmed,
+    # but a pending outbox row must remain deliverable after that cleanup.
+    with engine.begin() as conn:
+        if engine.dialect.name == "postgresql":
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS remote_notification_outbox ("
+                    "id SERIAL PRIMARY KEY, "
+                    "family_id INTEGER NOT NULL REFERENCES families(id) ON DELETE CASCADE, "
+                    "event_id INTEGER NOT NULL, "
+                    "event_type VARCHAR(120) NOT NULL, "
+                    "payload_json TEXT NULL, "
+                    "status VARCHAR(16) NOT NULL DEFAULT 'pending', "
+                    "attempt_count INTEGER NOT NULL DEFAULT 0, "
+                    "available_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "locked_at TIMESTAMP NULL, "
+                    "locked_by VARCHAR(128) NULL, "
+                    "last_error TEXT NULL, "
+                    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "CONSTRAINT uq_remote_notification_outbox_event UNIQUE (event_id))"
+                )
+            )
+        else:
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS remote_notification_outbox ("
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                    "family_id INTEGER NOT NULL, "
+                    "event_id INTEGER NOT NULL UNIQUE, "
+                    "event_type VARCHAR(120) NOT NULL, "
+                    "payload_json TEXT NULL, "
+                    "status VARCHAR(16) NOT NULL DEFAULT 'pending', "
+                    "attempt_count INTEGER NOT NULL DEFAULT 0, "
+                    "available_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                    "locked_at TIMESTAMP NULL, "
+                    "locked_by VARCHAR(128) NULL, "
+                    "last_error TEXT NULL, "
+                    "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+                )
+            )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_remote_notification_outbox_claim "
+                "ON remote_notification_outbox (status, available_at, id)"
+            )
+        )
+
+
 def _create_task_generation_blocks_table(engine: Engine) -> None:
     with engine.begin() as conn:
         if engine.dialect.name == "postgresql":
@@ -536,6 +585,43 @@ def _add_api_query_indexes(engine: Engine) -> None:
             conn.execute(text(statement))
 
 
+def _ensure_delivery_log_sent_at_defaults(engine: Engine) -> None:
+    # A few older installations created the tables before the ORM default was
+    # present. Keep the database default aligned as a second line of defense;
+    # writers still provide sent_at explicitly because raw SQL bypasses ORM
+    # defaults.
+    if engine.dialect.name != "postgresql":
+        return
+    with engine.begin() as conn:
+        for table_name in ("push_delivery_logs", "home_assistant_delivery_logs"):
+            conn.execute(
+                text(
+                    f"ALTER TABLE {table_name} "
+                    "ALTER COLUMN sent_at SET DEFAULT CURRENT_TIMESTAMP"
+                )
+            )
+
+
+def _run_sqlite_migrations(engine: Engine) -> None:
+    """Apply the SQLite-safe additions needed by current local/test installs."""
+    _create_remote_notification_outbox_table(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS schema_migrations ("
+                "version VARCHAR(128) PRIMARY KEY, "
+                "applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO schema_migrations (version) VALUES (:version) "
+                "ON CONFLICT (version) DO NOTHING"
+            ),
+            {"version": "20260820_remote_notification_outbox"},
+        )
+
+
 MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260306_legacy_schema_bootstrap", _run_legacy_schema_bootstrap),
     ("20260306_task_always_submittable", _add_task_always_submittable_column),
@@ -551,6 +637,8 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("20260428_achievement_family_calibrations", _create_achievement_family_calibrations_table),
     ("20260715_operational_query_indexes", _add_operational_query_indexes),
     ("20260715_api_query_indexes", _add_api_query_indexes),
+    ("20260819_delivery_log_sent_at_defaults", _ensure_delivery_log_sent_at_defaults),
+    ("20260820_remote_notification_outbox", _create_remote_notification_outbox_table),
 ]
 
 
@@ -606,5 +694,8 @@ def _migration_guard(engine: Engine):
 
 
 def run_migrations(engine: Engine) -> None:
+    if engine.dialect.name == "sqlite":
+        _run_sqlite_migrations(engine)
+        return
     with _migration_guard(engine):
         _run_migrations_unlocked(engine)

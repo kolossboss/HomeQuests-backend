@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Enum as SqlEnum,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     String,
@@ -312,6 +313,35 @@ class LiveUpdateEvent(Base):
     family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     payload_json: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
+
+
+class RemoteNotificationOutbox(Base):
+    """Durable hand-off from a committed live event to remote notification delivery.
+
+    ``event_id`` deliberately has no foreign key: live events are trimmed after a
+    retention limit, while an outbox row must survive that cleanup. The snapshot
+    fields are sufficient to rebuild the event for delivery and keep the existing
+    ``live:{event_id}`` / ``event:{event_id}`` delivery dedupe keys stable.
+    """
+
+    __tablename__ = "remote_notification_outbox"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_remote_notification_outbox_event"),
+        Index("ix_remote_notification_outbox_claim", "status", "available_at", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    family_id: Mapped[int] = mapped_column(ForeignKey("families.id", ondelete="CASCADE"), index=True)
+    event_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    payload_json: Mapped[Optional[str]] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    available_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
+    locked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    locked_by: Mapped[Optional[str]] = mapped_column(String(128))
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive, nullable=False, index=True)
 
 
